@@ -1,0 +1,7 @@
+name = "lean-pra"
+version = "0.1.0"
+defaultTargets = ["LeanPRA"]
+
+[[lean_lib]]
+name = "LeanPRA"
+globs = ["LeanPRA"]
