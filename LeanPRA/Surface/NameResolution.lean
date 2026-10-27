@@ -1,6 +1,6 @@
 module
 
-public meta import LeanPRA.Surface.Init
+public meta import LeanPRA.Surface.Environment
 public meta import LeanPRA.Surface.Builtins
 
 /-!
@@ -50,8 +50,7 @@ def resolveDeclaration? (environment : Core.Environment) (name : Name) :
   | [name] => return environment.lookup name
   | names => throwError "ambiguous PRA name `{name}`; candidates: {names}"
 
-/-- Shortest suffix of `name` that resolves uniquely to `name` without colliding with `locals` or
-builtins. -/
+/-- Shortest suffix of `name` that resolves uniquely without colliding with local names. -/
 def relativeName (name : Name) (locals : List Name := []) : CommandElabM Name := do
   let environment := CoreEnvironment.getState (← getEnv)
   let ns ← getCurrNamespace
@@ -61,7 +60,7 @@ def relativeName (name : Name) (locals : List Name := []) : CommandElabM Name :=
   for part in name.componentsRev do
     candidate := Name.appendCore part candidate
     if fullNames && candidate != name then continue
-    if !isBuiltinName candidate && !locals.contains candidate &&
+    if !locals.contains candidate &&
         resolveDeclarationNames environment ns opens candidate == [name] then
       return candidate
   return `_root_ ++ name

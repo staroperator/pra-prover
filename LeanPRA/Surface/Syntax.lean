@@ -30,6 +30,10 @@ syntax (name := praTupleBinder) "(" praFunBinder ", " praFunBinder,+ ")" : praFu
 
 declare_syntax_cat praExpr (behavior := both)
 syntax:max ident : praExpr
+syntax:max (name := praUnknown) "?" num : praExpr
+syntax:max "@" ident : praExpr
+syntax:max "@" "(" praExpr ")" : praExpr
+syntax:max "(" ident " := " praExpr ")" : praExpr
 syntax:max "Prop" : praExpr
 syntax:max num : praExpr
 syntax:max (name := praHole) "_" : praExpr
@@ -51,6 +55,8 @@ syntax:lead "fun " praFunBinder+ " : " praExpr " => " recoverPraExpr(praExpr) : 
 syntax:lead "∀ " praBinder+ " : " &"Nat" ", " recoverPraExpr(praExpr) : praExpr
 syntax:lead "∃ " praBinder+ " : " &"Nat" ", " recoverPraExpr(praExpr) : praExpr
 syntax:lead "∀ " praBinder+ ", " recoverPraExpr(praExpr) : praExpr
+syntax:lead "∀ " "{" praBinder+ "}" ", " recoverPraExpr(praExpr) : praExpr
+syntax:lead "∀ " "{" praBinder+ " : " &"Nat" "}" ", " recoverPraExpr(praExpr) : praExpr
 syntax:lead "∃ " praBinder+ ", " recoverPraExpr(praExpr) : praExpr
 syntax:lead "let " ident " := " recoverPraExpr(praExpr) "; " recoverPraExpr(praExpr) : praExpr
 syntax:lead "let " "(" praBinder ", " praBinder,+ ")" " := "
@@ -71,10 +77,13 @@ where
 
 declare_syntax_cat praParam
 syntax "(" ident+ " : " praExpr ")" : praParam
+syntax "{" ident+ " : " praExpr "}" : praParam
 
 declare_syntax_cat praDecl
-syntax "def " ident (ppSpace praParam)* " : " praExpr " := " recoverPraExpr(praExpr) : praDecl
-syntax "theorem " ident (ppSpace praParam)* " : " praExpr " := " recoverPraExpr(praExpr) : praDecl
+syntax "def " ident (ppSpace praParam)* " : " recoverPraExpr(praExpr)
+  " := " recoverPraExpr(praExpr) : praDecl
+syntax "theorem " ident (ppSpace praParam)* " : " recoverPraExpr(praExpr)
+  " := " recoverPraExpr(praExpr) : praDecl
 syntax "#check " praExpr : praDecl
 syntax "#print " ident : praDecl
 syntax "open " ident+ : praDecl

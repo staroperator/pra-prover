@@ -27,7 +27,7 @@ theorem add_zero : ∀ x, add x 0 = x :=
   fun x => rfl
 
 theorem zero_add : ∀ x, add 0 x = x :=
-  fun x => induction rfl (fun y ih => eq_congr S (add 0 y) y ih) x
+  fun x => induction rfl (fun y ih => eq_congr S ih) x
 
 end
 ```
@@ -36,7 +36,7 @@ Here, `primrec base step n` is a replacement of `Nat.rec` to define recursive fu
 is restricted to be `Nat` so that it is limited to primitive recursion. `rfl` gives a proof of
 `add x 0 = x`, which is a definitional equality. `induction base step x` gives a proof of `P x` from
 `base : P 0` and `step : ∀ x, P x → P (S x)`, given that `P : Nat → QFProp` is a quantifier-free
-predicate. Finally, `eq_congr (f : Nat → Nat) : ∀ x y, x = y → f x = f y` is a lemma of congurence.
+predicate. Finally, `eq_congr (f : Nat → Nat) : ∀ {x y}, x = y → f x = f y` is a lemma of congurence.
 
 A definition or theorem can take functions and predicates as parameters. However, the PRA language
 does not allow any higher-order construction, including quantification over functions or predicates.

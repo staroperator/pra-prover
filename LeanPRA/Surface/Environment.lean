@@ -1,19 +1,16 @@
 module
 
-public meta import Lean
-public meta import LeanPRA.Core.Checker
+public meta import LeanPRA.Surface.Builtins
 
 /-!
-# PRA frontend initialization and module imports
+# PRA environments and module imports
 
-Options and environment extensions for PRA declarations across Lean modules:
+Environment extensions for PRA declarations across Lean modules:
 
-- `pra.maxDepth` limits Core checking and reduction; `pra.recheckImports` rechecks imported
-  declarations.
 - `ModuleBundle` groups the declarations introduced by one Lean module.
 - `ModuleExport` stores a module's declarations and the private dependency bundles they use.
 - `importModuleExports` loads cached declarations and checks module metadata.
-- `checkModuleExports` rechecks all imported declarations and their dependencies from `∅`.
+- `checkModuleExports` rechecks all imported declarations over the checked builtin environment.
 - `CoreEnvironment.getState` reads the Core declaration map.
 - `publishDeclaration` records an accepted declaration in the environment extension.
 - `registerNamespaceParents` registers PRA namespaces in Lean's scope table.
@@ -23,19 +20,6 @@ downstream modules. Repeated bundles from different import paths must match and 
 -/
 
 public meta section
-
-/-- Recursion depth limit for Core checking and reduction. -/
-register_option pra.maxDepth : Nat := {
-  defValue := 1024
-  descr := "recursion-depth limit for PRA core checking and reduction (also during imports)"
-}
-
-/-- When true, recheck all imported PRA declarations from scratch instead of trusting `.olean`
-exports. -/
-register_option pra.recheckImports : Bool := {
-  defValue := false
-  descr := "recheck the complete imported PRA closure (explicit audit; default trusts build cache)"
-}
 
 namespace LeanPRA.Surface
 
@@ -52,7 +36,7 @@ structure ModuleExport where
 
 /-- Persistent environment state for PRA declarations and module ownership. -/
 structure ModuleState where
-  environment : Core.Environment := ∅
+  environment : Core.Environment := builtinEnvironment
   modules : Lean.NameMap (Array Lean.Name) := {}
   order : Array Lean.Name := #[]
   localNames : Array Lean.Name := #[]

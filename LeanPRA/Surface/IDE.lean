@@ -12,6 +12,7 @@ Hover, go-to-definition, and infoview integration for PRA syntax:
 - `addDeclarationInfo` attaches hover signature and go-to-definition info to a declaration
   reference.
 - `addExpressionInfo` attaches an inferred hover type and optional binder location to an expression.
+- `addProofTypeInfo` attaches hover info for a proof expression's resolved formula.
 - `GoalTarget` and `makeGoalInfo` build `TacticInfo` goal snapshots for the infoview.
 - `GoalBinding` represents a local variable, parameter, hypothesis, or let-alias in a goal context.
 - `addUnresolvedInfo` suppresses fallback navigation on unresolved identifiers.
@@ -31,6 +32,12 @@ inductive GoalTarget where
   | term (arity : Nat)
   | predicate (signature : Core.PredicateSignature)
   | proof (type : Core.Predicate)
+
+/-- Whether a saved goal is open, waiting for inference, or part of a conflicting declaration. -/
+inductive GoalStatus where
+  | openGoal
+  | blocked
+  | conflicting
 
 /-- Entry in a goal's local context, identified by its Core index or alias value. -/
 inductive GoalBinding where
@@ -85,7 +92,7 @@ private def inferTarget (environment : Core.Environment) (context : Core.Context
 /-- Build a `TacticInfo` goal snapshot for the infoview from `bindings` and `target`. -/
 def makeGoalInfo (stx : Syntax) (environment : Core.Environment) (context : Core.Context)
     (names : Names) (bindings : List GoalBinding)
-    (target : Option GoalTarget) : CommandElabM Info := do
+    (target : Option GoalTarget) (status : GoalStatus := .openGoal) : CommandElabM Info := do
   let absent := Info.ofCommandInfo { elaborator := `Delab, stx := .missing }
   unless (← getInfoState).enabled do return absent
   unless (stx.getRange? (canonicalOnly := true)).isSome do return absent
@@ -116,7 +123,11 @@ def makeGoalInfo (stx : Syntax) (environment : Core.Environment) (context : Core
       | none => pure (mkApp (mkConst ``goalType) (mkStrLit "type not yet known"))
     liftTermElabM do
       Meta.withLCtx lctx #[] do
-        let goal ← Meta.mkFreshExprMVar type
+        let userName := match status with
+          | .openGoal => Name.anonymous
+          | .blocked => `waitingForInference
+          | .conflicting => `declarationHasConflict
+        let goal ← Meta.mkFreshExprMVar type (userName := userName)
         let mctx ← getMCtx
         return .ofTacticInfo {
           elaborator := `Delab
@@ -177,6 +188,18 @@ def addDeclarationInfo (stx : Syntax) (d : Core.Declaration) : CommandElabM Unit
   catch ex =>
     if ex.isInterrupt then throw ex
 
+/-- Attach hover info and optional binder location for a proof expression's resolved formula `type`.
+-/
+def addProofTypeInfo (stx : Syntax) (names : Names) (type : Core.Predicate)
+    (target : Syntax := .missing) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  let depth := pra.maxDepth.get (← getOptions)
+  let type ← delabPredicate names (Core.betaReducePredicate depth type)
+  let type := (← formatSyntax `praExpr type).pretty
+  let id := if stx.isIdent then stx else stx[0]
+  let text := if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type
+  addInfo stx text (← sourceLocation target)
+
 /-- Infer the type of `subject` and attach hover and optional binder location info to `stx`. -/
 def addExpressionInfo (stx : Syntax) (environment : Core.Environment) (context : Core.Context)
     (names : Names) (subject : Core.CheckSubject) (target : Syntax := .missing) :
@@ -194,7 +217,7 @@ def addExpressionInfo (stx : Syntax) (environment : Core.Environment) (context :
         delabPredicateType signature
       | .proof p =>
         let .ok type := Core.inferProof depth environment context p | return
-        delabPredicate names type
+        delabPredicate names (Core.betaReducePredicate depth type)
     let type := (← formatSyntax `praExpr type).pretty
     let id := if stx.isIdent then stx else stx[0]
     let text := if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type

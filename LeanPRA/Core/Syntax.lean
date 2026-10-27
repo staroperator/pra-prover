@@ -12,15 +12,16 @@ Syntax for the PRA language and its core checker:
 - `Proof` represents proof expressions.
 - `Declaration` represents a function definition, predicate definition, or theorem.
 - `Parameter` represents a function or predicate parameter of a declaration.
-- `Term.beq` and `Predicate.beq` compare syntax recursively, including binder names.
+- `BinderInfo` stores a source name and whether Surface inserts an omitted argument.
+- `Term.beq` and `Predicate.beq` compare syntax recursively, including binder annotations.
 
 A function's type is its arity, the number of `Nat` arguments it takes. Local variables and proof
 hypotheses use separate de Bruijn indices, with `0` for the innermost binder. Function and
 predicate parameters also have separate indices, numbered in declaration order within each kind.
 
-Binder and parameter names are only for printing; `.anonymous` tells the printer to pick a fresh
-name. Variable lookup and typing use indices. `Term.beq` and `Predicate.beq` compare binder names,
-whereas definitional equality erases them during normalization.
+Binder annotations guide printing and implicit argument elaboration; `.anonymous` tells the
+printer to pick a fresh name. Variable lookup and typing use indices. Structural comparison checks
+binder annotations, and definitional equality erases them during normalization.
 
 Each lambda binds one `Nat` variable, and `app` applies to one `Nat` argument. A definition or
 theorem reference carries its function and predicate arguments directly; numerical and proof
@@ -51,12 +52,25 @@ structure PredicateSignature where
   sort : FormulaSort
   deriving Repr, BEq, Inhabited
 
+/-- A binder's source name and argument visibility. Surface fills implicit arguments before
+Core checking; normalization uses anonymous, explicit binders when comparing expressions. -/
+structure BinderInfo where
+  name : Lean.Name
+  isImplicit : Bool := false
+  deriving Repr, BEq, Inhabited
+
+/-- A binder whose name is chosen by the printer. -/
+def BinderInfo.anonymous : BinderInfo := ⟨.anonymous, false⟩
+
+instance : Coe Lean.Name BinderInfo := ⟨fun name => ⟨name, false⟩⟩
+instance : Coe BinderInfo Lean.Name := ⟨BinderInfo.name⟩
+
 /-- A parameter of a predicate definition or theorem. A formula parameter has arity `0`.
 Function and predicate parameters can be mixed in the signature and are indexed separately in the
 body. -/
 inductive Parameter where
-  | function (binderName : Lean.Name) (arity : Arity)
-  | predicate (binderName : Lean.Name) (signature : PredicateSignature)
+  | function (binderName : BinderInfo) (arity : Arity)
+  | predicate (binderName : BinderInfo) (signature : PredicateSignature)
   deriving Repr, BEq, Inhabited
 
 /-- Arities of the function parameters in `parameters`, in order. -/
@@ -83,7 +97,7 @@ inductive Term where
 
 mutual
 
-/-- Structural equality on `Term`, including binder names. -/
+/-- Structural equality on `Term`, including binder annotations. -/
 def Term.beq (t u : Term) : Bool :=
   match t, u with
   | .bvar i, .bvar j | .parameter i, .parameter j => i == j
@@ -119,7 +133,7 @@ inductive Predicate where
   | all (predicate : Predicate)
   | ex (predicate : Predicate)
   | parameter (index : Nat)
-  | lam (binderName : Lean.Name) (body : Predicate)
+  | lam (binderName : BinderInfo) (body : Predicate)
   | app (predicate : Predicate) (argument : Term)
   | letTerm (binderName : Lean.Name) (value : Term) (body : Predicate)
   | letPredicate (binderName : Lean.Name) (value body : Predicate)
@@ -128,7 +142,7 @@ inductive Predicate where
 
 mutual
 
-/-- Structural equality on `Predicate`, including binder names. -/
+/-- Structural equality on `Predicate`, including binder annotations. -/
 def Predicate.beq (P Q : Predicate) : Bool :=
   match P, Q with
   | .false, .false | .true, .true => Bool.true
@@ -199,7 +213,7 @@ inductive Proof where
 -/
 structure FunctionParameter where
   arity : Arity
-  binderName : Lean.Name := .anonymous
+  binderName : BinderInfo := .anonymous
   deriving Repr, BEq, Inhabited
 
 /-- A function definition, with its function parameters, result arity, and body. -/

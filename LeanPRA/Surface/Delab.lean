@@ -2,6 +2,7 @@ module
 
 public meta import LeanPRA.Surface.Syntax
 public meta import LeanPRA.Surface.NameResolution
+public meta import LeanPRA.Surface.Metavariable.Frontend
 
 /-!
 # Reconstructing PRA syntax from checked expressions
@@ -31,6 +32,8 @@ structure Names where
   functions : List Name := []
   predicates : List Name := []
   proofs : List Name := []
+  unknownFunctions : List (Nat × Nat) := []
+  unknownPredicates : List (Nat × Nat) := []
   termAliases : List (Name × Core.Term) := []
   predicateAliases : List (Name × Predicate) := []
   deriving Inhabited
@@ -62,7 +65,7 @@ private def fresh (stem : String) (names : List Name) : Name :=
 /-- Pick an unused binder name, starting from `hint` or `stem`. -/
 def Names.freshName (names : Names) (stem : String) (hint : Name := .anonymous) : Name :=
   let suggestion := if hint.isAnonymous then fresh stem names.used else hint.eraseMacroScopes
-  let used := names.used ++ builtinNames.map (·.1)
+  let used := names.used ++ builtinNames
   let context := (used.zipIdx).foldl (fun (ctx : LocalContext) (name, i) =>
     ctx.mkLocalDecl ⟨.num `_praDisplay i⟩ name (mkConst ``Nat)) {}
   context.getUnusedName suggestion
@@ -96,6 +99,15 @@ private def applyParameters (names : Names) (name : Name) (fs ps : List (TSyntax
   let mut fs := fs
   let mut ps := ps
   let mut result ← globalExpr names name
+  let implicitParameters := parameters.any fun
+    | .function info _ | .predicate info _ => info.isImplicit
+  let depth := pra.maxDepth.get (← getOptions)
+  let implicitUniversals := match environment.lookup name with
+    | some (.theoremE d) => Metavariable.Frontend.hasImplicitBinders depth environment d.type
+    | _ => false
+  if implicitParameters || implicitUniversals then
+    let `(praExpr| $id:ident) := result | throwError "expected a declaration name"
+    result ← `(praExpr| @$id:ident)
   for parameter in parameters do
     match parameter with
     | .function _ _ =>
@@ -134,7 +146,7 @@ def delabPredicateType (s : Core.PredicateSignature) : CommandElabM (TSyntax `pr
 
 private def numeralValue? : Core.Term → Option Nat
   | .zero => some 0
-  | .app .succ t => (· + 1) <$> numeralValue? t
+  | .app .succ t | .app (.definition `S []) t => (· + 1) <$> numeralValue? t
   | _ => none
 
 /-- Hover type attached to a `DelabTree` node. -/
@@ -196,9 +208,12 @@ partial def delabTermTree (names : Names) (term : Core.Term)
     pure (⟨stx, type, children⟩ : DelabTree)
   match term with
   | .bvar i => node (← identExpr (names.locals[i]?.getD (.mkSimple s!"unbound{i}")))
-  | .parameter i => node (← identExpr (names.functions[i]?.getD (.mkSimple s!"parameter{i}")))
+  | .parameter i =>
+    if let some (_, id) := names.unknownFunctions.find? (·.1 == i) then
+      node (← `(praExpr| ?$(Syntax.mkNumLit (toString id)):num))
+    else node (← identExpr (names.functions[i]?.getD (.mkSimple s!"parameter{i}")))
   | .zero => node (← numeral 0)
-  | .succ => node (← identExpr `S)
+  | .succ => declarationTree names `S
   | .lam hint body =>
     let x := names.freshName "x" hint
     let inner := fun t => delabTermTree (names.pushLocal x) t (typing.map (·.pushLocal 0))
@@ -206,12 +221,17 @@ partial def delabTermTree (names : Names) (term : Core.Term)
     let body ← inner body
     node (← lambda x ⟨body.stx⟩) (lambdaChildren binder body)
   | .app f a =>
-    if let .succ := f then
+    let isSuccessor := match f with | .succ | .definition `S [] => true | _ => false
+    if isSuccessor then
       if !names.termAliases.any (·.2 == Core.Term.succ) then
         if let some n := numeralValue? a then return ← node (← numeral (n + 1))
+    let parameterHead := match f with
+      | .definition _ (_ :: _) => true
+      | _ => false
     let f ← recur f
     let a ← recur a
-    node (← applyExpr ⟨f.stx⟩ ⟨a.stx⟩) #[f, a]
+    let children := if parameterHead then f.children.push a else #[f, a]
+    node (← applyExpr ⟨f.stx⟩ ⟨a.stx⟩) children
   | .letE hint value body =>
     let x := names.freshName "x" hint
     let value ← recur value
@@ -225,11 +245,19 @@ partial def delabTermTree (names : Names) (term : Core.Term)
     let b ← recur b
     let s ← recur s
     let n ← recur n
-    node (← call `primrec [⟨b.stx⟩, ⟨s.stx⟩, ⟨n.stx⟩]) #[b, s, n]
+    let head ← declarationTree names `primrec
+    node (← call `primrec [⟨b.stx⟩, ⟨s.stx⟩, ⟨n.stx⟩]) #[head, b, s, n]
   | .definition n fs =>
     let head ← declarationTree names n
     let args ← fs.mapM recur
-    let stx ← args.foldlM (fun f a => applyExpr f ⟨a.stx⟩) ⟨head.stx⟩
+    let mut headSyntax : TSyntax `praExpr := ⟨head.stx⟩
+    let implicitParameters := match (CoreEnvironment.getState (← getEnv)).lookup n with
+      | some (.function d) => d.parameters.any (fun p => p.binderName.isImplicit)
+      | _ => false
+    if implicitParameters then
+      let `(praExpr| $id:ident) := headSyntax | throwError "expected a declaration name"
+      headSyntax ← `(praExpr| @$id:ident)
+    let stx ← args.foldlM (fun f a => applyExpr f ⟨a.stx⟩) headSyntax
     node stx (#[head] ++ args.toArray)
 
 /-- Delaborate `predicate` to a `DelabTree`, inferring subterm types when `typing` is given. -/
@@ -242,7 +270,7 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
   let term := fun t => delabTermTree names t typing
   let node (stx : TSyntax `praExpr) (children : Array DelabTree := #[]) :=
     pure (⟨stx, type, children⟩ : DelabTree)
-  let bind (hint : Name) (body : Predicate) (kind : Nat) := do
+  let bind (hint : Core.BinderInfo) (body : Predicate) (kind : Nat) := do
     let x := names.freshName "x" hint
     let innerTyping := typing.map (·.pushLocal 0)
     let binder ← delabTermTree (names.pushLocal x) (.bvar 0) innerTyping
@@ -250,7 +278,10 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
     let b ← `(praBinder| $(mkIdent x):ident)
     let stx ← match kind with
       | 0 => lambda x ⟨body.stx⟩
-      | 1 => `(praExpr| ∀ $b:praBinder : Nat, $(⟨body.stx⟩):praExpr)
+      | 1 => do
+        if hint.isImplicit then
+          `(praExpr| ∀ {$b:praBinder : Nat}, $(⟨body.stx⟩):praExpr)
+        else `(praExpr| ∀ $b:praBinder : Nat, $(⟨body.stx⟩):praExpr)
       | _ => `(praExpr| ∃ $b:praBinder : Nat, $(⟨body.stx⟩):praExpr)
     node stx (if kind == 0 then lambdaChildren binder body else #[binder, body])
   match predicate with
@@ -270,8 +301,8 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
     let binder : DelabTree := ⟨← identExpr x, value.type, #[]⟩
     node (← `(praExpr| let $(mkIdent x):ident := $(⟨value.stx⟩):praExpr;
       $(⟨body.stx⟩):praExpr)) #[value, binder, body]
-  | .false => node (← identExpr `False)
-  | .true => node (← identExpr `True)
+  | .false => declarationTree names `False
+  | .true => declarationTree names `True
   | .equal a b =>
     let a ← term a
     let b ← term b
@@ -298,12 +329,19 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
   | .all p => bind .anonymous (.app p.shift (.bvar 0)) 1
   | .ex p => bind .anonymous (.app p.shift (.bvar 0)) 2
   | .parameter i =>
-    node (← identExpr (names.predicates[i]?.getD (.mkSimple s!"predicate{i}")))
+    if let some (_, id) := names.unknownPredicates.find? (·.1 == i) then
+      node (← `(praExpr| ?$(Syntax.mkNumLit (toString id)):num))
+    else
+      node (← identExpr (names.predicates[i]?.getD (.mkSimple s!"predicate{i}")))
   | .lam hint body => bind hint body 0
   | .app p n =>
+    let parameterHead := match p with
+      | .definition _ fs ps => !fs.isEmpty || !ps.isEmpty
+      | _ => false
     let p ← pred p
     let n ← term n
-    node (← applyExpr ⟨p.stx⟩ ⟨n.stx⟩) #[p, n]
+    let children := if parameterHead then p.children.push n else #[p, n]
+    node (← applyExpr ⟨p.stx⟩ ⟨n.stx⟩) children
   | .definition n fs ps =>
     let head ← declarationTree names n
     let fs ← fs.mapM term
@@ -361,7 +399,14 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
     `(praExpr| let $(mkIdent x):ident := $(← delabPredicate names q);
       $(← delabProof { names with predicateAliases := (x, q) :: names.predicateAliases }
         p context hasExpected))
-  | .hyp i => identExpr (names.proofs[i]?.getD (.mkSimple s!"hypothesis{i}"))
+  | .hyp i =>
+    let result ← identExpr (names.proofs[i]?.getD (.mkSimple s!"hypothesis{i}"))
+    let environment := CoreEnvironment.getState (← getEnv)
+    let depth := pra.maxDepth.get (← getOptions)
+    if Metavariable.Frontend.hasImplicitBinders depth environment type then
+      let `(praExpr| $id:ident) := result | throwError "expected a hypothesis name"
+      `(praExpr| @$id:ident)
+    else pure result
   | .trueIntro => identExpr `trivial
   | .theoremE n fs ps =>
     applyParameters names n (← fs.mapM (delabTerm names)) (← ps.mapM (delabPredicate names))
@@ -412,7 +457,12 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
       $(← delabProof { names with proofs := h :: names.proofs } body
         (context.pushProof type) hasExpected))
   | .ascribe type p =>
-    `(praExpr| ($(← delabProof names p context true) : $(← delabPredicate names type)))
+    let result ← `(praExpr| ($(← delabProof names p context true) : $(← delabPredicate names type)))
+    let environment := CoreEnvironment.getState (← getEnv)
+    if Metavariable.Frontend.hasImplicitBinders
+        (pra.maxDepth.get (← getOptions)) environment type then
+      `(praExpr| @($result))
+    else pure result
   | .eqRefl n => do call `eq_refl [← delabTerm names n]
   | .eqSubst motive e p =>
     call `eq_subst [← delabPredicate names motive, ← delabProof names e context,
@@ -440,11 +490,17 @@ private def parameters (signature : List Core.Parameter) :
     match parameter with
     | .function hint arity =>
       let n := names.freshName "f" hint
-      binders := binders.push (← `(praParam| ($(mkIdent n):ident : $(← delabArity arity))))
+      let binder ← if hint.isImplicit then
+        `(praParam| {$(mkIdent n):ident : $(← delabArity arity)})
+      else `(praParam| ($(mkIdent n):ident : $(← delabArity arity)))
+      binders := binders.push binder
       names := { names with functions := names.functions ++ [n] }
     | .predicate hint sig =>
       let n := names.freshName "P" hint
-      binders := binders.push (← `(praParam| ($(mkIdent n):ident : $(← delabPredicateType sig))))
+      let binder ← if hint.isImplicit then
+        `(praParam| {$(mkIdent n):ident : $(← delabPredicateType sig)})
+      else `(praParam| ($(mkIdent n):ident : $(← delabPredicateType sig)))
+      binders := binders.push binder
       names := { names with predicates := names.predicates ++ [n] }
   return (names, binders)
 
@@ -481,7 +537,8 @@ private def signatureParts (d : Core.Declaration) :
     return (ps, ← delabPredicateType d.signature)
   | .theoremE d =>
     let (names, ps) ← parameters d.parameters
-    return (ps, ← delabPredicate names d.type)
+    let depth := pra.maxDepth.get (← getOptions)
+    return (ps, ← delabPredicate names (Core.betaReducePredicate depth d.type))
 
 /-- Format a declaration's parameter and result types separated by `→`, without its name. -/
 def delabSignatureType (d : Core.Declaration) : CommandElabM MessageData := do

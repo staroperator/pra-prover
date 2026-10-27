@@ -18,6 +18,8 @@ Type checking and inference for PRA expressions and declarations:
 All operations are in `LeanPRA.Core`. Callers build `Environment` from `∅` through
 `checkDeclaration` and maintain well-formed local contexts as they introduce bindings.
 `checkProof` also assumes its expected formula is well formed.
+Proof inference uses weak-head reduction to expose the constructor needed by each rule,
+so its results preserve expressions inside that constructor. Conversion uses full normalization.
 Normalization and equality assume well-typed inputs at the supplied arities.
 `maxDepth` bounds recursive call depth; `ErrorKind.exhausted` means checking hit the depth limit.
 -/
@@ -252,7 +254,8 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         let consequent ← (inferProof maxDepth environment (context.pushProof antecedent) body)
         pure (.imp antecedent consequent)
       | .impElim function argument =>
-        let type ← reduceProofType maxDepth environment context function
+        let type ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context function)
         match type with
         | .imp antecedent consequent =>
           (checkProof maxDepth environment context argument antecedent)
@@ -262,11 +265,13 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         return .and (← (inferProof maxDepth environment context left))
           (← (inferProof maxDepth environment context right))
       | .andLeft pair =>
-        match ← reduceProofType maxDepth environment context pair with
+        match ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context pair) with
         | .and left _ => pure left
         | actual => fail (.expectedForm .conjunction (.predicate actual))
       | .andRight pair =>
-        match ← reduceProofType maxDepth environment context pair with
+        match ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context pair) with
         | .and _ right => pure right
         | actual => fail (.expectedForm .conjunction (.predicate actual))
       | .orLeft other proof =>
@@ -277,7 +282,8 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         return .or other (← inferProof maxDepth environment context proof)
       | .orElim _ _ target scrutinee left right =>
         let _ ← inferFormula maxDepth environment context target
-        match ← reduceProofType maxDepth environment context scrutinee with
+        match ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context scrutinee) with
         | .or a b =>
           (checkProof maxDepth environment (context.pushProof a) left target)
           (checkProof maxDepth environment (context.pushProof b) right target)
@@ -294,7 +300,8 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         pure (.all motive)
       | .forallElim proof argument =>
         checkTerm maxDepth environment context argument 0
-        match ← reduceProofType maxDepth environment context proof with
+        match ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context proof) with
         | .all body => pure (.app body argument)
         | actual => fail (.expectedForm .universal (.predicate actual))
       | .existsIntro motive witness proof =>
@@ -304,7 +311,8 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         pure (.ex motive)
       | .existsElim _ _ target scrutinee body =>
         let _ ← inferFormula maxDepth environment context target
-        match ← reduceProofType maxDepth environment context scrutinee with
+        match ← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context scrutinee) with
         | .ex motive =>
           let extended := (context.pushLocal 0).pushProof (.app motive.shift (.bvar 0))
           (checkProof maxDepth environment extended body target.shift)
@@ -329,14 +337,18 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         pure (.equal term term)
       | .eqSubst motive equality proof =>
         checkMotive maxDepth environment context motive
-        let (left, right) ← equalitySides (← reduceProofType maxDepth environment context equality)
+        let (left, right) ← equalitySides (← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context equality))
         checkProof maxDepth environment context proof (.app motive left)
         pure (.app motive right)
       | .succNeZero term =>
         checkTerm maxDepth environment context term 0
         pure (.imp (.equal (.app .succ term) .zero) .false)
       | .succInj proof =>
-        let (left, right) ← equalitySides (← reduceProofType maxDepth environment context proof)
+        let (left, right) ← equalitySides (← whnfPredicate maxDepth environment
+          (← inferProof maxDepth environment context proof))
+        let left ← whnfTerm maxDepth environment left
+        let right ← whnfTerm maxDepth environment right
         match left, right with
         | .app .succ a, .app .succ b => pure (.equal a b)
         | _, _ => fail (.expectedForm .successors (.predicate (.equal left right)))
@@ -353,14 +365,6 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         (checkProof maxDepth environment extended step successor)
         pure (.app motive argument)
     ).withSite context (.proof expression)
-
-/-- Infer and normalize the formula proved by `proof`. -/
-def reduceProofType : Nat → Environment → Context → Proof → CheckResult Predicate
-  | 0, _, context, proof => exhausted.withSite context (.proof proof)
-  | maxDepth + 1, environment, context, proof =>
-    (do
-      reduceFormula maxDepth environment (← inferProof maxDepth environment context proof)
-    ).withSite context (.proof proof)
 
 /-- Check that `proof` proves a formula definitionally equal to the well-formed `expected`. -/
 def checkProof : Nat → Environment → Context → Proof → Predicate → CheckResult Unit
