@@ -1669,6 +1669,7 @@ private inductive DraftDeclaration where
 /-- Elaborate a `def` or `theorem` declaration, check it with `Core.checkDeclaration`,
 and publish it. -/
 def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
+  let stx ← expandPraSyntax stx
   let (isTheorem, id, ps, type, body) ← match stx with
     | `(praDecl| def $id:ident $ps:praParam* : $type:praExpr := $body:praExpr) =>
       pure (false, id, ps.map (·.raw), type, body)
@@ -1729,6 +1730,7 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
 
 /-- Elaborate `#check stx` and log its inferred Core type. -/
 def elaborateCheck (stx : Syntax) : CommandElabM Unit := do
+  let stx ← expandPraSyntax stx
   let s : Scope := { environment := CoreEnvironment.getState (← getEnv) }
   if let `(praExpr| $id:ident) := unparen stx then
     let n := objectName id

@@ -22,6 +22,7 @@ public import LeanPRA.Surface.Metavariable.State
 public import LeanPRA.Surface.Metavariable.Substitution
 public import LeanPRA.Surface.Metavariable.Syntax
 public import LeanPRA.Surface.NameResolution
+public import LeanPRA.Surface.Notation
 public import LeanPRA.Surface.Options
 public import LeanPRA.Surface.Recovery
 public import LeanPRA.Surface.Syntax

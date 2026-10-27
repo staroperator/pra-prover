@@ -1,7 +1,6 @@
 module
 
-public meta import LeanPRA.Surface.Syntax
-public meta import LeanPRA.Surface.NameResolution
+public meta import LeanPRA.Surface.Notation
 public meta import LeanPRA.Surface.Metavariable.Frontend
 
 /-!
@@ -164,6 +163,19 @@ structure DelabTree where
   children : Array DelabTree := #[]
   deriving Inhabited
 
+private partial def descendants (tree : DelabTree) : Array DelabTree :=
+  #[tree] ++ tree.children.flatMap descendants
+
+private partial def visibleChildren (stx : Syntax) (available : Array DelabTree) :
+    Array DelabTree :=
+  if let some child := available.find? (·.stx == stx) then #[child]
+  else stx.getArgs.flatMap (visibleChildren · available)
+
+private def notationTree (names : Names) (tree : DelabTree) : CommandElabM DelabTree := do
+  let stx ← unexpandPraSyntax tree.stx names.used
+  return { tree with stx, children := if stx.getKind == tree.stx.getKind then tree.children
+    else stx.getArgs.flatMap (visibleChildren · (tree.children.flatMap descendants)) }
+
 /-- Flatten child trees when consecutive lambdas are grouped into one `fun`. -/
 private def lambdaChildren (binder body : DelabTree) : Array DelabTree :=
   match body.stx with
@@ -205,7 +217,7 @@ partial def delabTermTree (names : Names) (term : Core.Term)
     return ⟨← identExpr name, type, #[]⟩
   let recur := fun t => delabTermTree names t typing
   let node (stx : TSyntax `praExpr) (children : Array DelabTree := #[]) :=
-    pure (⟨stx, type, children⟩ : DelabTree)
+    notationTree names (⟨stx, type, children⟩ : DelabTree)
   match term with
   | .bvar i => node (← identExpr (names.locals[i]?.getD (.mkSimple s!"unbound{i}")))
   | .parameter i =>
@@ -213,7 +225,7 @@ partial def delabTermTree (names : Names) (term : Core.Term)
       node (← `(praExpr| ?$(Syntax.mkNumLit (toString id)):num))
     else node (← identExpr (names.functions[i]?.getD (.mkSimple s!"parameter{i}")))
   | .zero => node (← numeral 0)
-  | .succ => declarationTree names `S
+  | .succ => notationTree names (← declarationTree names `S)
   | .lam hint body =>
     let x := names.freshName "x" hint
     let inner := fun t => delabTermTree (names.pushLocal x) t (typing.map (·.pushLocal 0))
@@ -269,7 +281,7 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
   let pred := fun p => delabPredicateTree names p typing
   let term := fun t => delabTermTree names t typing
   let node (stx : TSyntax `praExpr) (children : Array DelabTree := #[]) :=
-    pure (⟨stx, type, children⟩ : DelabTree)
+    notationTree names (⟨stx, type, children⟩ : DelabTree)
   let bind (hint : Core.BinderInfo) (body : Predicate) (kind : Nat) := do
     let x := names.freshName "x" hint
     let innerTyping := typing.map (·.pushLocal 0)
@@ -301,8 +313,8 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
     let binder : DelabTree := ⟨← identExpr x, value.type, #[]⟩
     node (← `(praExpr| let $(mkIdent x):ident := $(⟨value.stx⟩):praExpr;
       $(⟨body.stx⟩):praExpr)) #[value, binder, body]
-  | .false => declarationTree names `False
-  | .true => declarationTree names `True
+  | .false => notationTree names (← declarationTree names `False)
+  | .true => notationTree names (← declarationTree names `True)
   | .equal a b =>
     let a ← term a
     let b ← term b
@@ -388,99 +400,103 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
     if needsExpected && !hasExpected then
       `(praExpr| ($result : $(← delabPredicate names type)))
     else pure result
-  match p with
-  | .letTerm hint a p =>
-    let x := names.freshName "x" hint
-    `(praExpr| let $(mkIdent x):ident := $(← delabTerm names a);
-      $(← delabProof { names with termAliases := (x, a) :: names.termAliases }
-        p context hasExpected))
-  | .letPredicate hint q p =>
-    let x := names.freshName "P" hint
-    `(praExpr| let $(mkIdent x):ident := $(← delabPredicate names q);
-      $(← delabProof { names with predicateAliases := (x, q) :: names.predicateAliases }
-        p context hasExpected))
-  | .hyp i =>
-    let result ← identExpr (names.proofs[i]?.getD (.mkSimple s!"hypothesis{i}"))
-    let environment := CoreEnvironment.getState (← getEnv)
-    let depth := pra.maxDepth.get (← getOptions)
-    if Metavariable.Frontend.hasImplicitBinders depth environment type then
-      let `(praExpr| $id:ident) := result | throwError "expected a hypothesis name"
-      `(praExpr| @$id:ident)
-    else pure result
-  | .trueIntro => identExpr `trivial
-  | .theoremE n fs ps =>
-    applyParameters names n (← fs.mapM (delabTerm names)) (← ps.mapM (delabPredicate names))
-  | .impIntro hint a p =>
-    let h := names.freshName "h" hint
-    typedLambda h (← delabPredicate names a)
-      (← delabProof { names with proofs := h :: names.proofs } p
-        (context.pushProof a) hasExpected)
-  | .impElim f a => do
-    applyExpr (← delabProof names f context) (← delabProof names a context true)
-  | .andIntro a b => do
-    `(praExpr| ($(← delabProof names a context hasExpected),
-      $(← delabProof names b context hasExpected)))
-  | .andLeft p => do call `and_left [← delabProof names p context]
-  | .andRight p => do call `and_right [← delabProof names p context]
-  | .orLeft _ p => do finish (← call `or_left [← delabProof names p context true]) true
-  | .orRight _ p => do finish (← call `or_right [← delabProof names p context true]) true
-  | .orElim ln rn _ p l r =>
-    let .or a b ← formulaHead context p | throwError "expected a disjunction in core proof"
-    let branch hint domain q := do
+  let result ← do
+    match p with
+    | .letTerm hint a p =>
+      let x := names.freshName "x" hint
+      `(praExpr| let $(mkIdent x):ident := $(← delabTerm names a);
+        $(← delabProof { names with termAliases := (x, a) :: names.termAliases }
+          p context hasExpected))
+    | .letPredicate hint q p =>
+      let x := names.freshName "P" hint
+      `(praExpr| let $(mkIdent x):ident := $(← delabPredicate names q);
+        $(← delabProof { names with predicateAliases := (x, q) :: names.predicateAliases }
+          p context hasExpected))
+    | .hyp i =>
+      let result ← identExpr (names.proofs[i]?.getD (.mkSimple s!"hypothesis{i}"))
+      let environment := CoreEnvironment.getState (← getEnv)
+      let depth := pra.maxDepth.get (← getOptions)
+      if Metavariable.Frontend.hasImplicitBinders depth environment type then
+        let `(praExpr| $id:ident) := result | throwError "expected a hypothesis name"
+        `(praExpr| @$id:ident)
+      else pure result
+    | .trueIntro => identExpr `trivial
+    | .theoremE n fs ps =>
+      applyParameters names n (← fs.mapM (delabTerm names)) (← ps.mapM (delabPredicate names))
+    | .impIntro hint a p =>
       let h := names.freshName "h" hint
-      typedLambda h (← delabPredicate names domain)
-        (← delabProof { names with proofs := h :: names.proofs } q (context.pushProof domain) true)
-    finish (← call `or_elim [← delabProof names p context, ← branch ln a l, ← branch rn b r]) true
-  | .falseElim _ p => do finish (← call `false_elim [← delabProof names p context true]) true
-  | .forallIntro hint _ p =>
-    let x := names.freshName "x" hint
-    typedLambda x (← identExpr `Nat)
-      (← delabProof (names.pushLocal x) p (context.pushLocal 0) hasExpected)
-  | .forallElim p n => do applyExpr (← delabProof names p context) (← delabTerm names n)
-  | .existsIntro _ n p => do
-    finish (← `(praExpr| ($(← delabTerm names n), $(← delabProof names p context true)))) true
-  | .existsElim xn hn _ p body =>
-    let .ex m ← formulaHead context p | throwError "expected an existential in core proof"
-    let x := names.freshName "x" xn
-    let h := (names.pushLocal x).freshName "h" hn
-    let hypothesis := Predicate.app m.shift (.bvar 0)
-    let extendedNames := (names.pushLocal x)
-    let body ← delabProof { extendedNames with proofs := h :: names.proofs } body
-      ((context.pushLocal 0).pushProof hypothesis) true
-    let branch ← typedLambda x (← identExpr `Nat)
-      (← typedLambda h (← delabPredicate extendedNames hypothesis) body)
-    finish (← call `exists_elim [← delabProof names p context, branch]) true
-  | .letE hint type value body =>
-    let h := names.freshName "h" hint
-    `(praExpr| let $(mkIdent h):ident : $(← delabPredicate names type) :=
-      $(← delabProof names value context true);
-      $(← delabProof { names with proofs := h :: names.proofs } body
-        (context.pushProof type) hasExpected))
-  | .ascribe type p =>
-    let result ← `(praExpr| ($(← delabProof names p context true) : $(← delabPredicate names type)))
-    let environment := CoreEnvironment.getState (← getEnv)
-    if Metavariable.Frontend.hasImplicitBinders
-        (pra.maxDepth.get (← getOptions)) environment type then
-      `(praExpr| @($result))
-    else pure result
-  | .eqRefl n => do call `eq_refl [← delabTerm names n]
-  | .eqSubst motive e p =>
-    call `eq_subst [← delabPredicate names motive, ← delabProof names e context,
-      ← delabProof names p context true]
-  | .succNeZero n => do call `succ_ne_zero [← delabTerm names n]
-  | .succInj p => do call `succ_inj [← delabProof names p context]
-  | .lem a => do call `lem [← delabPredicate names a]
-  | .induction xn hn motive base step n =>
-    let x := names.freshName "x" xn
-    let h := (names.pushLocal x).freshName "h" hn
-    let hypothesis := Predicate.app motive.shift (.bvar 0)
-    let extendedNames := (names.pushLocal x)
-    let step ← delabProof { extendedNames with proofs := h :: names.proofs } step
-      ((context.pushLocal 0).pushProof hypothesis) true
-    let step ← typedLambda x (← identExpr `Nat)
-      (← typedLambda h (← delabPredicate extendedNames hypothesis) step)
-    let head ← `(praExpr| induction (motive := $(← delabPredicate names motive)))
-    [← delabProof names base context true, step, ← delabTerm names n].foldlM applyExpr head
+      typedLambda h (← delabPredicate names a)
+        (← delabProof { names with proofs := h :: names.proofs } p
+          (context.pushProof a) hasExpected)
+    | .impElim f a => do
+      applyExpr (← delabProof names f context) (← delabProof names a context true)
+    | .andIntro a b => do
+      `(praExpr| ($(← delabProof names a context hasExpected),
+        $(← delabProof names b context hasExpected)))
+    | .andLeft p => do call `and_left [← delabProof names p context]
+    | .andRight p => do call `and_right [← delabProof names p context]
+    | .orLeft _ p => do finish (← call `or_left [← delabProof names p context true]) true
+    | .orRight _ p => do finish (← call `or_right [← delabProof names p context true]) true
+    | .orElim ln rn _ p l r =>
+      let .or a b ← formulaHead context p | throwError "expected a disjunction in core proof"
+      let branch hint domain q := do
+        let h := names.freshName "h" hint
+        typedLambda h (← delabPredicate names domain)
+          (← delabProof { names with proofs := h :: names.proofs } q
+            (context.pushProof domain) true)
+      finish (← call `or_elim [← delabProof names p context, ← branch ln a l, ← branch rn b r]) true
+    | .falseElim _ p => do finish (← call `false_elim [← delabProof names p context true]) true
+    | .forallIntro hint _ p =>
+      let x := names.freshName "x" hint
+      typedLambda x (← identExpr `Nat)
+        (← delabProof (names.pushLocal x) p (context.pushLocal 0) hasExpected)
+    | .forallElim p n => do applyExpr (← delabProof names p context) (← delabTerm names n)
+    | .existsIntro _ n p => do
+      finish (← `(praExpr| ($(← delabTerm names n), $(← delabProof names p context true)))) true
+    | .existsElim xn hn _ p body =>
+      let .ex m ← formulaHead context p | throwError "expected an existential in core proof"
+      let x := names.freshName "x" xn
+      let h := (names.pushLocal x).freshName "h" hn
+      let hypothesis := Predicate.app m.shift (.bvar 0)
+      let extendedNames := (names.pushLocal x)
+      let body ← delabProof { extendedNames with proofs := h :: names.proofs } body
+        ((context.pushLocal 0).pushProof hypothesis) true
+      let branch ← typedLambda x (← identExpr `Nat)
+        (← typedLambda h (← delabPredicate extendedNames hypothesis) body)
+      finish (← call `exists_elim [← delabProof names p context, branch]) true
+    | .letE hint type value body =>
+      let h := names.freshName "h" hint
+      `(praExpr| let $(mkIdent h):ident : $(← delabPredicate names type) :=
+        $(← delabProof names value context true);
+        $(← delabProof { names with proofs := h :: names.proofs } body
+          (context.pushProof type) hasExpected))
+    | .ascribe type p =>
+      let result ← `(praExpr|
+        ($(← delabProof names p context true) : $(← delabPredicate names type)))
+      let environment := CoreEnvironment.getState (← getEnv)
+      if Metavariable.Frontend.hasImplicitBinders
+          (pra.maxDepth.get (← getOptions)) environment type then
+        `(praExpr| @($result))
+      else pure result
+    | .eqRefl n => do call `eq_refl [← delabTerm names n]
+    | .eqSubst motive e p =>
+      call `eq_subst [← delabPredicate names motive, ← delabProof names e context,
+        ← delabProof names p context true]
+    | .succNeZero n => do call `succ_ne_zero [← delabTerm names n]
+    | .succInj p => do call `succ_inj [← delabProof names p context]
+    | .lem a => do call `lem [← delabPredicate names a]
+    | .induction xn hn motive base step n =>
+      let x := names.freshName "x" xn
+      let h := (names.pushLocal x).freshName "h" hn
+      let hypothesis := Predicate.app motive.shift (.bvar 0)
+      let extendedNames := (names.pushLocal x)
+      let step ← delabProof { extendedNames with proofs := h :: names.proofs } step
+        ((context.pushLocal 0).pushProof hypothesis) true
+      let step ← typedLambda x (← identExpr `Nat)
+        (← typedLambda h (← delabPredicate extendedNames hypothesis) step)
+      let head ← `(praExpr| induction (motive := $(← delabPredicate names motive)))
+      [← delabProof names base context true, step, ← delabTerm names n].foldlM applyExpr head
+  return ⟨← unexpandPraSyntax result.raw names.used⟩
 
 private def parameters (signature : List Core.Parameter) :
     CommandElabM (Names × Array (TSyntax `praParam)) := do

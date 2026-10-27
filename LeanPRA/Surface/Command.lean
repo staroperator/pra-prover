@@ -3,23 +3,22 @@ module
 public meta import LeanPRA.Surface.Elab
 
 /-!
-# The PRA block command
+# PRA commands
 
-`elaborateBlock` elaborates `pra … end` entries in order, catching errors per entry so later
-declarations still elaborate against the last accepted Core environment. Lean command snapshots
-reuse an unchanged prefix after an editor update, including inside namespaces. Each completed entry
-reports diagnostics and editor information before the remainder of the block finishes. Successfully
-checked entries can also be reused when an incomplete edit changes parser error suppression.
-PRA requires declared binders; Lean's `autoImplicit` option is disabled within each PRA block.
+`pra` opens a command scope where entries are parsed and elaborated one command at a time, so
+notation declared in a block can be used in later entries of the same block. Lean's command
+snapshots handle incremental reuse, diagnostics, and editor information for each entry.
 
-Enable `trace.pra.incremental` to inspect which entries are elaborated and reused.
+- `elaborateBlock` opens a PRA scope, disables `autoImplicit`, and restricts command parsing to
+  PRA entries until the matching `end`.
+- `praEntry` parses a command in an active PRA scope using `praDecl`.
+- `elaborateEntry` elaborates declarations, notation, inspection commands, and `open`,
+  `namespace`, and `end` commands.
 -/
 
 public meta section
-
 namespace LeanPRA.Surface
-
-open Lean Elab Command
+open Lean Elab Command Parser
 
 private def registerImportedNamespace (id : Ident) : CommandElabM Unit := do
   let name := id.getId
@@ -35,141 +34,35 @@ private def registerImportedNamespace (id : Ident) : CommandElabM Unit := do
     if CoreEnvironment.hasNamespace (← getEnv) candidate then
       modifyEnv (registerNamespaceParents · candidate)
 
-private structure EntryResult extends Language.Snapshot where
-  state? : Option Command.State := none
-  succeeded : Bool := false
-  deriving Inhabited, TypeName
+private def inPraFn : ParserFn := fun ctx s =>
+  if (praScopes.getState ctx.env).isEmpty then s.mkError "expected a PRA block" else s
 
-private instance : Language.ToSnapshotTree EntryResult where
-  toSnapshotTreeM s := return ⟨← s.toSnapshot.transform, #[]⟩
+private def inPra : Parser := { fn := inPraFn }
 
-private structure EntrySnapshot extends Language.Snapshot where
-  result : Language.SnapshotTask EntryResult
-  nested : Language.SnapshotTask Language.DynamicSnapshot
-  deriving Inhabited, TypeName
+@[combinator_formatter inPra] private def formatInPra : PrettyPrinter.Formatter := pure ()
+@[combinator_parenthesizer inPra] private def parenthesizeInPra :
+    PrettyPrinter.Parenthesizer := pure ()
 
-private instance : Language.ToSnapshotTree EntrySnapshot where
-  toSnapshotTreeM s :=
-    return ⟨← s.toSnapshot.transform, #[← s.result.transform, ← s.nested.transform]⟩
+-- Parse each entry using the environment produced by the previous command.
+@[command_parser 2000] def praEntry := leading_parser inPra >> categoryParser `praDecl 0
 
-private structure EntriesSnapshot extends Language.Snapshot where
-  steps : Array (Language.SnapshotTask EntrySnapshot)
-  suppressElabErrors : Bool
-  deriving Inhabited, TypeName
+/-- Open a PRA block. The matching `end` restores the enclosing Lean scope. -/
+@[command_elab praBlock] def elaborateBlock : CommandElab := fun _ => do
+  unless (praScopes.getState (← getEnv)).isEmpty do throwError "nested PRA blocks are unsupported"
+  elabCommand (← `(section))
+  modifyScope fun scope => { scope with opts := autoImplicit.set scope.opts false }
+  modifyEnv (praScopes.setState · [.anonymous])
+  -- Use only PRA entry parsers until this scope closes, including after a parse error.
+  modifyEnv fun env => parserExtension.modifyState env fun state =>
+    match state.categories.find? `command with
+    | none => state
+    | some category =>
+      let category := { category with tables := { leadingParsers := [(praEntry, 2000)] } }
+      { state with categories := state.categories.insert `command category }
 
-private instance : Language.ToSnapshotTree EntriesSnapshot where
-  toSnapshotTreeM s := return ⟨← s.toSnapshot.transform, ← s.steps.mapM (·.transform)⟩
-
-initialize registerTraceClass `pra.incremental
-
-private def traceEntry (action : String) (entry : TSyntax `praDecl) : CommandElabM Unit := do
-  if (← getOptions).getBool `trace.pra.incremental then
-    let label := match entry with
-      | `(praDecl| def $id:ident $_ps:praParam* : $_type:praExpr := $_body:praExpr)
-      | `(praDecl| theorem $id:ident $_ps:praParam* : $_type:praExpr := $_body:praExpr) =>
-        id.getId.toString
-      | `(praDecl| namespace $id:ident $_body:praDecl* end $[$_closing:ident]?) =>
-        "namespace " ++ id.getId.toString
-      | `(praDecl| open $_ids:ident*) => "open"
-      | `(praDecl| #check $_e:praExpr) => "#check"
-      | `(praDecl| #print $_id:ident) => "#print"
-      | _ => "entry"
-    dbg_trace "PRA {action} {label}"
-
-/-- Give each entry its own context so completed entries can provide editor information early. -/
-private def withEntryInfo (entry : Syntax) (action : CommandElabM α) : CommandElabM α :=
-  withInfoTreeContext action fun trees => do
-    let ctx ← read
-    let s ← get
-    let scope ← getScope
-    return .context (.commandCtx {
-      env := s.env, cmdEnv? := some s.env, fileMap := ctx.fileMap, mctx := {},
-      currNamespace := scope.currNamespace, openDecls := scope.openDecls,
-      options := scope.opts, ngen := s.ngen
-    }) (.node (.ofCommandInfo {
-      elaborator := `LeanPRA.Surface.elaborateBlock, stx := entry }) trees)
-
-mutual
-
-/-- Reuse only an unchanged prefix, including source positions and previously admitted entries. -/
-private partial def elaborateEntries (entries : Array (TSyntax `praDecl)) : CommandElabM Unit := do
-  let some bundle := (← read).snap? | do
-    for entry in entries do
-      traceEntry "elaborate" entry
-      discard <| elaborateEntry entry
-    return
-  let suppressElabErrors := (← read).suppressElabErrors
-  let old? := do
-    let old ← bundle.old?
-    let previous ← old.val.get.toTyped? EntriesSnapshot
-    return previous
-  if bundle.old?.isSome && old?.isNone then
-    bundle.old?.forM (·.val.cancelRec)
-  let promises ← entries.mapM fun _ => IO.Promise.new (α := EntrySnapshot)
-  bundle.new.resolve <| .ofTyped {
-    diagnostics := .empty
-    suppressElabErrors
-    steps := entries.zipWith (fun entry promise => {
-      stx? := some entry.raw, task := promise.resultD default, cancelTk? := none
-    }) promises : EntriesSnapshot
-  }
-  let opts ← getOptions
-  let mut reuse := true
-  for entry in entries, promise in promises, i in *...entries.size do
-    let oldStep? := old?.bind (·.steps[i]?)
-    let same := reuse && oldStep?.any fun old =>
-      old.stx?.any (·.eqWithInfoAndTraceReuse opts entry.raw)
-    let oldEntry? := if reuse then oldStep?.map (·.get) else none
-    let sameSuppression := old?.any (·.suppressElabErrors == suppressElabErrors)
-    if same then
-      if let some previous := oldEntry? then
-        let reusable := sameSuppression ||
-          (previous.result.get.succeeded && entry.raw[0].getAtomVal != "namespace")
-        if let some state := previous.result.get.state?.filter (fun _ => reusable) then
-          traceEntry "reuse" entry
-          set state
-          promise.resolve previous
-          continue
-    let resultPromise ← IO.Promise.new (α := EntryResult)
-    let nestedPromise ← IO.Promise.new (α := Language.DynamicSnapshot)
-    let cancelTk ← IO.CancelToken.new
-    let nested : Language.SnapshotTask Language.DynamicSnapshot := {
-      stx? := some entry.raw, task := nestedPromise.resultD default, cancelTk? := none }
-    let result : Language.SnapshotTask EntryResult := {
-      stx? := some entry.raw, task := resultPromise.resultD default, cancelTk? := some cancelTk
-      reportingRange := if entry.raw[0].isAtom && entry.raw[0].getAtomVal == "namespace" then .skip
-        else Language.SnapshotTask.defaultReportingRange entry.raw }
-    promise.resolve { diagnostics := .empty, result, nested }
-    if let some previous := oldEntry? then
-      previous.result.cancelRec
-      unless entry.raw[0].getAtomVal == "namespace" do previous.nested.cancelRec
-    else if let some old := oldStep? then old.cancelRec
-    try
-      traceEntry "elaborate" entry
-      let succeeded ← withReader (fun ctx => { ctx with cancelTk? := some cancelTk, snap? := some {
-        new := nestedPromise
-        old? := do
-          let old ← oldStep?
-          let previous ← oldEntry?
-          return { stx := (← old.stx?), val := previous.nested }
-      } }) (withEntryInfo entry (elaborateEntry entry))
-      liftCoreM Core.checkInterrupted
-      let s ← get
-      let diagnostics ← Language.Snapshot.Diagnostics.ofMessageLog
-        { s.messages with reported := {} }
-      modify fun s => { s with messages := s.messages.markAllReported }
-      let trees := (← getInfoState).trees
-      resultPromise.resolve {
-        diagnostics, succeeded, state? := some (← get), infoTree? := trees[trees.size - 1]? }
-    finally
-      resultPromise.resolve default
-      nestedPromise.resolve default
-    reuse := false
-  -- Cancel any remaining old snapshot tasks when the new block has fewer entries.
-  if let some old := old? then
-    for step in old.steps[entries.size:] do step.cancelRec
-
-private partial def elaborateEntry (entry : TSyntax `praDecl) : CommandElabM Bool := do
+/-- Elaborate one PRA entry and publish declarations only after Core checking succeeds. -/
+@[command_elab praEntry] def elaborateEntry : CommandElab := fun stx => do
+  let entry := stx[0]
   try
     withRef entry do
       match entry with
@@ -177,29 +70,28 @@ private partial def elaborateEntry (entry : TSyntax `praDecl) : CommandElabM Boo
       | `(praDecl| #print $id:ident) => elaboratePrint id
       | `(praDecl| open $ids:ident*) =>
         for id in ids do registerImportedNamespace id
-        withoutCommandIncrementality true <| elabCommand (← `(open $ids:ident*))
-      | `(praDecl| namespace $id:ident $body:praDecl* end $[$closing:ident]?) =>
-        if let some closing := closing then
-          unless closing.getId == id.getId do
-            throwErrorAt closing "expected `end {id.getId}`"
+        elabCommand (← `(open $ids:ident*))
+      | `(praDecl| namespace $id:ident) =>
+        let name := id.getId
         let current ← getCurrNamespace
-        let ns := if id.getId.getRoot == `_root_ then
-          id.getId.replacePrefix `_root_ .anonymous else current ++ id.getId
+        let ns := if name.getRoot == `_root_ then name.replacePrefix `_root_ .anonymous
+          else current ++ name
         modifyEnv (registerNamespaceParents · ns)
-        let opts ← getOptions
-        let oldHeaderMatches := (← read).snap?.bind (·.old?) |>.any fun old =>
-          old.stx[0].eqWithInfoAndTraceReuse opts entry.raw[0] &&
-          old.stx[1].eqWithInfoAndTraceReuse opts entry.raw[1]
-        unless oldHeaderMatches do
-          (← read).snap?.bind (·.old?) |>.forM (·.val.cancelRec)
-        withReader (fun ctx => { ctx with snap? := ctx.snap?.map fun snap =>
-          { snap with old? := snap.old?.filter fun _ => oldHeaderMatches } }) do
-          withScope (fun scope => { scope with currNamespace := ns }) (elaborateEntries body)
-      | _ => elaborateDeclaration entry
-    return true
+        elabCommand (← `(section))
+        modifyScope fun scope => { scope with currNamespace := ns }
+        activateScoped ns
+        modifyEnv fun env => praScopes.setState env (name :: praScopes.getState env)
+      | `(praDecl| end $[$closing:ident]?) =>
+        let name :: rest := praScopes.getState (← getEnv) | throwError "no open PRA scope"
+        if let some closing := closing then
+          unless closing.getId == name do logErrorAt closing m!"expected `end {name}`"
+        elabCommand (← `(end))
+        modifyEnv (praScopes.setState · rest)
+      | _ =>
+        if entry.isOfKind ``praNotation || entry.isOfKind ``praMixfix then
+          elaborateNotation entry
+        else elaborateDeclaration entry
   catch ex =>
-    -- Cancel old nested snapshot tasks when a namespace fails before elaborating its body.
-    (← read).snap?.bind (·.old?) |>.forM (·.val.cancelRec)
     if ex.isInterrupt then throw ex
     match entry with
     | `(praDecl| def $id:ident $_ps:praParam* : $_type:praExpr := $_body:praExpr)
@@ -207,24 +99,5 @@ private partial def elaborateEntry (entry : TSyntax `praDecl) : CommandElabM Boo
       addUnresolvedInfo id
     | _ => pure ()
     logException ex
-    return false
-
-end
-
-/-- Elaborate a `pra … end` block, reusing unchanged entries through Lean's command snapshots. -/
-@[command_elab praBlock, incremental] def elaborateBlock : CommandElab
-  | stx@`(pra $entries:praDecl* end) => do
-    let opts ← getOptions
-    let sameHeader := (← read).snap?.bind (·.old?) |>.any fun old =>
-      old.stx[0].eqWithInfoAndTraceReuse opts stx[0]
-    unless sameHeader do
-      (← read).snap?.bind (·.old?) |>.forM (·.val.cancelRec)
-    withReader (fun ctx => { ctx with snap? := ctx.snap?.map fun snap =>
-      { snap with old? := snap.old?.filter fun _ => sameHeader } }) do
-      -- The outer command's quotation context changes with its entire text. Use the stable header.
-      withInitQuotContext (some (hash ("pra", stx[0].getPos?))) do
-        withScope (fun scope => { scope with opts := autoImplicit.set scope.opts false })
-          (elaborateEntries entries)
-  | _ => throwUnsupportedSyntax
 
 end LeanPRA.Surface
