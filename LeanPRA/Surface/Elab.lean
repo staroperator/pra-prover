@@ -1,6 +1,6 @@
 module
 
-public meta import LeanPRA.Surface.IDE
+public meta import LeanPRA.Surface.Tactic
 
 /-!
 # Elaborating PRA syntax with explicit metavariables
@@ -92,6 +92,7 @@ private structure Scope where
   parentExpression : Syntax := .missing
   localIds : List Nat := []
   reason : String := "proof type"
+  inTactic : Bool := false
 
 private structure Origin where
   site : DraftSite
@@ -141,6 +142,8 @@ private structure ObjectState where
   argumentSources : Array (Metavariable.Subject × Syntax) := #[]
   unification : Metavariable.Frontend.State := Metavariable.Frontend.empty 0 0
   blocking : Option Blocking := none
+  tacticGoals : Array (Nat × Scope) := #[]
+  collectingTacticGoals : Bool := false
 
 private abbrev ObjectElabM := ReaderT Scope (StateRefT ObjectState CommandElabM)
 
@@ -352,7 +355,7 @@ private def withGoal (stx : Syntax) (expected : Option DraftGoalTarget)
     (infer : Metavariable.Projection → Nat → α → Scope → Core.CheckResult DraftGoalTarget) (action
         : ObjectElabM α) :
     ObjectElabM α := do
-  unless (← getInfoState).enabled do return ← action
+  if (← read).inTactic || !(← getInfoState).enabled then return ← action
   let scope ← read
   let ref := if (stx.getRange? (canonicalOnly := true)).isSome then stx
     else missingRange scope.parentExpression
@@ -1019,12 +1022,18 @@ private partial def proofNow (stx : Syntax) (expected : Option Predicate) :
     let hole := unparen stx
     if hole.isMissing || hole.isOfKind ``praHole || hole.isOfKind ``praSyntheticHole ||
         hole.isOfKind `LeanPRA.Surface.recoveredHole then
+      if (← get).collectingTacticGoals && hole.isOfKind ``praHole then
+        throwErrorAt stx "cannot infer PRA proof placeholder `_`; use `?_` to create a new goal"
       let type ← match expected with
         | some type => pure type
         | none => unknownPredicate stx ⟨0, .prop⟩
       let scope ← read
-      modify fun s => { s with holes := s.holes.push ⟨stx, scope, type⟩ }
       let value ← runSolver (Metavariable.Frontend.freshProof type scope.context scope.localIds)
+      if (← get).collectingTacticGoals && hole.isOfKind ``praSyntheticHole then
+        let .mvar id _ _ := value | throwError "expected a proof metavariable"
+        modify fun s => { s with tacticGoals := s.tacticGoals.push (id, scope) }
+      else
+        modify fun s => { s with holes := s.holes.push ⟨stx, scope, type⟩ }
       return ⟨value, type⟩
     let p ← proofBody hole expected
     if let some type := expected then constrainFormulas p.type type stx
@@ -1038,6 +1047,8 @@ private partial def proofNow (stx : Syntax) (expected : Option Predicate) :
 private partial def proofBody (stx : Syntax) (expected : Option Predicate) :
     ObjectElabM ProofResult := do
   match stx with
+  | `(praExpr| by $seq:praTacticSeq) =>
+    proofBy seq (← requireExpected stx expected)
   | `(praExpr| ()) => return ProofResult.ready .trueIntro .true
   | `(praExpr| ($p:praExpr : $type:praExpr)) =>
     let type ← formula type
@@ -1083,6 +1094,109 @@ private partial def proofBody (stx : Syntax) (expected : Option Predicate) :
     | none =>
       let .theoremE d ← lookup id | throwArgumentErrorAt id "expected a theorem"
       constantProof stx d args expected explicit
+
+private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
+    ObjectElabM ProofResult := fun scope stateRef => do
+  let run {α : Type} (s : Scope) (action : ObjectElabM α) : CommandElabM α := action s stateRef
+  let root ← run scope do
+    let root ← runSolver (Metavariable.Frontend.freshProof type scope.context scope.localIds)
+    let .mvar id _ _ := root | throwError "expected a proof metavariable"
+    modify fun s => { s with tacticGoals := s.tacticGoals.push (id, scope) }
+    return root
+  let .mvar rootId _ _ := root | throwError "expected a proof metavariable"
+  let goalScope (id : Nat) : CommandElabM Scope := do
+    let some (_, s) := (← stateRef.get).tacticGoals.find? (·.1 == id)
+      | throwError "unknown PRA tactic goal"
+    return { s with inTactic := true }
+  let goalType (id : Nat) : ObjectElabM Predicate := do
+    let some entry := (← get).unification.proofs[id]?
+      | throwError "unknown PRA proof metavariable"
+    if entry.value.isSome then throwError "PRA goal is already assigned"
+    resolvedPredicate entry.type
+  let checkProgress : ObjectElabM Unit := do
+    let mut budget ← getMaxDepth
+    repeat
+      if budget == 0 then throwError "PRA tactic inference limit exhausted"
+      budget := budget - 1
+      drainTasks
+      let revision := (← get).unification.revision
+      runSolver (Metavariable.Frontend.settle (← getMaxDepth) (← read).environment)
+      if revision == (← get).unification.revision then break
+    for task in (← get).tasks do
+      if let .failed error := task.status then throw error
+    if let (_, _, error) :: _ := Metavariable.Frontend.conflicts (← get).unification then
+      throwError "PRA tactic proof type mismatch: {error}"
+  let ctx : Tactic.Context := {
+    inspect := fun id => do
+      run (← goalScope id) do
+        return {
+          target := (← goalType id)
+          context := (← currentContext)
+          names := (← displayNames)
+          environment := (← read).environment
+          projection := (← projection)
+          maxDepth := (← getMaxDepth) }
+    refine := fun id stx => do
+      run (← goalScope id) do
+        let type ← goalType id
+        let start := (← get).tacticGoals.size
+        let initial := (← get).unification
+        let collecting := (← get).collectingTacticGoals
+        modify fun s => { s with collectingTacticGoals := true }
+        try
+          let p ← proofNow (← expandPraSyntax stx) type
+          checkProgress
+          runSolver (Metavariable.Frontend.assignProof (← getMaxDepth) id p.value)
+          let state ← get
+          let goals := (state.tacticGoals.toList.drop start).filterMap fun (id, _) =>
+            if (state.unification.proofs[id]?).any (·.value.isNone) then some id else none
+          if goals.isEmpty then
+            unless (state.unification.terms.toList.drop initial.terms.size).all (·.value.isSome) &&
+                (state.unification.predicates.toList.drop initial.predicates.size).all
+                  (·.value.isSome) do
+              throwErrorAt stx "PRA tactic could not infer its implicit arguments"
+          return goals
+        finally
+          modify fun s => { s with collectingTacticGoals := collecting }
+    close := fun id p => do
+      run (← goalScope id) do
+        let target ← goalType id
+        let p ← resolvedProof p
+        let proof ← readyProof (← getRef) p
+        constrainFormulas proof.type target
+        checkProgress
+        runSolver (Metavariable.Frontend.assignProof (← getMaxDepth) id p)
+    infer := fun id stx expected => do
+      run (← goalScope id) do
+        let p ← proofNow (← expandPraSyntax stx) none
+        if let some expected := expected then
+          constrainFormulas p.type (← formula (← expandPraSyntax expected)) stx
+        checkProgress
+        resolvedPredicate p.type
+    save := do
+      let saved ← stateRef.get
+      let commandState ← get
+      return do stateRef.set saved; set commandState
+    snapshot := fun goals ref => do
+      let views ← goals.mapM fun id => do
+        run (← goalScope id) do
+          let type ← goalType id
+          let view ← projection
+          let scope ← read
+          return { environment := scope.environment
+                   context := view.encodeContext (← currentContext)
+                   names := (← displayNames)
+                   bindings := scope.bindings.reverse.map (·.project view)
+                   target := some (.proof (view.encodePredicate type)) : GoalView }
+      makeGoalsInfo ref views
+  }
+  let (_, goals) ← (Tactic.evalTacticSeq seq).run ctx |>.run [rootId]
+  unless goals.isEmpty do
+    let first := goals.head!
+    run (← goalScope first) do
+      let target ← showPredicate (← displayNames) (← goalType first)
+      throwErrorAt seq "unsolved PRA goals ({goals.length})\n⊢ {← formatSyntax `praExpr target}"
+  return ⟨root, type⟩
 
 private partial def proofLambda (stx : Syntax) (expected : Option Predicate) :
     ObjectElabM ProofResult := do

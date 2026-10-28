@@ -8,7 +8,8 @@ public meta import LeanPRA.Surface.Recovery
 Surface syntax for the PRA language. Terms, predicates, and proofs share the `praExpr` category;
 the elaborator disambiguates them from the expected category.
 
-- `praExpr` parses expressions and type annotations.
+- `praExpr` parses expressions and type annotations. Application arguments on later lines must be
+  indented past the enclosing tactic or declaration.
 - `praParam` parses declaration parameter groups.
 - `praDecl` parses declarations, notation, `#check`, `#print`, `open`, `namespace`, and `end`
   inside a `pra` block.
@@ -44,7 +45,7 @@ syntax:max "(" praExpr " : " praExpr ")" : praExpr
 syntax:max "(" praExpr ", " praExpr,+ ")" : praExpr
 syntax:max "(" ")" : praExpr
 syntax:max atomic(&"induction" " (" &"motive" " := ") praExpr ")" : praExpr
-syntax:lead praExpr:lead ppSpace praExpr:arg : praExpr
+syntax:lead praExpr:lead ppSpace colGt praExpr:arg : praExpr
 syntax:50 praExpr:51 " = " praExpr:51 : praExpr
 syntax:35 praExpr:36 " ∧ " praExpr:35 : praExpr
 syntax:30 praExpr:31 " ∨ " praExpr:30 : praExpr

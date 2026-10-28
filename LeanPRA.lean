@@ -7,6 +7,9 @@ public import LeanPRA.Core.Syntax
 public import LeanPRA.Core.Utils
 public import LeanPRA.Library.Logic
 public import LeanPRA.Library.Nat
+public import LeanPRA.Library.Tactic.Combinators
+public import LeanPRA.Library.Tactic.Logic
+public import LeanPRA.Library.Tactic.Rewrite
 public import LeanPRA.Surface.Builtins
 public import LeanPRA.Surface.Command
 public import LeanPRA.Surface.Delab
@@ -26,3 +29,4 @@ public import LeanPRA.Surface.Notation
 public import LeanPRA.Surface.Options
 public import LeanPRA.Surface.Recovery
 public import LeanPRA.Surface.Syntax
+public import LeanPRA.Surface.Tactic

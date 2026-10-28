@@ -57,3 +57,15 @@ theorem iter_succ (f : Nat → Nat) : ∀ n x, iter f (S n) x = f (iter f n x) :
 
 end
 ```
+
+This language further support tactics as programs written in Lean.
+
+```lean4
+pra
+
+theorem add_left_comm : ∀ x y z, x + (y + z) = y + (x + z) := by
+  intro x y z
+  rw [← add_assoc, ← add_assoc, add_comm x y]
+
+end
+```

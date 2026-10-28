@@ -13,7 +13,7 @@ Hover, go-to-definition, and infoview integration for PRA syntax:
   reference.
 - `addExpressionInfo` attaches an inferred hover type and optional binder location to an expression.
 - `addProofTypeInfo` attaches hover info for a proof expression's resolved formula.
-- `GoalTarget` and `makeGoalInfo` build `TacticInfo` goal snapshots for the infoview.
+- `GoalTarget`, `GoalView`, `makeGoalInfo`, and `makeGoalsInfo` build native infoview snapshots.
 - `GoalBinding` represents a local variable, parameter, hypothesis, or let-alias in a goal context.
 - `addUnresolvedInfo` suppresses fallback navigation on unresolved identifiers.
 
@@ -89,56 +89,76 @@ private def inferTarget (environment : Core.Environment) (context : Core.Context
       (Core.inferPredicate depth environment context p).toOption.map .predicate
     | .proof p => (Core.inferProof depth environment context p).toOption.map .proof
 
-/-- Build a `TacticInfo` goal snapshot for the infoview from `bindings` and `target`. -/
-def makeGoalInfo (stx : Syntax) (environment : Core.Environment) (context : Core.Context)
-    (names : Names) (bindings : List GoalBinding)
-    (target : Option GoalTarget) (status : GoalStatus := .openGoal) : CommandElabM Info := do
+/-- The context and target of one PRA goal displayed by the infoview. -/
+structure GoalView where
+  environment : Core.Environment
+  context : Core.Context
+  names : Names
+  bindings : List GoalBinding
+  target : Option GoalTarget
+  status : GoalStatus := .openGoal
+
+private def goalContext (view : GoalView) : CommandElabM (LocalContext × Expr) := do
+  let { environment, context, names, bindings, target, .. } := view
+  let mut lctx : LocalContext := {}
+  let mut locals := #[]
+  for binding in bindings do
+    if binding.name.isAnonymous then continue
+    let some type ← inferTarget environment context binding.subject | continue
+    let id ← liftCoreM mkFreshFVarId
+    lctx := lctx.mkLocalDecl id binding.name (mkConst ``PUnit)
+    locals := locals.push (binding, id, type)
+  lctx := lctx.sanitizeNames.run' { options := ← getOptions }
+  let mut names := { names with termAliases := [], predicateAliases := [] }
+  for (binding, id, _) in locals do
+    names := renameBinding names binding (lctx.get! id).userName
+  for (binding, id, type) in locals do
+    lctx := lctx.setType id (← targetExpr environment context names type)
+    -- Register each alias after formatting its own type so later entries can use it.
+    let name := (lctx.get! id).userName
+    match binding with
+    | .termAlias _ t => names := { names with termAliases := (name, t) :: names.termAliases }
+    | .predicateAlias _ p =>
+      names := { names with predicateAliases := (name, p) :: names.predicateAliases }
+    | _ => pure ()
+  let type ← match target with
+    | some target => targetExpr environment context names target
+    | none => pure (mkApp (mkConst ``goalType) (mkStrLit "type not yet known"))
+  return (lctx, type)
+
+/-- Build one native tactic snapshot containing an ordered list of PRA goals. -/
+def makeGoalsInfo (stx : Syntax) (views : List GoalView) : CommandElabM Info := do
   let absent := Info.ofCommandInfo { elaborator := `Delab, stx := .missing }
   unless (← getInfoState).enabled do return absent
   unless (stx.getRange? (canonicalOnly := true)).isSome do return absent
   try
-    let mut lctx : LocalContext := {}
-    let mut locals := #[]
-    for binding in bindings do
-      if binding.name.isAnonymous then continue
-      let some type ← inferTarget environment context binding.subject | continue
-      let id ← liftCoreM mkFreshFVarId
-      lctx := lctx.mkLocalDecl id binding.name (mkConst ``PUnit)
-      locals := locals.push (binding, id, type)
-    lctx := lctx.sanitizeNames.run' { options := ← getOptions }
-    let mut names := { names with termAliases := [], predicateAliases := [] }
-    for (binding, id, _) in locals do
-      names := renameBinding names binding (lctx.get! id).userName
-    for (binding, id, type) in locals do
-      lctx := lctx.setType id (← targetExpr environment context names type)
-      -- Register each alias after formatting its own type so later entries can use it.
-      let name := (lctx.get! id).userName
-      match binding with
-      | .termAlias _ t => names := { names with termAliases := (name, t) :: names.termAliases }
-      | .predicateAlias _ p =>
-        names := { names with predicateAliases := (name, p) :: names.predicateAliases }
-      | _ => pure ()
-    let type ← match target with
-      | some target => targetExpr environment context names target
-      | none => pure (mkApp (mkConst ``goalType) (mkStrLit "type not yet known"))
+    let contexts ← views.mapM goalContext
     liftTermElabM do
-      Meta.withLCtx lctx #[] do
-        let userName := match status with
+      let mut goals := []
+      for (view, (lctx, type)) in views.zip contexts do
+        let userName := match view.status with
           | .openGoal => Name.anonymous
           | .blocked => `waitingForInference
           | .conflicting => `declarationHasConflict
-        let goal ← Meta.mkFreshExprMVar type (userName := userName)
-        let mctx ← getMCtx
-        return .ofTacticInfo {
-          elaborator := `Delab
-          stx
-          mctxBefore := mctx
-          mctxAfter := mctx
-          goalsBefore := [goal.mvarId!]
-          goalsAfter := [goal.mvarId!] }
+        let goal ← Meta.withLCtx lctx #[] <| Meta.mkFreshExprMVar type (userName := userName)
+        goals := goals ++ [goal.mvarId!]
+      let mctx ← getMCtx
+      return .ofTacticInfo {
+        elaborator := `Delab
+        stx
+        mctxBefore := mctx
+        mctxAfter := mctx
+        goalsBefore := goals
+        goalsAfter := goals }
   catch ex =>
     if ex.isInterrupt then throw ex
     return absent
+
+/-- Build a `TacticInfo` goal snapshot for the infoview from `bindings` and `target`. -/
+def makeGoalInfo (stx : Syntax) (environment : Core.Environment) (context : Core.Context)
+    (names : Names) (bindings : List GoalBinding)
+    (target : Option GoalTarget) (status : GoalStatus := .openGoal) : CommandElabM Info :=
+  makeGoalsInfo stx [⟨environment, context, names, bindings, target, status⟩]
 
 /-- Persistent environment extension mapping PRA declaration names to their `DeclarationLocation`s.
 -/
