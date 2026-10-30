@@ -378,9 +378,9 @@ private def proofType (context : Core.Context) (p : Proof) : CommandElabM Predic
 private def formulaHead (context : Core.Context) (p : Proof) : CommandElabM Predicate := do
   let env := CoreEnvironment.getState (← getEnv)
   let type ← proofType context p
-  match Core.reduceFormula (pra.maxDepth.get (← getOptions)) env type with
+  match Core.whnfPredicate (pra.maxDepth.get (← getOptions)) env type with
   | .ok type => return type
-  | .error error => throwError "cannot normalize a proof formula for printing: {error.message}"
+  | .error error => throwError "cannot expose a proof formula for printing: {error.message}"
 
 private def typedLambda (name : Name) (type body : TSyntax `praExpr) :
     CommandElabM (TSyntax `praExpr) := do

@@ -1,6 +1,6 @@
 module
 
-public import LeanPRA.Core.Reduction
+public import LeanPRA.Core.DefEq
 
 /-!
 # Checking PRA expressions and declarations
@@ -19,8 +19,9 @@ All operations are in `LeanPRA.Core`. Callers build `Environment` from `∅` thr
 `checkDeclaration` and maintain well-formed local contexts as they introduce bindings.
 `checkProof` also assumes its expected formula is well formed.
 Proof inference uses weak-head reduction to expose the constructor needed by each rule,
-so its results preserve expressions inside that constructor. Conversion uses full normalization.
-Normalization and equality assume well-typed inputs at the supplied arities.
+so its results preserve expressions inside that constructor. Term, predicate, and proof checking
+use structural definitional equality, computing heads where comparison requires it.
+Equality assumes well-typed inputs at the supplied arities.
 `maxDepth` bounds recursive call depth; `ErrorKind.exhausted` means checking hit the depth limit.
 -/
 
@@ -205,18 +206,14 @@ def checkPredicateArguments (maxDepth : Nat) (environment : Environment) (contex
 /-- Compare well-typed terms at their common numerical arity. -/
 def equalTerms (maxDepth : Nat) (environment : Environment) (arity : Arity)
     (left right : Term) : CheckResult Unit := do
-  let leftNormal ← reduceTerm maxDepth environment arity left
-  let rightNormal ← reduceTerm maxDepth environment arity right
-  if leftNormal == rightNormal then pure ()
-  else fail (.termConversion arity left right leftNormal rightNormal)
+  if ← defEqTerm maxDepth environment arity left right then pure ()
+  else fail (.termConversion arity left right)
 
 /-- Compare well-typed predicates at their common arity. -/
 def equalPredicates (maxDepth : Nat) (environment : Environment) (arity : Arity)
     (left right : Predicate) : CheckResult Unit := do
-  let leftNormal ← reducePredicate maxDepth environment arity left
-  let rightNormal ← reducePredicate maxDepth environment arity right
-  if leftNormal == rightNormal then pure ()
-  else fail (.predicateConversion arity left right leftNormal rightNormal)
+  if ← defEqPredicate maxDepth environment arity left right then pure ()
+  else fail (.predicateConversion arity left right)
 
 /-- Compare well-formed formulas by definitional equality. -/
 def equalFormulas (maxDepth : Nat) (environment : Environment)
@@ -372,10 +369,8 @@ def checkProof : Nat → Environment → Context → Proof → Predicate → Che
   | maxDepth + 1, environment, context, proof, expected =>
     (show CheckResult Unit from do
       let actual ← inferProof maxDepth environment context proof
-      let actualNormal ← reduceFormula maxDepth environment actual
-      let expectedNormal ← reduceFormula maxDepth environment expected
-      if actualNormal == expectedNormal then pure ()
-      else fail (.proofTypeMismatch expected actual expectedNormal actualNormal)
+      if ← defEqPredicate maxDepth environment 0 actual expected then pure ()
+      else fail (.proofTypeMismatch expected actual)
     ).withSite context (.proof proof)
 
 end

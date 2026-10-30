@@ -286,26 +286,16 @@ def proofType (view : Projection) (depth : Nat) (env : Environment) (ctx : Conte
   let value ← view.encodeProof value
   return (Core.inferProof depth env (view.encodeContext ctx) value).map view.decodePredicate
 
-/-- Normalize a formula `value` and decode any metavariables in the result. -/
-def reduceFormula (view : Projection) (depth : Nat) (env : Environment) (value : Predicate) :
-    CheckResult Predicate :=
-  (Core.reduceFormula depth env (view.encodePredicate value)).map view.decodePredicate
-
 /-- Reduce `value` to weak head normal form and decode any metavariables in the result. -/
 def whnfPredicate (view : Projection) (depth : Nat) (env : Environment) (value : Predicate) :
     CheckResult Predicate :=
   (Core.whnfPredicate depth env (view.encodePredicate value)).map view.decodePredicate
 
-/-- Normalize `value` at `arity` and decode any metavariables in the result. -/
-def reduceTerm (view : Projection) (depth : Nat) (env : Environment) (arity : Nat) (value : Term)
-    : CheckResult Term :=
-  (Core.reduceTerm depth env arity (view.encodeTerm value)).map view.decodeTerm
-
-/-- Contract beta redexes in `value` for display, preserving metavariable indices. -/
+/-- Contract beta redexes in `value`, preserving metavariable indices. -/
 def betaReduceTerm (view : Projection) (depth : Nat) (value : Term) : Term :=
   view.decodeTerm (Core.betaReduceTerm depth (view.encodeTerm value))
 
-/-- Contract beta redexes in `value` for display, preserving metavariable indices. -/
+/-- Contract beta redexes in `value`, preserving metavariable indices. -/
 def betaReducePredicate (view : Projection) (depth : Nat) (value : Predicate) : Predicate :=
   view.decodePredicate (Core.betaReducePredicate depth (view.encodePredicate value))
 

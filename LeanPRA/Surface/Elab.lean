@@ -470,12 +470,34 @@ private def readyProof (stx : Syntax) (p : Proof) : ObjectElabM ProofResult := d
     | .error error => throwErrorAt stx "{error}"
   return ProofResult.ready p type
 
-private def reduceFormula (stx : Syntax) (p : Predicate) : ObjectElabM Predicate := do
-  let s ← read
-  checked stx ((Bridge.reduceFormula (← projection) (← getMaxDepth) s.environment (←
-      resolvedPredicate p))
-    |>.withSite ((← projection).encodeContext s.context)
-      (.predicate ((← projection).encodePredicate p)))
+private def existentialResult (stx : Syntax) (outer : Scope) (type : Predicate) :
+    ObjectElabM Predicate := do
+  let type ← resolvedPredicate type
+  let state := (← get).unification
+  -- An unresolved metavariable may later use any local in its creation scope.
+  let dependencies := (Metavariable.Frontend.predicateDependencies state type).filter fun
+    | .term i => state.terms[i]?.any fun u => !u.locals.all outer.localIds.contains
+    | .predicate i => state.predicates[i]?.any fun u => !u.locals.all outer.localIds.contains
+  unless dependencies.isEmpty do
+    modify fun s => { s with blocking := some ⟨dependencies,
+      "the existential result is waiting for scoped implicit arguments"⟩ }
+    throw (.internal blockedExceptionId)
+  -- Substituting zero gives a candidate in the outer scope. Conversion checks that the witness
+  -- can be replaced this way, including when computation discards it inside a subformula.
+  let target := type.subst0 .zero
+  unless target.shift == type do
+    let view ← projection
+    let equal ← checked stx
+      ((Core.defEqPredicate (← getMaxDepth) outer.environment 0 (view.encodePredicate type)
+        (view.encodePredicate target.shift)).withSite (view.encodeContext (← currentContext))
+          (.predicate (view.encodePredicate type)))
+    unless equal do
+      blockOn type "the existential result is waiting for its witness dependency to be resolved"
+      throwErrorAt stx "an existential witness escapes the result type"
+  withReader (fun _ => outer) do
+    let _ ← checked stx (Bridge.formulaSort (← projection) (← getMaxDepth) outer.environment
+      (← currentContext) target)
+    pure target
 
 -- Reduce to WHNF so the outer connective is visible without normalizing subformulas.
 private def exposeFormula (stx : Syntax) (p : Predicate) : ObjectElabM Predicate := do
@@ -1334,6 +1356,7 @@ private partial def bindPattern (pattern : Syntax) (value : ProofResult) (type :
     return ProofResult.map₂ (.letE .anonymous type) body.type value body
   | .ex motive =>
     requirePlainBinder first
+    let outer ← read
     let name := binderName first
     let hypothesis := Predicate.app motive.shift (.bvar 0)
     let id ← runSolver Metavariable.Frontend.freshLocal
@@ -1345,12 +1368,9 @@ private partial def bindPattern (pattern : Syntax) (value : ProofResult) (type :
         (expected.map Predicate.shift) action)
       let target ← match expected with
         | some target => pure target
-        | none =>
-          let type ← reduceFormula pattern (← resolvedProofType pattern body)
-          let target := type.subst0 .zero
-          unless target.shift == type do
-            throwErrorAt pattern "an existential witness escapes the result type"
-          pure target
+        | none => do
+          drainTasks
+          existentialResult pattern outer (← resolvedProofType pattern body)
       return (body, target)
     return ProofResult.map₂ (.existsElim name .anonymous target) target value body
   | _ =>
@@ -1475,10 +1495,10 @@ private partial def applicationTarget (args : List Syntax) (expected : Option Pr
       let s ← read
       checked arg (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (←
           currentContext) argument 0)
-      let argument ← checked arg
-        ((Bridge.reduceTerm (← projection) (← getMaxDepth) s.environment 0 argument)
-          |>.withSite ((← projection).encodeContext s.context)
-            (.term ((← projection).encodeTerm argument)))
+      let view ← projection
+      let depth ← getMaxDepth
+      let argument := Bridge.betaReduceTerm view depth (← resolvedTerm argument)
+      target := Bridge.betaReducePredicate view depth (← resolvedPredicate target)
       target := .all (.lam .anonymous (abstractNumber argument.shift 0 target.shift))
     | .theoremE => target := .imp (← resolvedProofType arg (← proof arg)) target
     | .predicate => throwErrorAt arg "proof application requires a numerical term or proof"

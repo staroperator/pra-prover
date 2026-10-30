@@ -1,6 +1,7 @@
 module
 
 public import LeanPRA.Core.Checker
+public import LeanPRA.Core.DefEq
 public import LeanPRA.Core.Reduction
 public import LeanPRA.Core.Substitution
 public import LeanPRA.Core.Syntax

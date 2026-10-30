@@ -96,9 +96,9 @@ inductive ErrorReason where
   | arityMismatch (expected actual : Arity)
   | sortMismatch (expected actual : FormulaSort)
   | expectedForm (expected : ExpectedForm) (actual : CheckSubject)
-  | termConversion (arity : Arity) (left right leftNormal rightNormal : Term)
-  | predicateConversion (arity : Arity) (left right leftNormal rightNormal : Predicate)
-  | proofTypeMismatch (expected actual expectedNormal actualNormal : Predicate)
+  | termConversion (arity : Arity) (left right : Term)
+  | predicateConversion (arity : Arity) (left right : Predicate)
+  | proofTypeMismatch (expected actual : Predicate)
   | recursionDepth
   deriving Repr, BEq
 

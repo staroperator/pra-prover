@@ -6,8 +6,8 @@ public import LeanPRA.Core.Substitution
 /-!
 # Normalization with a recursion depth limit
 
-Normalization reduces expressions to beta-long, eta-long normal form so the checker can compare
-them for definitional equality.
+Normalization computes beta-long, eta-long normal forms for explicit reduction requests.
+Definitional equality uses a separate structural comparison with weak-head computation.
 
 - `reduceTerm` normalizes a term at a given arity.
 - `reducePredicate` normalizes a predicate at a given arity.
