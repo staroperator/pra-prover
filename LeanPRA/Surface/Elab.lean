@@ -1427,6 +1427,10 @@ private partial def applyInferred (stx : Syntax) (head : ProofResult) (type : Pr
       result := result.map (fun p => .forallElim p t) type
     | _ =>
       let before := (← get).unification.revision
+      -- Earlier proof arguments often determine the head's type. Check them before guessing
+      -- a type from the remaining arguments and the expected result.
+      drainTasks
+      if (← get).unification.revision != before then continue
       if let some target ← applicationTarget positional expected then
         constrainFormulas type target stx
       drainTasks
@@ -1500,7 +1504,13 @@ private partial def applicationTarget (args : List Syntax) (expected : Option Pr
       let argument := Bridge.betaReduceTerm view depth (← resolvedTerm argument)
       target := Bridge.betaReducePredicate view depth (← resolvedPredicate target)
       target := .all (.lam .anonymous (abstractNumber argument.shift 0 target.shift))
-    | .theoremE => target := .imp (← resolvedProofType arg (← proof arg)) target
+    | .theoremE =>
+      -- A proof hole receives its domain when the application consumes it. Elaborating it here
+      -- as well would create a second goal that the resulting proof never uses.
+      let domain ← if (arg.find? (·.isOfKind ``praSyntheticHole)).isSome then
+        unknownPredicate arg ⟨0, .prop⟩
+      else resolvedProofType arg (← proof arg)
+      target := .imp domain target
     | .predicate => throwErrorAt arg "proof application requires a numerical term or proof"
   return some target
 
@@ -1804,6 +1814,10 @@ private inductive DraftDeclaration where
 and publish it. -/
 def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
   let stx ← expandPraSyntax stx
+  let (doc?, stx) ← match stx with
+    | `(praDecl| $doc:docComment $decl:praDecl) =>
+      pure (some (← getDocStringText doc), decl.raw)
+    | _ => pure (none, stx)
   let (isTheorem, id, ps, type, body) ← match stx with
     | `(praDecl| def $id:ident $ps:praParam* : $type:praExpr := $body:praExpr) =>
       pure (false, id, ps.map (·.raw), type, body)
@@ -1858,8 +1872,8 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
   if stx.hasMissing then
     throwErrorAt stx "incomplete PRA declaration"
   modifyEnv (publishDeclaration · environment name)
-  if let some location ← sourceLocation id then
-    modifyEnv (declarationLocations.addEntry · (name, location))
+  let metadata : DeclarationMetadata := { location? := ← sourceLocation id, doc? }
+  modifyEnv (declarationMetadata.addEntry · (name, metadata))
   if let some d := environment.lookup name then addDeclarationInfo id d
 
 /-- Elaborate `#check stx` and log its inferred Core type. -/

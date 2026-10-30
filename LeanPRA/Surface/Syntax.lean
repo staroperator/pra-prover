@@ -51,7 +51,7 @@ syntax:35 praExpr:36 " ∧ " praExpr:35 : praExpr
 syntax:30 praExpr:31 " ∨ " praExpr:30 : praExpr
 syntax:25 praExpr:26 " → " praExpr:25 : praExpr
 syntax:20 praExpr:21 " ↔ " praExpr:20 : praExpr
-syntax:40 "¬" praExpr:40 : praExpr
+syntax:40 "¬ " praExpr:40 : praExpr
 syntax:max "fun " praFunBinder+ " => " recoverPraExpr(praExpr) : praExpr
 syntax:max "fun " praFunBinder+ " : " praExpr " => " recoverPraExpr(praExpr) : praExpr
 syntax:lead "∀ " praBinder+ " : " &"Nat" ", " recoverPraExpr(praExpr) : praExpr
@@ -82,6 +82,7 @@ syntax "(" ident+ " : " praExpr ")" : praParam
 syntax "{" ident+ " : " praExpr "}" : praParam
 
 declare_syntax_cat praDecl
+syntax (name := praDocumented) Lean.Parser.Command.docComment praDecl : praDecl
 syntax "def " ident (ppSpace praParam)* " : " recoverPraExpr(praExpr)
   " := " recoverPraExpr(praExpr) : praDecl
 syntax "theorem " ident (ppSpace praParam)* " : " recoverPraExpr(praExpr)

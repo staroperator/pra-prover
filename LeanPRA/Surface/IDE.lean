@@ -8,9 +8,10 @@ public meta import LeanPRA.Surface.Display
 Hover, go-to-definition, and infoview integration for PRA syntax:
 
 - `sourceLocation` converts a syntax span to a `DeclarationLocation`.
-- `declarationLocations` records source locations for local and imported declarations.
-- `addDeclarationInfo` attaches hover signature and go-to-definition info to a declaration
-  reference.
+- `DeclarationMetadata` groups a declaration's source location and documentation.
+- `declarationMetadata` stores this metadata for local and imported declarations.
+- `addDeclarationInfo` attaches the hover signature, documentation, and go-to-definition target
+  to a declaration reference.
 - `addExpressionInfo` attaches an inferred hover type and optional binder location to an expression.
 - `addProofTypeInfo` attaches hover info for a proof expression's resolved formula.
 - `GoalTarget`, `GoalView`, `makeGoalInfo`, and `makeGoalsInfo` build native infoview snapshots.
@@ -160,17 +161,23 @@ def makeGoalInfo (stx : Syntax) (environment : Core.Environment) (context : Core
     (target : Option GoalTarget) (status : GoalStatus := .openGoal) : CommandElabM Info :=
   makeGoalsInfo stx [⟨environment, context, names, bindings, target, status⟩]
 
-/-- Persistent environment extension mapping PRA declaration names to their `DeclarationLocation`s.
--/
-initialize declarationLocations :
-    Lean.SimplePersistentEnvExtension (Name × DeclarationLocation) (NameMap DeclarationLocation) ←
+/-- Source location and documentation recorded after a PRA declaration passes Core checking. -/
+structure DeclarationMetadata where
+  location? : Option DeclarationLocation := none
+  doc? : Option String := none
+
+/-- Editor metadata for local and imported PRA declarations, indexed by fully qualified name. -/
+initialize declarationMetadata :
+    Lean.SimplePersistentEnvExtension (Name × DeclarationMetadata) (NameMap DeclarationMetadata) ←
   Lean.registerSimplePersistentEnvExtension {
-    addEntryFn := fun locations (name, location) => locations.insert name location
-    addImportedFn := fun modules => modules.foldl (init := {}) fun locations entries =>
-      entries.foldl (fun locations (name, location) => locations.insert name location) locations
-    -- Re-export locations from private imports so downstream modules can jump to them.
-    exportEntriesFnEx? := some fun env locations _ =>
-      .uniform (locations.toArray.filter fun (_, location) => !isPublicModule env location.module)
+    addEntryFn := fun metadata (name, entry) => metadata.insert name entry
+    addImportedFn := fun modules => modules.foldl (init := {}) fun metadata entries =>
+      entries.foldl (fun metadata (name, entry) => metadata.insert name entry) metadata
+    -- Public imports supply their own metadata. Forward complete entries for private imports
+    -- and declarations whose source module is unknown.
+    exportEntriesFnEx? := some fun env metadata _ =>
+      .uniform (metadata.toArray.filter fun (_, entry) =>
+        !entry.location?.any fun location => isPublicModule env location.module)
   }
 
 /-- Convert `stx`'s canonical range in the current file to a `DeclarationLocation`. -/
@@ -180,7 +187,7 @@ def sourceLocation (stx : Syntax) : CommandElabM (Option DeclarationLocation) :=
                 range := .ofStringPositions (← getFileMap) range.start range.stop }
 
 private def addInfo (stx : Syntax) (text? : Option String)
-    (location? : Option DeclarationLocation) :
+    (location? : Option DeclarationLocation) (doc : String := "") :
     CommandElabM Unit := do
   unless (← getInfoState).enabled do return
   unless (stx.getRange? (canonicalOnly := true)).isSome do return
@@ -192,19 +199,20 @@ private def addInfo (stx : Syntax) (text? : Option String)
     expectedType? := none
     expr := mkSort .zero
     location?
-    mkDocString? := text?.map fun text => fun _ => pure s!"```lean\n{text}\n```" })
+    mkDocString? := text?.map fun text => fun _ =>
+      pure (s!"```lean\n{text}\n```" ++ if doc.isEmpty then "" else "\n\n" ++ doc) })
 
 /-- Record empty `DelabTermInfo` on `stx` so unresolved names do not jump to the elaborator. -/
 def addUnresolvedInfo (stx : Syntax) : CommandElabM Unit :=
   addInfo stx none none
 
-/-- Attach hover signature and go-to-definition location for declaration `d` to `stx`. -/
+/-- Attach the hover signature, documentation, and go-to-definition target for `d` to `stx`. -/
 def addDeclarationInfo (stx : Syntax) (d : Core.Declaration) : CommandElabM Unit := do
   unless (← getInfoState).enabled do return
   try
     let text ← (← delabSignature d).toString
-    let target := (declarationLocations.getState (← getEnv)).find? d.name
-    addInfo stx text target
+    let metadata := ((declarationMetadata.getState (← getEnv)).find? d.name).getD {}
+    addInfo stx text metadata.location? (metadata.doc?.getD "")
   catch ex =>
     if ex.isInterrupt then throw ex
 

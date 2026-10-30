@@ -93,6 +93,7 @@ private def inPra : Parser := { fn := inPraFn }
         else elaborateDeclaration entry
   catch ex =>
     if ex.isInterrupt then throw ex
+    let entry := if entry.isOfKind ``praDocumented then entry[1] else entry
     match entry with
     | `(praDecl| def $id:ident $_ps:praParam* : $_type:praExpr := $_body:praExpr)
     | `(praDecl| theorem $id:ident $_ps:praParam* : $_type:praExpr := $_body:praExpr) =>

@@ -319,6 +319,9 @@ partial def delabPredicateTree (names : Names) (predicate : Predicate)
     let a ← term a
     let b ← term b
     node (← `(praExpr| $(⟨a.stx⟩):praExpr = $(⟨b.stx⟩):praExpr)) #[a, b]
+  | .imp a .false | .imp a (.definition `False [] []) =>
+    let a ← pred a
+    node (← `(praExpr| ¬ $(⟨a.stx⟩):praExpr)) #[a]
   | .imp a b =>
     let a ← pred a
     let b ← pred b
