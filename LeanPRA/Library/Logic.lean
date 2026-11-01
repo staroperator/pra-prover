@@ -2,6 +2,13 @@ module
 
 public import LeanPRA.Surface.Command
 
+/-!
+# Logic in PRA
+
+Derived propositional, equality, and quantifier reasoning in the PRA language, together with
+the predicates `Subsingleton` and `ExistsUnique` for unique existence on `Nat`.
+-/
+
 @[expose] public section
 
 pra
@@ -54,6 +61,7 @@ theorem or_congr {P Q R S : Prop} : (P ↔ R) → (Q ↔ S) → (P ∨ Q ↔ R �
     (fun h => or_elim h (imp_trans (and_left h₁) or_left) (imp_trans (and_left h₂) or_right),
       fun h => or_elim h (imp_trans (and_right h₁) or_left) (imp_trans (and_right h₂) or_right))
 
+/-- Eliminate double negation using excluded middle. -/
 theorem dne (P : Prop) : ¬ ¬ P → P :=
   fun h => or_elim (lem P) imp_id fun h' => false_elim (h h')
 
@@ -78,9 +86,11 @@ theorem forall_congr {P Q : Nat → Prop} : (∀ x, P x ↔ Q x) → ((∀ x, P 
 theorem exists_congr {P Q : Nat → Prop} : (∀ x, P x ↔ Q x) → ((∃ x, P x) ↔ (∃ x, Q x)) :=
   fun h => (fun (x, hx) => (x, and_left (h x) hx), fun (x, hx) => (x, and_right (h x) hx))
 
+/-- At most one natural number satisfies `P`. -/
 def Subsingleton (P : Nat → Prop) : Prop :=
   ∀ x y, P x → P y → x = y
 
+/-- Exactly one natural number satisfies `P`. -/
 def ExistsUnique (P : Nat → Prop) : Prop :=
   ∃ x, P x ∧ ∀ y, P y → y = x
 

@@ -5,3 +5,4 @@ defaultTargets = ["LeanPRA"]
 [[lean_lib]]
 name = "LeanPRA"
 globs = ["LeanPRA"]
+precompileModules = true

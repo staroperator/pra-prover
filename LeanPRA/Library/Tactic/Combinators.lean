@@ -14,7 +14,9 @@ Failed alternatives restore proof assignments, inference state, diagnostics, and
 -/
 
 public meta section
+
 namespace LeanPRA.Library.Tactic
+
 open Lean Elab LeanPRA.Surface LeanPRA.Surface.Tactic
 
 syntax (name := skipTac) "skip" : praTactic

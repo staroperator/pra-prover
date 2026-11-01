@@ -23,7 +23,9 @@ The implementations construct PRA proof expressions and use the shared refinemen
 -/
 
 public meta section
+
 namespace LeanPRA.Library.Tactic
+
 open Lean Elab LeanPRA.Surface LeanPRA.Surface.Tactic
 
 syntax (name := exactTac) "exact" praExpr : praTactic
@@ -32,13 +34,13 @@ syntax (name := introTac) "intro" (ppSpace praFunBinder)* : praTactic
 
 /-- Patterns shared by `rintro` and `rcases`: names, ignored binders, tuples, and disjunctions. -/
 declare_syntax_cat praCasesPattern
+
 syntax:max ident : praCasesPattern
 syntax:max "_" : praCasesPattern
 syntax:max "(" praCasesPattern ")" : praCasesPattern
 syntax:max "(" praCasesPattern ", " praCasesPattern,+ ")" : praCasesPattern
 syntax:30 praCasesPattern:31 atomic(" | " praCasesPattern:30) : praCasesPattern
 syntax (name := rintroTac) "rintro" (ppSpace colGt praCasesPattern:arg)+ : praTactic
-
 syntax (name := rcasesTac) "rcases" praExpr " with " praCasesPattern : praTactic
 syntax (name := constructorTac) "constructor" : praTactic
 syntax (name := leftTac) "left" : praTactic

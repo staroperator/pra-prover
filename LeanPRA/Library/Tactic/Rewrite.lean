@@ -24,11 +24,15 @@ equality substitution and the PRA library's symmetry theorem.
 -/
 
 public meta section
+
 namespace LeanPRA.Library.Tactic
+
 open Lean Elab LeanPRA.Surface LeanPRA.Surface.Tactic
+
 open Metavariable hiding Term
 
 declare_syntax_cat praRewriteRule
+
 syntax praExpr : praRewriteRule
 syntax "← " praExpr : praRewriteRule
 syntax (name := rwTac) "rw" " [" praRewriteRule,+ "]" (" at " ident)? : praTactic
@@ -46,6 +50,21 @@ private def matchingTerm : Metavariable.Term → Metavariable.Term
 private def betaEqual (goal : Goal) (a b : Metavariable.Term) : Bool :=
   matchingTerm (Bridge.betaReduceTerm goal.projection goal.maxDepth a) ==
     matchingTerm (Bridge.betaReduceTerm goal.projection goal.maxDepth b)
+
+-- Two applications with distinct rigid heads cannot become equal by beta reduction alone.
+-- Terms headed by lambdas, lets, recursors, or metavariables return `none` and stay as candidates.
+private def fixedHead : Metavariable.Term → Option Metavariable.Term
+  | .app f _ => fixedHead f
+  | .definition n _ => some (.definition n [])
+  | .parameter i => some (.parameter i)
+  | .zero => some .zero
+  | .succ => some .succ
+  | _ => none
+
+private def compatibleHeads (pattern candidate : Metavariable.Term) : Bool :=
+  match fixedHead (matchingTerm pattern), fixedHead (matchingTerm candidate) with
+  | some a, some b => a == b
+  | _, _ => true
 
 private def lowerTerm (count : Nat) (t : Metavariable.Term) : Option Metavariable.Term := do
   let marker := (termMetas t).foldl max 0 + 1
@@ -122,10 +141,16 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
     type := Bridge.betaReducePredicate goal.projection goal.maxDepth
       (.app motive.shift (.bvar 0))
     equation ← `(praExpr| $equation _)
-  let .equal .. := Bridge.betaReducePredicate goal.projection goal.maxDepth type
+  let .equal patternLeft patternRight :=
+      Bridge.betaReducePredicate goal.projection goal.maxDepth type
     | throwError "rw expects a numerical equality"
+  let pattern := if reverse then patternRight else patternLeft
   restoreInspection
   for candidate in (predicateCandidates 0 target).eraseDups do
+    unless compatibleHeads pattern candidate do continue
+    -- A rule without quantified binders or metavariables must already beta-match the candidate.
+    if count == 0 && pattern.isComplete && candidate.isComplete then
+      unless betaEqual goal pattern candidate do continue
     let .ok 0 := Bridge.termType goal.projection goal.maxDepth goal.environment goal.context
         candidate
       | continue
