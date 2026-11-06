@@ -126,15 +126,19 @@ theorem sub_add : ∀ x y z, x - (y + z) = x - y - z := by
   · rfl
   · rw [add_succ, sub_succ, ih, sub_succ]
 
-theorem add_sub_cancel : ∀ x y, x + y - y = x := by
+theorem add_sub_self_right : ∀ x y, x + y - y = x := by
   intro x y
   induction y with k ih
   · rfl
   · rw [add_succ, succ_sub_succ, ih]
 
+theorem add_sub_self_left : ∀ x y, x + y - x = y := by
+  intro x y
+  rw [add_comm x y, add_sub_self_right]
+
 theorem succ_sub_self : ∀ x, S x - x = 1 := by
   intro x
-  rw [← one_add x, add_sub_cancel]
+  rw [← one_add x, add_sub_self_right]
 
 theorem sub_add_of_ne_zero : ∀ x y, ¬ x - y = 0 → x - y + y = x := by
   intro x y
@@ -151,7 +155,7 @@ theorem sub_add_of_ne_zero : ∀ x y, ¬ x - y = 0 → x - y + y = x := by
 theorem add_right_cancel : ∀ x y z, x + z = y + z → x = y := by
   intro x y z h
   have hs := eq_congr (fun n => n - z) h
-  rw [add_sub_cancel, add_sub_cancel] at hs
+  rw [add_sub_self_right, add_sub_self_right] at hs
   exact hs
 
 theorem add_left_cancel : ∀ x y z, x + y = x + z → y = z := by
@@ -172,8 +176,7 @@ theorem le_zero : ∀ x, x ≤ 0 → x = 0 := fun x h => h
 
 theorem succ_le_succ : ∀ x y, S x ≤ S y ↔ x ≤ y := by
   intro x y
-  change S x - S y = 0 ↔ x - y = 0
-  rw [succ_sub_succ]
+  rw [LE, LE, succ_sub_succ]
   exact iff_refl
 
 theorem le_antisymm : ∀ x y, x ≤ y → y ≤ x → x = y := by
@@ -414,8 +417,7 @@ theorem sub_lt_of_pos : ∀ x y, 0 < x → 0 < y → x - y < x := by
 
 theorem sub_le_iff : ∀ x y z, x - y ≤ z ↔ x ≤ y + z := by
   intro x y z
-  change x - y - z = 0 ↔ x - (y + z) = 0
-  rw [sub_add]
+  rw [LE, LE, sub_add]
   exact iff_refl
 
 theorem sub_lt_iff : ∀ x y z, y ≤ x → (x - y < z ↔ x < y + z) := by
@@ -428,7 +430,7 @@ theorem sub_sub_cancel : ∀ x y, y ≤ x → x - (x - y) = y := by
   intro x y h
   have he := sub_add_cancel_of_le x y h
   have hh := eq_congr (fun k => k - (x - y)) he
-  rw [add_comm (x - y) y, add_sub_cancel] at hh
+  rw [add_comm (x - y) y, add_sub_self_right] at hh
   exact eq_symm hh
 
 theorem sub_succ_lt_self : ∀ n i, i < n → n - S i < n := by

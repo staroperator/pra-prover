@@ -7,20 +7,27 @@ public meta import LeanPRA.Library.Tactic.Logic
 
 `rw [h₁, ← h₂]` rewrites the goal using numerical equalities, then tries beta-only reflexivity.
 Universally quantified rules are instantiated from the first matching numerical subterm.
-Matching contracts lambda applications and ignores binder names. Both representations of builtin
-successor use the same matching form. Definitions, lets, recursor equations, and eta expansion keep
-their explicit form. Each rule replaces all occurrences of that instance, including occurrences
-beneath binders.
+Equality-rule matching contracts lambda applications and ignores binder names. Both representations
+of builtin successor use the same matching form. Definitions, lets, recursor equations, and eta
+expansion keep their explicit form during matching. Each rule replaces all occurrences of that
+instance, including occurrences beneath binders.
 An instance must be expressible in the current goal context; introduce a bound variable before
 using a rule whose instance depends on it. `rw [h] at hp` adds a rewritten version of `hp`
 under the same name.
+
+A definition name in `rw [f]` unfolds the first matching application and its other occurrences.
+Function and predicate parameters come from that application. Lambda applications and exposed head
+lets are reduced; other definitions and primitive recursion expressions stay available for later
+rules. Local names take precedence over global definitions. Definition unfolding proceeds forward;
+use an equality lemma for reverse rewriting.
 
 - `rewrite` constructs a unary predicate describing the replaced occurrences and refines the
   goal with equality substitution.
 - `evalRewrite` implements the syntax, rule ordering, and final reflexivity attempt.
 
 Matching and motive construction operate on PRA expressions. The resulting proof uses checked
-equality substitution and the PRA library's symmetry theorem.
+equality substitution and the PRA library's symmetry theorem. Definition unfolding changes the
+proof's expected type through the core checker's definitional equality.
 -/
 
 public meta section
@@ -187,7 +194,140 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
       restore
   throwError "rw found no matching occurrence; supply explicit rule arguments if needed"
 
-/-- Apply equality rewrites in order and close the result when its sides agree by beta reduction. -/
+private def matchingPredicate : Predicate → Predicate
+  | .equal a b => .equal (matchingTerm a) (matchingTerm b)
+  | .imp a b => .imp (matchingPredicate a) (matchingPredicate b)
+  | .and a b => .and (matchingPredicate a) (matchingPredicate b)
+  | .or a b => .or (matchingPredicate a) (matchingPredicate b)
+  | .all p => .all (matchingPredicate p)
+  | .ex p => .ex (matchingPredicate p)
+  | .lam _ p => .lam .anonymous (matchingPredicate p)
+  | .app p a => .app (matchingPredicate p) (matchingTerm a)
+  | .letTerm _ a p => .letTerm .anonymous (matchingTerm a) (matchingPredicate p)
+  | .letPredicate _ p q => .letPredicate .anonymous (matchingPredicate p) (matchingPredicate q)
+  | .definition n fs ps => .definition n (fs.map matchingTerm) (ps.map matchingPredicate)
+  | p => p
+
+private def predicateHead : Predicate → Option Name
+  | .definition n _ _ => some n
+  | .app p _ => predicateHead p
+  | _ => none
+
+-- Contract the lambda applications and head lets exposed by unfolding, leaving other definitions
+-- and primitive recursion expressions available for subsequent rewrite rules.
+private def reduceUnfoldedTerm (goal : Goal) : Nat → Metavariable.Term → Metavariable.Term
+  | 0, t => t
+  | fuel + 1, t =>
+    let t := Bridge.betaReduceTerm goal.projection goal.maxDepth t
+    match t with
+    | .letE _ value body => reduceUnfoldedTerm goal fuel (body.subst0 value)
+    | _ => t
+
+private def reduceUnfoldedPredicate (goal : Goal) : Nat → Predicate → Predicate
+  | 0, p => p
+  | fuel + 1, p =>
+    let p := Bridge.betaReducePredicate goal.projection goal.maxDepth p
+    match p with
+    | .letTerm _ _ body | .letPredicate _ _ body => reduceUnfoldedPredicate goal fuel body
+    | _ => p
+
+private inductive UnfoldOccurrence where
+  | term (depth : Nat) (value : Metavariable.Term)
+  | predicate (depth : Nat) (value : Predicate)
+
+private abbrev UnfoldM := StateT (Option UnfoldOccurrence) TacticM
+
+private def selectUnfoldTerm (depth : Nat) (t : Metavariable.Term) : UnfoldM Bool := do
+  match (← get : Option UnfoldOccurrence) with
+  | none => set (some (UnfoldOccurrence.term depth t)); return true
+  | some (.term savedDepth source) =>
+    return matchingTerm (source.shift (depth - savedDepth)) ==
+      matchingTerm (t.shift (savedDepth - depth))
+  | _ => return false
+
+private def selectUnfoldPredicate (depth : Nat) (p : Predicate) : UnfoldM Bool := do
+  match (← get : Option UnfoldOccurrence) with
+  | none => set (some (UnfoldOccurrence.predicate depth p)); return true
+  | some (.predicate savedDepth source) =>
+    return matchingPredicate (source.shift (depth - savedDepth)) ==
+      matchingPredicate (p.shift (savedDepth - depth))
+  | _ => return false
+
+private partial def unfoldTermOccurrences (goal : Goal) (name : Name) (depth : Nat)
+    (t : Metavariable.Term) : UnfoldM Metavariable.Term := do
+  if fixedHead t == some (.definition name []) then
+    if ← selectUnfoldTerm depth t then
+      let .ok body := Bridge.exposeTerm goal.projection goal.maxDepth goal.environment t
+        | throwError "rw could not unfold definition `{name}`"
+      return reduceUnfoldedTerm goal goal.maxDepth body
+  let visit := unfoldTermOccurrences goal name depth
+  match t with
+  | .lam n body => return .lam n (← unfoldTermOccurrences goal name (depth + 1) body)
+  | .app f a => return .app (← visit f) (← visit a)
+  | .letE n a b =>
+    return .letE n (← visit a) (← unfoldTermOccurrences goal name (depth + 1) b)
+  | .primrec b s n => return .primrec (← visit b) (← visit s) (← visit n)
+  | .definition n fs => return .definition n (← fs.mapM visit)
+  | t => return t
+
+private partial def unfoldPredicateOccurrences (goal : Goal) (name : Name) (depth : Nat)
+    (p : Predicate) : UnfoldM Predicate := do
+  if predicateHead p == some name then
+    if ← selectUnfoldPredicate depth p then
+      let .ok body := Bridge.exposePredicate goal.projection goal.maxDepth goal.environment p
+        | throwError "rw could not unfold definition `{name}`"
+      return reduceUnfoldedPredicate goal goal.maxDepth body
+  let term := unfoldTermOccurrences goal name depth
+  let visit := unfoldPredicateOccurrences goal name depth
+  match p with
+  | .equal a b => return .equal (← term a) (← term b)
+  | .imp a b => return .imp (← visit a) (← visit b)
+  | .and a b => return .and (← visit a) (← visit b)
+  | .or a b => return .or (← visit a) (← visit b)
+  | .all p => return .all (← visit p)
+  | .ex p => return .ex (← visit p)
+  | .lam n p => return .lam n (← unfoldPredicateOccurrences goal name (depth + 1) p)
+  | .app p a => return .app (← visit p) (← term a)
+  | .letTerm n a p => return .letTerm n (← term a) (← visit p)
+  | .letPredicate n p q => return .letPredicate n (← visit p) (← visit q)
+  | .definition n fs ps => return .definition n (← fs.mapM term) (← ps.mapM visit)
+  | p => return p
+
+private def unfoldDefinition (decl : Core.Declaration) (location : Option (TSyntax `ident)) :
+    TacticM Unit := do
+  let goal ← getGoal
+  let target ← match location with
+    | none => pure goal.target
+    | some h => infer (← `(praExpr| $h:ident))
+  let target := Bridge.betaReducePredicate goal.projection goal.maxDepth target
+  let (unfolded, occurrence) ← (unfoldPredicateOccurrences goal decl.name 0 target).run none
+  if occurrence.isNone then
+    throwError "rw found no matching occurrence of definition `{decl.name}`"
+  let type ← predicateSyntax goal unfolded
+  match location with
+  | none => Tactic.refine (← `(praExpr| (?_ : $type)))
+  | some h => Tactic.refine (← `(praExpr| let $h:ident : $type := $h:ident; ?_))
+
+private def rewriteRule (rule : TSyntax `praExpr) (reverse : Bool)
+    (location : Option (TSyntax `ident)) : TacticM Unit := do
+  let id? := match rule with
+    | `(praExpr| $id:ident) | `(praExpr| @$id:ident) => some id
+    | _ => none
+  if let some id := id? then
+    let goal ← getGoal
+    unless goal.names.used.contains id.getId do
+      if let some decl ← resolveDeclaration? goal.environment id.getId then
+        match decl with
+        | .function _ | .predicate _ =>
+          if reverse then
+            throwError "rw cannot unfold a definition backwards; use an equality lemma to fold it"
+          addDeclarationInfo id decl
+          unfoldDefinition decl location
+          return
+        | .theoremE _ => pure ()
+  rewrite rule reverse location
+
+/-- Apply equality rewrites and definition unfoldings in order, then try beta-only reflexivity. -/
 @[pra_tactic rwTac]
 def evalRewrite : Tactic := fun stx => do
   let `(praTactic| rw [$rules:praRewriteRule,*] $[at $location:ident]?) := stx
@@ -200,8 +340,8 @@ def evalRewrite : Tactic := fun stx => do
     -- Include the comma and its trailing whitespace in the preceding rule's goal snapshot.
     withTacticInfo (mkNullNode #[rule.raw, sep]) <| withRef rule do
       match rule with
-      | `(praRewriteRule| ← $p:praExpr) => rewrite p true location
-      | `(praRewriteRule| $p:praExpr) => rewrite p false location
+      | `(praRewriteRule| ← $p:praExpr) => rewriteRule p true location
+      | `(praRewriteRule| $p:praExpr) => rewriteRule p false location
       | _ => throwUnsupportedSyntax
   withTacticInfo stx[3] <| withRef stx[3] do
     if location.isNone then

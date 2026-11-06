@@ -154,6 +154,12 @@ theorem bnot_eq_zero : ∀ a, bnot a = 0 ↔ ¬ a = 0 := isZero_eq_zero
 
 theorem band_zero : ∀ b, band 0 b = 0 := fun b => rfl
 
+theorem band_one_left : ∀ x, band 1 x = isPos x := fun x => rfl
+
+theorem band_eq_one_of_eq_one : ∀ x y, x = 1 → y = 1 → band x y = 1 := by
+  intro x y hx hy
+  rw [hx, hy]; rfl
+
 theorem band_of_ne_zero : ∀ a b, ¬ a = 0 → band a b = isPos b :=
   fun a b h => ite_of_ne_zero a (isPos b) 0 h
 
@@ -292,6 +298,12 @@ theorem ltb_eq_one : ∀ a b, ltb a b = 1 ↔ a < b := fun a b => leb_eq_one (S 
 
 theorem ltb_eq_zero : ∀ a b, ltb a b = 0 ↔ ¬ a < b := fun a b => leb_eq_zero (S a) b
 
+theorem ltb_eq_zero_of_ge : ∀ x y, y ≤ x → ltb x y = 0 := by
+  intro x y h
+  apply and_right (ltb_eq_zero x y)
+  intro hxy
+  exact not_le_of_lt x y hxy h
+
 theorem band_eq_one_of_bool : ∀ a b, IsBool a → IsBool b →
     (band a b = 1 ↔ a = 1 ∧ b = 1) := by
   intro a b ha hb
@@ -320,6 +332,9 @@ theorem eqb_eq_one : ∀ a b, eqb a b = 1 ↔ a = b := by
     rw [h]
     constructor <;> exact and_right (leb_eq_one b b) (le_refl b)
 
+theorem eqb_self : ∀ x, eqb x x = 1 :=
+  fun x => and_right (eqb_eq_one x x) rfl
+
 theorem eqb_eq_zero : ∀ a b, eqb a b = 0 ↔ ¬ a = b := by
   intro a b
   constructor
@@ -339,13 +354,11 @@ def max : Nat → Nat → Nat := fun x y => ite (leb x y) y x
 
 theorem min_of_le : ∀ x y, x ≤ y → min x y = x := by
   intro x y h
-  change ite (leb x y) x y = x
-  rw [and_right (leb_eq_one x y) h, ite_succ]
+  rw [min, and_right (leb_eq_one x y) h, ite_succ]
 
 theorem max_of_le : ∀ x y, x ≤ y → max x y = y := by
   intro x y h
-  change ite (leb x y) y x = y
-  rw [and_right (leb_eq_one x y) h, ite_succ]
+  rw [max, and_right (leb_eq_one x y) h, ite_succ]
 
 theorem min_of_ge : ∀ x y, y ≤ x → min x y = y := by
   intro x y h

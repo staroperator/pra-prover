@@ -5,9 +5,14 @@ public import LeanPRA.Library.Nat.Pairing
 /-!
 # Finite sequences encoded by numbers
 
-Finite sequences of natural numbers encoded in `Nat`, together with course-of-values recursion.
-The empty sequence is `0`, and `Sequence.cons x xs` is `S (pair x xs)`. Because `tail xs < xs` for
-every positive code `xs`, every natural number decodes to a unique finite sequence:
+Sequences are encoded in `Nat`, with zero marking the end:
+
+- `[]` is encoded as `0`.
+- `[a]` is encoded as `S (pair a 0)`.
+- `[a, b]` is encoded as `S (pair a (S (pair b 0)))`.
+
+Unpairing the predecessor of a positive code recovers its head and tail. Each tail is smaller,
+so repeated tails reach zero and determine the length. Indices start at zero.
 
 - `Sequence.nil`, `Sequence.cons`, `Sequence.head`, and `Sequence.tail` construct and destruct
   sequences.
@@ -105,20 +110,17 @@ theorem get_zero : ∀ xs, get xs 0 = head xs := fun xs => rfl
 
 theorem get_nil : ∀ n, get nil n = 0 := by
   intro n
-  change head (drop nil n) = 0
-  rw [drop_nil, head_nil]
+  rw [get, drop_nil, head_nil]
 
 theorem get_cons_zero : ∀ x xs, get (cons x xs) 0 = x := head_cons
 
 theorem get_cons_succ : ∀ x xs n, get (cons x xs) (S n) = get xs n := by
   intro x xs n
-  change head (drop (cons x xs) (S n)) = head (drop xs n)
-  rw [drop_cons]
+  rw [get, get, drop_cons]
 
 theorem get_drop : ∀ xs n i, get (drop xs n) i = get xs (n + i) := by
   intro xs n i
-  change head (drop (drop xs n) i) = head (drop xs (n + i))
-  rw [drop_add]
+  rw [get, get, drop_add]
 
 theorem drop_le_sub : ∀ xs n, drop xs n ≤ xs - n := by
   intro xs n
@@ -342,7 +344,7 @@ theorem get_append_right : ∀ xs ys i, i < length ys →
     apply and_right (ltb_eq_zero _ _)
     intro h
     exact not_le_of_lt _ _ h (le_add_right (length xs) i)
-  rw [hz, ite_zero, add_comm (length xs) i, add_sub_cancel]
+  rw [hz, ite_zero, add_comm (length xs) i, add_sub_self_right]
 
 theorem get_append_of_le : ∀ xs ys i, length xs ≤ i → i < length xs + length ys →
     get (append xs ys) i = get ys (i - length xs) := by
@@ -604,9 +606,6 @@ earlier results, stored newest first. Inside `step n xs`, `Sequence.rget xs i` r
 an earlier index `i < n`. -/
 def covrec (step : Nat → Nat → Nat) : Nat → Nat :=
   fun n => step n (Sequence.generate step n)
-
-theorem covrec_eq (step : Nat → Nat → Nat) :
-    ∀ n, covrec step n = step n (Sequence.generate step n) := fun n => rfl
 
 /-- Prove `¬ check n (covrec step n) = 0` for all `n` by showing that `step n xs` satisfies
 `check n` whenever `xs` has length `n` and every earlier entry `Sequence.rget xs i` (`i < n`)

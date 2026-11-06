@@ -108,15 +108,11 @@ theorem diagonal_pair : ∀ x y, diagonal (pair x y) = x + y := by
 
 theorem unpairLeft_pair : ∀ x y, unpairLeft (pair x y) = x := by
   intro x y
-  change pair x y - triangular (diagonal (pair x y)) = x
-  rw [diagonal_pair]
-  change triangular (x + y) + x - triangular (x + y) = x
-  rw [add_comm, add_sub_cancel]
+  rw [unpairLeft, diagonal_pair, pair, add_comm, add_sub_self_right]
 
 theorem unpairRight_pair : ∀ x y, unpairRight (pair x y) = y := by
   intro x y
-  change diagonal (pair x y) - unpairLeft (pair x y) = y
-  rw [diagonal_pair, unpairLeft_pair, add_comm, add_sub_cancel]
+  rw [unpairRight, diagonal_pair, unpairLeft_pair, add_comm, add_sub_self_right]
 
 theorem unpairLeft_le_diagonal : ∀ z, unpairLeft z ≤ diagonal z := by
   intro z
@@ -134,8 +130,7 @@ theorem pair_unpair : ∀ z, pair (unpairLeft z) (unpairRight z) = z := by
   have hs : unpairLeft z + unpairRight z = diagonal z := by
     rw [add_comm]
     exact sub_add_cancel_of_le (diagonal z) (unpairLeft z) (unpairLeft_le_diagonal z)
-  change triangular (unpairLeft z + unpairRight z) + unpairLeft z = z
-  rw [hs, add_comm]
+  rw [pair, hs, add_comm]
   exact sub_add_cancel_of_le z _ (and_left (diagonal_bounds z))
 
 theorem pair_injective : ∀ a b c d, pair a b = pair c d → a = c ∧ b = d := by

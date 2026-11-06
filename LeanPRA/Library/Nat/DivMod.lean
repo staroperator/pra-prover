@@ -39,8 +39,7 @@ theorem div_of_ne_zero : ∀ x d, ¬ d = 0 →
 
 theorem mod_zero : ∀ x, mod x 0 = x := by
   intro x
-  change x - 0 * div x 0 = x
-  rw [zero_mul, sub_zero]
+  rw [mod, zero_mul, sub_zero]
 
 theorem zero_mod : ∀ x, 0 % x = 0 := by
   intro x
@@ -96,8 +95,7 @@ theorem mod_le : ∀ x d, x % d ≤ x :=
 /-- Quotient and remainder reconstruct the dividend, including for a zero divisor. -/
 theorem div_mod : ∀ x d, d * div x d + mod x d = x := by
   intro x d
-  change d * div x d + (x - d * div x d) = x
-  rw [add_comm]
+  rw [mod, add_comm]
   by_cases hd : d = 0
   · rw [hd, zero_mul, sub_zero, add_zero]
   · exact sub_add_cancel_of_le x (d * div x d) (and_left (div_bounds x d hd))
@@ -142,6 +140,14 @@ theorem div_mod_unique : ∀ x d q r, ¬ d = 0 → d * q + r = x → r < d →
     rw [hq] at hm
     exact eq_trans hm (eq_symm he)
 
+theorem div_mul_add_of_lt : ∀ d q r, ¬ d = 0 → r < d → (d * q + r) / d = q := by
+  intro d q r hd hr
+  exact and_left (div_mod_unique (d * q + r) d q r hd rfl hr)
+
+theorem mod_mul_add_of_lt : ∀ d q r, ¬ d = 0 → r < d → (d * q + r) % d = r := by
+  intro d q r hd hr
+  exact and_right (div_mod_unique (d * q + r) d q r hd rfl hr)
+
 theorem div_lt : ∀ x d, x < d → div x d = 0 := by
   intro x d h
   have hd : ¬ d = 0 := by
@@ -178,8 +184,7 @@ theorem div_pos_iff : ∀ x d, ¬ d = 0 → (0 < x / d ↔ d ≤ x) := by
 
 theorem mod_of_lt : ∀ x d, x < d → mod x d = x := by
   intro x d h
-  change x - d * div x d = x
-  rw [div_lt x d h, mul_zero, sub_zero]
+  rw [mod, div_lt x d h, mul_zero, sub_zero]
 
 theorem mod_eq_self_iff_lt : ∀ x d, ¬ d = 0 → (x % d = x ↔ x < d) := by
   intro x d hd
@@ -203,8 +208,7 @@ theorem div_one : ∀ x, div x 1 = x := by
 
 theorem mod_one : ∀ x, mod x 1 = 0 := by
   intro x
-  change x - 1 * div x 1 = 0
-  rw [div_one, one_mul, sub_self]
+  rw [mod, div_one, one_mul, sub_self]
 
 theorem div_self : ∀ x, ¬ x = 0 → x / x = 1 := by
   intro x hx
