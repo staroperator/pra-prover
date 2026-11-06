@@ -6,6 +6,10 @@ public import LeanPRA.Core.Reduction
 public import LeanPRA.Core.Substitution
 public import LeanPRA.Core.Syntax
 public import LeanPRA.Core.Utils
+public import LeanPRA.Library.FOL.Common.Language
+public import LeanPRA.Library.FOL.Common.LogicalAxiom
+public import LeanPRA.Library.FOL.Common.Proof
+public import LeanPRA.Library.FOL.Common.Syntax
 public import LeanPRA.Library.Logic
 public import LeanPRA.Library.Nat.Boolean
 public import LeanPRA.Library.Nat.Bounded
@@ -13,7 +17,9 @@ public import LeanPRA.Library.Nat.Defs
 public import LeanPRA.Library.Nat.DivMod
 public import LeanPRA.Library.Nat.Pairing
 public import LeanPRA.Library.Nat.Sequence
+public import LeanPRA.Library.Nat.Tuple
 public import LeanPRA.Library.Tactic.Combinators
+public import LeanPRA.Library.Tactic.Construction
 public import LeanPRA.Library.Tactic.Induction
 public import LeanPRA.Library.Tactic.Logic
 public import LeanPRA.Library.Tactic.Rewrite

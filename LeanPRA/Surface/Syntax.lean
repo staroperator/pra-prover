@@ -11,8 +11,8 @@ the elaborator disambiguates them from the expected category.
 - `praExpr` parses expressions and type annotations. Application arguments on later lines must be
   indented past the enclosing tactic or declaration.
 - `praParam` parses declaration parameter groups.
-- `praDecl` parses declarations, notation, `#check`, `#print`, `open`, `namespace`, and `end`
-  inside a `pra` block.
+- `praDecl` parses declarations, documentation, notation, `#check`, `#print`, `open`, `namespace`,
+  and `end` inside a `pra` block.
 - `praBlock` opens a `pra` block, and `praScopes` tracks open `pra` and `namespace` scopes.
 -/
 
@@ -66,7 +66,6 @@ syntax:lead "let " "(" praBinder ", " praBinder,+ ")" " := "
 syntax:lead "let " ident " : " praExpr " := "
   recoverPraExpr(praExpr) "; " recoverPraExpr(praExpr) : praExpr
 
-
 open Lean PrettyPrinter Parenthesizer in
 /-- Parenthesize `praExpr` by precedence, copying source info onto added parentheses. -/
 @[category_parenthesizer praExpr] def parenthesizePraExpr : CategoryParenthesizer := fun prec =>
@@ -82,6 +81,7 @@ syntax "(" ident+ " : " praExpr ")" : praParam
 syntax "{" ident+ " : " praExpr "}" : praParam
 
 declare_syntax_cat praDecl
+syntax (name := praModuleDoc) Lean.Parser.Command.moduleDoc : praDecl
 syntax (name := praDocumented) Lean.Parser.Command.docComment praDecl : praDecl
 syntax "def " ident (ppSpace praParam)* " : " recoverPraExpr(praExpr)
   " := " recoverPraExpr(praExpr) : praDecl

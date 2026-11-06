@@ -225,6 +225,25 @@ theorem bor_eq_one : ∀ a b, bor a b = 1 ↔ ¬ a = 0 ∨ ¬ b = 0 := by
       · rw [ha, bor_zero]; exact and_right (isPos_eq_one b) hb
       · exact bor_of_ne_zero a b ha
 
+theorem bor_eq_one_of_bool : ∀ a b, IsBool a → IsBool b →
+    (bor a b = 1 ↔ a = 1 ∨ b = 1) := by
+  intro a b ha hb
+  exact iff_trans (bor_eq_one a b)
+    (or_congr (and_right (bool_eq_one a ha), and_left (bool_eq_one a ha))
+      (and_right (bool_eq_one b hb), and_left (bool_eq_one b hb)))
+
+theorem bor_eq_one_of_left_eq_one : ∀ a b, a = 1 → bor a b = 1 := by
+  intro a b h
+  rw [h]
+  rfl
+
+theorem bor_eq_one_of_right_eq_one : ∀ a b, b = 1 → bor a b = 1 := by
+  intro a b h
+  rw [h]
+  apply and_right (bor_eq_one a 1)
+  right
+  exact succ_ne_zero 0
+
 theorem bor_eq_zero : ∀ a b, bor a b = 0 ↔ a = 0 ∧ b = 0 := by
   intro a b
   constructor

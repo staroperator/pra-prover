@@ -13,11 +13,13 @@ snapshots handle incremental reuse, diagnostics, and editor information for each
   PRA entries until the matching `end`.
 - `praEntry` parses a command in an active PRA scope using `praDecl`.
 - `elaborateEntry` elaborates declarations, notation, inspection commands, and `open`,
-  `namespace`, and `end` commands.
+  `namespace`, and `end` commands. Module documentation uses Lean's command elaborator.
 -/
 
 public meta section
+
 namespace LeanPRA.Surface
+
 open Lean Elab Command Parser
 
 private def registerImportedNamespace (id : Ident) : CommandElabM Unit := do
@@ -40,6 +42,7 @@ private def inPraFn : ParserFn := fun ctx s =>
 private def inPra : Parser := { fn := inPraFn }
 
 @[combinator_formatter inPra] private def formatInPra : PrettyPrinter.Formatter := pure ()
+
 @[combinator_parenthesizer inPra] private def parenthesizeInPra :
     PrettyPrinter.Parenthesizer := pure ()
 
@@ -66,6 +69,7 @@ private def inPra : Parser := { fn := inPraFn }
   try
     withRef entry do
       match entry with
+      | `(praDecl| $doc:moduleDoc) => elabCommand doc
       | `(praDecl| #check $e:praExpr) => elaborateCheck e
       | `(praDecl| #print $id:ident) => elaboratePrint id
       | `(praDecl| open $ids:ident*) =>

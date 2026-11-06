@@ -18,6 +18,12 @@ Primitive recursive arithmetic and order on `Nat`:
 
 pra
 
+theorem primrec_zero (step : Nat → Nat → Nat) : ∀ base, primrec base step 0 = base :=
+  fun base => rfl
+
+theorem primrec_succ (step : Nat → Nat → Nat) : ∀ base n,
+    primrec base step (S n) = step n (primrec base step n) := fun base n => rfl
+
 /-- Addition. -/
 def add : Nat → Nat → Nat :=
   fun x y => primrec x (fun _ z => S z) y
