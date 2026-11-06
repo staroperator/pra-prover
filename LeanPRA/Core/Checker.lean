@@ -160,11 +160,7 @@ def inferPredicate : Nat → Environment → Context → Predicate → CheckResu
               checkArity expected.arity signature.arity
               checkSort expected.sort signature.sort
             ).withSite context (.predicate actual)
-          let actual ← inferPredicate maxDepth environment context
-            (declaration.body.instantiate functions predicates)
-          checkArity declaration.signature.arity actual.arity
-          checkSort declaration.signature.sort actual.sort
-          pure actual
+          pure declaration.signature
         | _ => referenceError environment name .predicate
     ).withSite context (.predicate expression)
 
