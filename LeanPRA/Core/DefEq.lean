@@ -24,15 +24,19 @@ of arguments may exhaust its depth and still allow a definition or recursor to d
 
 namespace LeanPRA.Core
 
-private def compareArguments (compare : α → β → β → CheckResult Bool) :
+/-- Compare two argument lists against their common list of types. Mismatched lengths fail. -/
+@[expose]
+public def compareArguments (compare : α → β → β → CheckResult Bool) :
     List α → List β → List β → CheckResult Bool
   | [], [], [] => pure true
   | k :: ks, a :: as, b :: bs => do
     if ← compare k a b then compareArguments compare ks as bs else pure false
   | _, _, _ => pure false
 
--- Record progress while exposing a head so that batches need no before/after syntax comparison.
-private def exposeTerm : Nat → Bool → Term → CheckResult (Option Term)
+/-- Compute beta, let, and zero-recursion steps at a term head. Return a new term when a step
+occurs or `changed` is true, and `none` otherwise. Each recursive call consumes depth. -/
+@[expose]
+public def exposeTerm : Nat → Bool → Term → CheckResult (Option Term)
   | 0, _, _ => exhausted
   | depth + 1, changed, expression => do
     match expression with
@@ -48,8 +52,10 @@ private def exposeTerm : Nat → Bool → Term → CheckResult (Option Term)
         | none => pure (if changed then some expression else none)
     | _ => pure (if changed then some expression else none)
 
--- Expand the named function of an application, keeping newly exposed recursors for comparison.
-private def unfoldTermHead (environment : Environment) : Term → CheckResult (Option Term)
+/-- Unfold a named function at the head of an application, preserving its arguments.
+Return `none` when the head has no named definition. -/
+@[expose]
+public def unfoldTermHead (environment : Environment) : Term → CheckResult (Option Term)
   | .definition name functions =>
     match environment.lookup name with
     | some (.function d) => pure (some (d.body.instantiate functions))
@@ -58,7 +64,10 @@ private def unfoldTermHead (environment : Environment) : Term → CheckResult (O
     (unfoldTermHead environment function).map (·.map (fun f => .app f argument))
   | _ => pure none
 
-private def exposeRecursor (depth : Nat) (environment : Environment) :
+/-- Reduce a recursor argument to weak-head form and take its zero or successor step if possible.
+Return `none` when the input is unchanged. -/
+@[expose]
+public def exposeRecursor (depth : Nat) (environment : Environment) :
     Term → CheckResult (Option Term)
   | .primrec base step argument => do
     let value ← whnfTerm depth environment argument
@@ -73,6 +82,7 @@ mutual
 
 /-- Compare terms of the supplied arity in a common well-formed context and checked environment.
 Structural comparison requests unfolding and head computation as needed. -/
+@[expose]
 public def defEqTerm : Nat → Environment → Arity → Term → Term → CheckResult Bool
   | 0, _, _, _, _ => exhausted
   | depth + 1, environment, arity, left, right => do
@@ -135,6 +145,7 @@ public def defEqTerm : Nat → Environment → Arity → Term → Term → Check
 /-- Compare application heads and their arguments at a common arity, keeping heads folded.
 Inputs satisfy the typing assumptions of `defEqTerm`. Success establishes equality. Failure or
 exhaustion can still require unfolding when a head computes or discards its arguments. -/
+@[expose]
 public def compareTermApplications : Nat → Environment → Arity → Term → Term → CheckResult Bool
   | 0, _, _, _, _ => exhausted
   | depth + 1, environment, arity, left, right => do
@@ -154,7 +165,10 @@ public def compareTermApplications : Nat → Environment → Arity → Term → 
 
 end
 
-private def exposePredicate : Nat → Bool → Predicate → CheckResult (Option Predicate)
+/-- Compute beta and let steps at a predicate head. Return a new predicate when a step occurs
+or `changed` is true, and `none` otherwise. Each recursive call consumes depth. -/
+@[expose]
+public def exposePredicate : Nat → Bool → Predicate → CheckResult (Option Predicate)
   | 0, _, _ => exhausted
   | depth + 1, changed, expression => do
     match expression with
@@ -169,7 +183,10 @@ private def exposePredicate : Nat → Bool → Predicate → CheckResult (Option
         | none => pure (if changed then some expression else none)
     | _ => pure (if changed then some expression else none)
 
-private def unfoldPredicateHead (environment : Environment) :
+/-- Unfold a named predicate at the head of an application, preserving its numerical arguments.
+Return `none` when the head has no named definition. -/
+@[expose]
+public def unfoldPredicateHead (environment : Environment) :
     Predicate → CheckResult (Option Predicate)
   | .definition name functions predicates =>
     match environment.lookup name with
@@ -184,6 +201,7 @@ mutual
 /-- Compare predicates at a common arity in a well-formed context and checked environment.
 Both inputs must be well typed at a common predicate signature, including any QF inclusion.
 Matching logical constructors compare their components directly. -/
+@[expose]
 public def defEqPredicate : Nat → Environment → Arity → Predicate → Predicate → CheckResult Bool
   | 0, _, _, _, _ => exhausted
   | depth + 1, environment, arity, left, right => do
@@ -236,6 +254,7 @@ public def defEqPredicate : Nat → Environment → Arity → Predicate → Pred
 /-- Compare predicate application heads and their numerical arguments, keeping heads folded.
 Inputs satisfy the typing assumptions of `defEqPredicate`. Success establishes equality. Failure
 or exhaustion can still require unfolding a predicate that discards its arguments. -/
+@[expose]
 public def comparePredicateApplications : Nat → Environment → Arity → Predicate → Predicate →
     CheckResult Bool
   | 0, _, _, _, _ => exhausted

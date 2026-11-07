@@ -1,7 +1,6 @@
 module
 
 public import LeanPRA.Metatheory.Core.Properties.Normalization.Soundness
-import all LeanPRA.Core.DefEq
 
 /-!
 # Reduction used by structural conversion
@@ -11,14 +10,13 @@ Successful reduction preserves typed equality at the input arity or predicate si
 - `exposeTerm_sound` and `exposePredicate_sound` justify beta, let, and zero-recursion batches.
 - `unfoldTermHead_sound` and `unfoldPredicateHead_sound` justify unfolding a named head.
 - `exposeRecursor_sound` justifies exposing the next recursor comparison.
-
-These lemmas are private implementation proofs.
 -/
 
 namespace LeanPRA.Core
+
 open Theory
 
-private theorem exposeTerm_sound {n changed E Ξ Γ t u k}
+public theorem exposeTerm_sound {n changed E Ξ Γ t u k}
     (typed : TermTyping E Ξ Γ t k) (run : exposeTerm n changed t = .ok u) :
     TermEq E Ξ Γ t (u.getD t) k := by
   induction n generalizing changed Γ t u k with
@@ -82,7 +80,7 @@ private theorem map_some {result : CheckResult (Option α)} {f : α → β} {y :
     | none => simp [Except.map] at run
     | some x => exact ⟨x, rfl, by simpa [Except.map] using run⟩
 
-private theorem unfoldTermHead_sound {E Ξ Γ t u k} (valid : EnvironmentWF E)
+public theorem unfoldTermHead_sound {E Ξ Γ t u k} (valid : EnvironmentWF E)
     (typed : TermTyping E Ξ Γ t k) (run : unfoldTermHead E t = .ok u) :
     TermEq E Ξ Γ t (u.getD t) k := by
   cases u with
@@ -105,7 +103,7 @@ private theorem unfoldTermHead_sound {E Ξ Γ t u k} (valid : EnvironmentWF E)
     | nil | cons => trivial
     | _ => simp [unfoldTermHead, pure, Except.pure] at run
 
-private theorem exposePredicate_sound {n changed E Ξ Γ P Q σ} (valid : EnvironmentWF E)
+public theorem exposePredicate_sound {n changed E Ξ Γ P Q σ} (valid : EnvironmentWF E)
     (typed : PredicateTyping E Ξ Γ P σ) (run : exposePredicate n changed P = .ok Q) :
     PredicateEq E Ξ Γ P (Q.getD P) σ := by
   induction n generalizing changed Γ P Q σ with
@@ -152,7 +150,7 @@ private theorem exposePredicate_sound {n changed E Ξ Γ P Q σ} (valid : Enviro
       simp only [exposePredicate, pure, Except.pure, Except.ok.injEq] at run
       split at run <;> subst Q <;> exact .refl typed
 
-private theorem unfoldPredicateHead_sound {E Ξ Γ P Q σ} (valid : EnvironmentWF E)
+public theorem unfoldPredicateHead_sound {E Ξ Γ P Q σ} (valid : EnvironmentWF E)
     (typed : PredicateTyping E Ξ Γ P σ) (run : unfoldPredicateHead E P = .ok Q) :
     PredicateEq E Ξ Γ P (Q.getD P) σ := by
   cases Q with
@@ -171,7 +169,7 @@ private theorem unfoldPredicateHead_sound {E Ξ Γ P Q σ} (valid : EnvironmentW
     | nil | cons => trivial
     | _ => simp [unfoldPredicateHead, pure, Except.pure] at run
 
-private theorem exposeRecursor_sound {n E Ξ Γ t u k} (valid : EnvironmentWF E)
+public theorem exposeRecursor_sound {n E Ξ Γ t u k} (valid : EnvironmentWF E)
     (typed : TermTyping E Ξ Γ t k) (run : exposeRecursor n E t = .ok u) :
     TermEq E Ξ Γ t (u.getD t) k := by
   cases u with

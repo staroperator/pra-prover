@@ -2,13 +2,12 @@ module
 
 public import LeanPRA.Metatheory.Core.Properties.Normalization.WeakHead
 import LeanPRA.Metatheory.Core.Judgement.Formation
-import all LeanPRA.Core.DefEq
 
 /-!
 # Finite computations for conversion completeness
 
 Finite sequences of head reductions connect conversion batches to successful weak-head reduction.
-All supporting relations and lemmas are private.
+The shared relations and lemmas support the completeness proof for structural conversion.
 
 - `HeadSteps` counts reductions between two expressions.
 - `HeadTrace` follows reductions to a stationary head.
@@ -19,9 +18,11 @@ All supporting relations and lemmas are private.
 -/
 
 namespace LeanPRA.Core
+
 open Theory
 
-private def termStep (E : Environment) : Term → CheckResult (Option Term)
+/-- Take one head-reduction step in a term, returning `none` at a stationary head. -/
+@[expose] public def termStep (E : Environment) : Term → CheckResult (Option Term)
   | .definition name fs =>
     match E.lookup name with
     | some (.function d) => pure (some (d.body.instantiate fs))
@@ -34,7 +35,8 @@ private def termStep (E : Environment) : Term → CheckResult (Option Term)
   | .primrec b s n => (termStep E n).map (Option.map (fun m => .primrec b s m))
   | _ => pure none
 
-private def predicateStep (E : Environment) : Predicate → CheckResult (Option Predicate)
+/-- Take one head-reduction step in a predicate, returning `none` at a stationary head. -/
+@[expose] public def predicateStep (E : Environment) : Predicate → CheckResult (Option Predicate)
   | .definition name fs ps =>
     match E.lookup name with
     | some (.predicate d) => pure (some (d.body.instantiate fs ps))
@@ -44,7 +46,8 @@ private def predicateStep (E : Environment) : Predicate → CheckResult (Option 
   | .app f a => (predicateStep E f).map (Option.map (fun g => .app g a))
   | _ => pure none
 
-private inductive HeadSteps (step : α → CheckResult (Option α)) : Nat → α → α → Prop where
+/-- A sequence of a specified number of head-reduction steps. -/
+public inductive HeadSteps (step : α → CheckResult (Option α)) : Nat → α → α → Prop where
   | refl : HeadSteps step 0 a a
   | next (run : step a = .ok (some b)) (tail : HeadSteps step n b c) :
       HeadSteps step (n + 1) a c
@@ -65,7 +68,8 @@ private theorem HeadSteps.map {step : α → CheckResult (Option α)}
   | refl => exact .refl
   | next run _ ih => exact .next (lift run) ih
 
-private inductive HeadTrace (step : α → CheckResult (Option α)) : α → α → Prop where
+/-- A finite sequence of head reductions ending at a stationary head. -/
+public inductive HeadTrace (step : α → CheckResult (Option α)) : α → α → Prop where
   | done (run : step a = .ok none) : HeadTrace step a a
   | next (run : step a = .ok (some b)) (tail : HeadTrace step b c) : HeadTrace step a c
 
@@ -87,13 +91,13 @@ private theorem HeadTrace.drop {step : α → CheckResult (Option α)} {n a b c}
       cases eq
       exact ih rest
 
-private theorem HeadTrace.stationary {step : α → CheckResult (Option α)} {a b}
+public theorem HeadTrace.stationary {step : α → CheckResult (Option α)} {a b}
     (trace : HeadTrace step a b) (stop : step a = .ok none) : a = b := by
   cases trace with
   | done => rfl
   | next run _ => simp [stop] at run
 
-private theorem HeadTrace.steps {step : α → CheckResult (Option α)} {a b}
+public theorem HeadTrace.steps {step : α → CheckResult (Option α)} {a b}
     (trace : HeadTrace step a b) : ∃ n, HeadSteps step n a b := by
   induction trace with
   | done => exact ⟨0, .refl⟩
@@ -130,7 +134,7 @@ private theorem predicate_app_step {E f g a} (run : predicateStep E f = .ok (som
   | lam => simp [predicateStep, pure, Except.pure] at run
   | _ => change (predicateStep E _).map _ = _; rw [run]; rfl
 
-private theorem term_stationary {E t} (head : TermWhnf t) : termStep E t = .ok none := by
+public theorem term_stationary {E t} (head : TermWhnf t) : termStep E t = .ok none := by
   induction head with
   | app hf notLam ih =>
     cases hf with
@@ -155,7 +159,7 @@ private theorem predicate_stationary {E P} (head : PredicateWhnf P) :
     | _ => change (predicateStep E _).map _ = _; rw [ih]; rfl
   | _ => rfl
 
-private theorem whnfTerm_trace {n E t u} (run : whnfTerm n E t = .ok u) :
+public theorem whnfTerm_trace {n E t u} (run : whnfTerm n E t = .ok u) :
     HeadTrace (termStep E) t u := by
   induction n generalizing t u with
   | zero => simp [whnfTerm, exhausted, fail] at run
@@ -200,7 +204,7 @@ private theorem whnfTerm_trace {n E t u} (run : whnfTerm n E t = .ok u) :
       simp only [whnfTerm, pure, Except.pure, Except.ok.injEq] at run
       subst u; exact .done rfl
 
-private theorem whnfPredicate_trace {n E P Q} (run : whnfPredicate n E P = .ok Q) :
+public theorem whnfPredicate_trace {n E P Q} (run : whnfPredicate n E P = .ok Q) :
     HeadTrace (predicateStep E) P Q := by
   induction n generalizing P Q with
   | zero => simp [whnfPredicate, exhausted, fail] at run
@@ -227,18 +231,19 @@ private theorem whnfPredicate_trace {n E P Q} (run : whnfPredicate n E P = .ok Q
       simp only [whnfPredicate, pure, Except.pure, Except.ok.injEq] at run
       subst Q; exact .done rfl
 
-private def Eventually (p : Nat → Prop) : Prop := ∃ n, ∀ m ≥ n, p m
+/-- A property of depth that holds at every depth above some bound. -/
+@[expose] public def Eventually (p : Nat → Prop) : Prop := ∃ n, ∀ m ≥ n, p m
 
-private theorem eventually_const {p : Prop} (h : p) : Eventually (fun _ => p) :=
+public theorem eventually_const {p : Prop} (h : p) : Eventually (fun _ => p) :=
   ⟨0, fun _ _ => h⟩
 
-private theorem eventually_and {p q : Nat → Prop} (hp : Eventually p) (hq : Eventually q) :
+public theorem eventually_and {p q : Nat → Prop} (hp : Eventually p) (hq : Eventually q) :
     Eventually (fun n => p n ∧ q n) := by
   obtain ⟨i, hi⟩ := hp
   obtain ⟨j, hj⟩ := hq
   exact ⟨max i j, fun m hm => ⟨hi m (by omega), hj m (by omega)⟩⟩
 
-private theorem eventually_next {p q : Nat → Prop}
+public theorem eventually_next {p q : Nat → Prop}
     (step : ∀ n, p n → q (n + 1)) (h : Eventually p) : Eventually q := by
   obtain ⟨n, hn⟩ := h
   refine ⟨n + 1, ?_⟩
@@ -247,18 +252,20 @@ private theorem eventually_next {p q : Nat → Prop}
   | zero => omega
   | succ m => exact step m (hn m (by omega))
 
-private theorem eventually_mono {p q : Nat → Prop}
+public theorem eventually_mono {p q : Nat → Prop}
     (step : ∀ n, p n → q n) (h : Eventually p) : Eventually q := by
   obtain ⟨n, hn⟩ := h
   exact ⟨n, fun m hm => step m (hn m hm)⟩
 
-private inductive HeadBatch (step : α → CheckResult (Option α)) :
+/-- The steps represented by an optional batch result. A result starting with `changed = false`
+must include at least one step when it returns `some`. -/
+public inductive HeadBatch (step : α → CheckResult (Option α)) :
     Bool → α → Option α → Prop where
   | none : HeadBatch step false a none
   | some (steps : HeadSteps step n a b) (positive : changed = false → 0 < n) :
       HeadBatch step changed a (some b)
 
-private theorem HeadBatch.steps {step : α → CheckResult (Option α)} {changed a result}
+public theorem HeadBatch.steps {step : α → CheckResult (Option α)} {changed a result}
     (batch : HeadBatch step changed a result) :
     ∃ n, HeadSteps step n a (result.getD a) := by
   cases batch with
@@ -271,7 +278,7 @@ private theorem HeadBatch.next {step : α → CheckResult (Option α)} {changed 
   cases batch with
   | some steps _ => exact .some (.next run steps) (by omega)
 
-private theorem exposeTerm_batch {n changed E a result}
+public theorem exposeTerm_batch {n changed E a result}
     (run : exposeTerm n changed a = .ok result) : HeadBatch (termStep E) changed a result := by
   induction n generalizing changed a result with
   | zero => simp [exposeTerm, exhausted, fail] at run
@@ -315,7 +322,7 @@ private theorem exposeTerm_batch {n changed E a result}
         pure, Except.pure, Except.ok.injEq] at run <;> subst result
       all_goals first | exact .none | exact .some .refl (by simp)
 
-private theorem exposePredicate_batch {n changed E a result}
+public theorem exposePredicate_batch {n changed E a result}
     (run : exposePredicate n changed a = .ok result) :
     HeadBatch (predicateStep E) changed a result := by
   induction n generalizing changed a result with
@@ -352,7 +359,7 @@ private theorem exposePredicate_batch {n changed E a result}
         pure, Except.pure, Except.ok.injEq] at run <;> subst result
       all_goals first | exact .none | exact .some .refl (by simp)
 
-private theorem exposeTerm_terminates {n E t w} (run : whnfTerm n E t = .ok w)
+public theorem exposeTerm_terminates {n E t w} (run : whnfTerm n E t = .ok w)
     (changed : Bool) : ∃ result, Eventually (fun m => exposeTerm m changed t = .ok result) := by
   induction n generalizing t w changed with
   | zero => simp [whnfTerm, exhausted, fail] at run
@@ -396,7 +403,7 @@ private theorem exposeTerm_terminates {n E t w} (run : whnfTerm n E t = .ok w)
     | _ => exact ⟨if changed then some _ else none, 1,
         fun m hm => by cases m <;> first | omega | rfl⟩
 
-private theorem exposePredicate_terminates {n E t w} (run : whnfPredicate n E t = .ok w)
+public theorem exposePredicate_terminates {n E t w} (run : whnfPredicate n E t = .ok w)
     (changed : Bool) :
     ∃ result, Eventually (fun m => exposePredicate m changed t = .ok result) := by
   induction n generalizing t w changed with
@@ -454,7 +461,8 @@ private theorem HeadTrace.accessible {step : α → CheckResult (Option α)} {a 
       | zero => cases rest; exact ih
       | succ n => exact ih.inv ⟨n, rest⟩
 
-private theorem HeadTrace.induction_pair {step : α → CheckResult (Option α)} {A B}
+/-- Prove a property of two inputs by advancing either of their finite head-reduction traces. -/
+public theorem HeadTrace.induction_pair {step : α → CheckResult (Option α)} {A B}
     {P : α → α → Prop}
     (advance : ∀ {a b}, HeadTrace step a A → HeadTrace step b B →
       (∀ {i j x y}, HeadSteps step i a x → HeadSteps step j b y → 0 < i + j → P x y) → P a b)
@@ -480,7 +488,7 @@ private theorem HeadTrace.induction_pair {step : α → CheckResult (Option α)}
           exact iha x ⟨i, hx⟩ y (right.drop hy).accessible (left.drop hx) (right.drop hy)
   exact aux a left.accessible b right.accessible left right
 
-private theorem unfoldTermHead_terminates {E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k) :
+public theorem unfoldTermHead_terminates {E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k) :
     ∃ out, unfoldTermHead E t = .ok out := by
   induction t using Term.rec (motive_2 := fun _ => True) generalizing k with
   | definition name fs ih =>
@@ -493,7 +501,7 @@ private theorem unfoldTermHead_terminates {E Ξ Γ t k} (typed : TermTyping E Ξ
   | nil | cons => trivial
   | _ => exact ⟨none, rfl⟩
 
-private theorem unfoldPredicateHead_terminates {E Ξ Γ t σ}
+public theorem unfoldPredicateHead_terminates {E Ξ Γ t σ}
     (typed : PredicateTyping E Ξ Γ t σ) : ∃ out, unfoldPredicateHead E t = .ok out := by
   induction t using Predicate.rec (motive_2 := fun _ => True) generalizing σ with
   | definition name fs ps ih =>
@@ -506,7 +514,7 @@ private theorem unfoldPredicateHead_terminates {E Ξ Γ t σ}
   | nil | cons => trivial
   | _ => exact ⟨none, rfl⟩
 
-private theorem unfoldTermHead_step {E t out} (run : unfoldTermHead E t = .ok (some out)) :
+public theorem unfoldTermHead_step {E t out} (run : unfoldTermHead E t = .ok (some out)) :
     termStep E t = .ok (some out) := by
   induction t using Term.rec (motive_2 := fun _ => True) generalizing out with
   | definition => exact run
@@ -524,7 +532,7 @@ private theorem unfoldTermHead_step {E t out} (run : unfoldTermHead E t = .ok (s
   | nil | cons => trivial
   | _ => simp [unfoldTermHead, pure, Except.pure] at run
 
-private theorem unfoldPredicateHead_step {E t out}
+public theorem unfoldPredicateHead_step {E t out}
     (run : unfoldPredicateHead E t = .ok (some out)) : predicateStep E t = .ok (some out) := by
   induction t using Predicate.rec (motive_2 := fun _ => True) generalizing out with
   | definition => exact run
@@ -542,7 +550,7 @@ private theorem unfoldPredicateHead_step {E t out}
   | nil | cons => trivial
   | _ => simp [unfoldPredicateHead, pure, Except.pure] at run
 
-private theorem exposeRecursor_terminates {n E b s a w}
+public theorem exposeRecursor_terminates {n E b s a w}
     (run : whnfTerm n E (.primrec b s a) = .ok w) :
     ∃ result, Eventually (fun m => exposeRecursor m E (.primrec b s a) = .ok result) := by
   cases n with
@@ -573,7 +581,7 @@ private theorem exposeRecursor_terminates {n E b s a w}
       simp only [exposeRecursor, h, bind, Except.bind]
       rfl
 
-private theorem exposeRecursor_batch {n E b s a result}
+public theorem exposeRecursor_batch {n E b s a result}
     (run : exposeRecursor n E (.primrec b s a) = .ok result) :
     HeadBatch (termStep E) false (.primrec b s a) result := by
   simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
@@ -612,7 +620,7 @@ private theorem exposeRecursor_batch {n E b s a result}
         | zero => cases steps; simp at h
         | succ => omega)
 
-private theorem exposeRecursor_none {n E b s a}
+public theorem exposeRecursor_none {n E b s a}
     (run : exposeRecursor n E (.primrec b s a) = .ok none) :
     termStep E (.primrec b s a) = .ok none := by
   simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
@@ -690,7 +698,7 @@ private theorem unfoldPredicateHead_app_none {E f a}
   | error e => simp [unfoldPredicateHead, h, Except.map] at run
   | ok out => cases out <;> simp_all [unfoldPredicateHead, Except.map]
 
-private theorem term_ready {n E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k)
+public theorem term_ready {n E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k)
     (exposed : exposeTerm n false t = .ok none) (unfolded : unfoldTermHead E t = .ok none)
     (notRec : ∀ b s a, t ≠ .primrec b s a) : termStep E t = .ok none := by
   induction t using Term.rec (motive_2 := fun _ => True) generalizing n k with
@@ -716,7 +724,7 @@ private theorem term_ready {n E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k)
   | nil | cons => trivial
   | _ => rfl
 
-private theorem predicate_ready {n E t}
+public theorem predicate_ready {n E t}
     (exposed : exposePredicate n false t = .ok none)
     (unfolded : unfoldPredicateHead E t = .ok none) : predicateStep E t = .ok none := by
   induction t using Predicate.rec (motive_2 := fun _ => True) generalizing n with

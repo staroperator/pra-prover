@@ -1,7 +1,6 @@
 module
 
 public import LeanPRA.Metatheory.Core.Properties.Normalization.Existence
-import LeanPRA.Metatheory.Core.Judgement.Formation
 import LeanPRA.Metatheory.Core.Properties.Normalization.Soundness
 
 /-!
@@ -40,7 +39,8 @@ private theorem normal_whnf {k t} (h : TermNormal k t) : TermWhnf t := by
   | lam => exact .lam
   | _ => trivial
 
-private theorem term_cancel (t : Term) :
+/-- Inserting a variable after the innermost binder and substituting that binder cancels. -/
+public theorem term_cancel (t : Term) :
     (t.rename (Renaming.lift 1 (fun i => i + 1))).subst0 (.bvar 0) = t := by
   rw [Term.subst0, Term.subst_rename]
   have h : (fun i => (fun | 0 => Term.bvar 0 | j + 1 => Term.bvar j)
@@ -142,7 +142,9 @@ private theorem predicate_normal_whnf {k P} (h : PredicateNormal k P) : Predicat
   | lam => exact .lam
   | app f a => exact .app (predicate_neutral_whnf f) (by intro u n eq; cases f <;> cases eq)
 
-private theorem predicate_cancel (P : Predicate) :
+/-- Inserting a numerical variable after the innermost predicate binder and substituting
+that binder cancels. -/
+public theorem predicate_cancel (P : Predicate) :
     (P.rename (Renaming.lift 1 (fun i => i + 1))).subst0 (.bvar 0) = P := by
   rw [Predicate.subst0, Predicate.subst_rename]
   have h : (fun i => (fun | 0 => Term.bvar 0 | j + 1 => Term.bvar j)

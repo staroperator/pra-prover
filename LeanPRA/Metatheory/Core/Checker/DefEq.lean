@@ -1,10 +1,9 @@
 module
 
 public import LeanPRA.Metatheory.Core.Properties.Normalization.Existence
-import all LeanPRA.Metatheory.Core.Checker.HeadReduction
-import all LeanPRA.Metatheory.Core.Checker.HeadTrace
-import all LeanPRA.Metatheory.Core.Properties.Normalization.CanonicalForms
-import all LeanPRA.Core.DefEq
+import LeanPRA.Metatheory.Core.Checker.HeadReduction
+import LeanPRA.Metatheory.Core.Checker.HeadTrace
+import LeanPRA.Metatheory.Core.Properties.Normalization.CanonicalForms
 
 /-!
 # Correctness of structural definitional equality
@@ -20,6 +19,7 @@ soundness also assumes independently typed endpoints in a common context.
 -/
 
 namespace LeanPRA.Core
+
 open Theory
 
 private theorem and_ok (a b : CheckResult Bool) :
