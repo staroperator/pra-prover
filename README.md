@@ -12,8 +12,9 @@ by the core. *Note: you don't need to assume Lean's axioms are consistent. The r
 for metaprogramming and an executable checker. Furthermore, it is possible to export PRA definitions
 and re-check them in an independent checker.*
 
-We further formalize the metatheory of the core language and the correctness of the core checker.
-*The metatheory formalization, however, assumes Lean's axioms which are much stronger than PRA.*
+We further formalize the metatheory of the core language, the correctness of the core checker, and
+translation from this core language into first-order PRA. *These metatheory formalizations, however,
+assumes Lean's axioms which are much stronger than PRA.*
 
 > [!WARNING]
 > This repository is largely maintained by LLM. I will try my best to review the specifications and
@@ -74,4 +75,5 @@ end
 - [`LeanPRA/Surface`](LeanPRA/Surface/) contains the surface language, including parsing,
   elaboration, printing, and editor support.
 - [`LeanPRA/Library`](LeanPRA/Library/) is the library for the PRA language.
-- [`LeanPRA/Metatheory`](LeanPRA/Metatheory/) contains the metatheory of the PRA language.
+- [`LeanPRA/Metatheory`](LeanPRA/Metatheory/) contains the metatheory of the PRA language and
+  first-order PRA.

@@ -62,6 +62,16 @@ public import LeanPRA.Metatheory.Core.Properties.Normalization.Soundness
 public import LeanPRA.Metatheory.Core.Properties.Normalization.WeakHead
 public import LeanPRA.Metatheory.Core.Properties.SortCoherence
 public import LeanPRA.Metatheory.Core.Properties.UniqueTyping
+public import LeanPRA.Metatheory.PRA.Basic
+public import LeanPRA.Metatheory.PRA.Conservative
+public import LeanPRA.Metatheory.PRA.Consistency
+public import LeanPRA.Metatheory.PRA.Defs
+public import LeanPRA.Metatheory.PRA.Intuitionistic
+public import LeanPRA.Metatheory.PRA.Substitution
+public import LeanPRA.Metatheory.PRA.Witness
+public import LeanPRA.Metatheory.Translation.Consistency
+public import LeanPRA.Metatheory.Translation.Correctness
+public import LeanPRA.Metatheory.Translation.Defs
 public import LeanPRA.Surface.Builtins
 public import LeanPRA.Surface.Command
 public import LeanPRA.Surface.Delab

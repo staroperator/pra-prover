@@ -97,3 +97,106 @@ def decidePredicateEq {E Ξ Γ P Q σ} (valid : EnvironmentWF E)
     (left : PredicateTyping E Ξ Γ P σ) (right : PredicateTyping E Ξ Γ Q σ) :
     Decidable (PredicateEq E Ξ Γ P Q σ)
 ```
+
+## First-Order and Quantifier-Free PRA
+
+[`LeanPRA/Metatheory/PRA`](PRA) defines the first-order theory of PRA and two quantifier-free
+calculi, and establishes witness extraction, conservativity, and consistency.
+
+### Syntax and Calculi
+
+[`PRA/Defs.lean`](PRA/Defs.lean) defines the syntax and proof systems.
+
+- Primitive recursive expressions `Primrec n` and PRA terms `PRA.Term n`.
+- Quantifier-free formulas `PRA.QFFormula n` and quantified formulas `PRA.Formula n`.
+- Derivability judgements `PRA.Proof` (classical first-order PRA with quantifier-free induction),
+  `PRA.QFProof` (classical quantifier-free PRA), and `PRA.QFProofI` (intuitionistic quantifier-free
+  PRA).
+
+### Main Results
+
+#### 1. Classical and Intuitionistic Equivalence
+
+In [`PRA/Intuitionistic.lean`](PRA/Intuitionistic.lean), classical and intuitionistic
+quantifier-free PRA prove the same formulas:
+
+```lean
+theorem qfProofI_iff_qfProof {φ : QFFormula n} : QFProofI φ ↔ QFProof φ
+```
+
+#### 2. Witness Extraction and Conservativity
+
+In [`PRA/Witness.lean`](PRA/Witness.lean) and [`PRA/Conservative.lean`](PRA/Conservative.lean),
+existential theorems of first-order PRA with quantifier-free matrices have primitive-recursive
+witnesses provable in quantifier-free PRA, and first-order PRA is conservative over quantifier-free
+PRA:
+
+```lean
+theorem exists_primrec_witness {P : QFFormula (n + 1)} (h : Proof (.ex P.toFormula)) :
+    ∃ f : Primrec n, QFProof (P.inst (.app f Term.var))
+
+theorem forall_exists_primrec_witness {P : QFFormula 2} (h : Proof (.all (.ex P.toFormula))) :
+    ∃ f : Primrec 1, QFProof (P.inst (.app f Term.var))
+
+theorem proof_iff_qfProof {A : QFFormula n} : Proof A.toFormula ↔ QFProof A
+```
+
+#### 3. Consistency
+
+In [`PRA/Consistency.lean`](PRA/Consistency.lean), first-order PRA is proved consistent in the host
+theory Lean by interpreting expressions and formulas over `Nat`:
+
+```lean
+theorem consistent {n : Nat} : ¬ Proof (.false : Formula n)
+```
+
+## Translation to First-Order PRA
+
+[`LeanPRA/Metatheory/Translation`](Translation) translates the typed PRA language into the
+first-order theory of PRA, proves that the translation preserves typing, definitional equality, and
+provability, and derives the consistency of the typed PRA language.
+
+### Translation Judgements
+
+[`Translation/Defs.lean`](Translation/Defs.lean) defines the relational translation.
+
+- Contextual translations `TermTranslation` and `PredicateTranslation`.
+- Argument list translations `FunctionArgumentsTranslation` and `PredicateArgumentsTranslation`.
+- Closed declaration schema translation `DeclarationTranslation`.
+
+### Main Results
+
+#### 1. Translation Correctness
+
+In [`Translation/Correctness.lean`](Translation/Correctness.lean), well-typed terms and predicates
+are characterized by the existence of translations, and well-formed declarations translate to
+primitive-recursive schemas and provable first-order PRA formulas:
+
+```lean
+theorem termTyping_iff_translation {E Ξ t k} (valid : EnvironmentWF E) :
+    TermTyping E Ξ [] t k ↔ ∃ f : FunctionAssignment Ξ.functions → Primrec k,
+      ∀ ρ, TermTranslation E Ξ ρ 0 t k (f ρ)
+
+theorem predicateTyping_iff_translation {E Ξ P σ} (valid : EnvironmentWF E) :
+    PredicateTyping E Ξ [] P σ ↔
+      ∃ A : FunctionAssignment Ξ.functions → PredicateAssignment Ξ.predicates → PRA.Formula σ.arity,
+        ∀ ρ π, PredicateTranslation E Ξ ρ π 0 P σ (A ρ π) ∧
+          (σ.sort = .qf → (A ρ π).QuantifierFree)
+
+theorem declarationTranslation_correct {E d} (valid : EnvironmentWF E)
+    (formed : DeclarationWF E d) : ∃ translated, DeclarationTranslation E d translated
+```
+
+#### 2. Consistency of the PRA Language
+
+In [`Translation/Consistency.lean`](Translation/Consistency.lean), the translation and the
+consistency of first-order PRA establish that no theorem of `False` can be admitted against or
+stored in a well-formed environment:
+
+```lean
+theorem declaration_consistent {E} {d : TheoremDefinition} (valid : EnvironmentWF E)
+    (formed : DeclarationWF E (.theoremE d)) : d.type ≠ .false
+
+theorem environment_consistent {E name} {d : TheoremDefinition} (valid : EnvironmentWF E)
+    (lookup : E[name]? = some (.theoremE d)) : d.type ≠ .false
+```
