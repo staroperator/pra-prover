@@ -76,4 +76,8 @@ end
   elaboration, printing, and editor support.
 - [`LeanPRA/Library`](LeanPRA/Library/) is the library for the PRA language.
 - [`LeanPRA/Metatheory`](LeanPRA/Metatheory/) contains the metatheory of the PRA language and
-  first-order PRA.
+  first-order PRA; see [`LeanPRA/Metatheory/README.md`](LeanPRA/Metatheory/README.md) for the
+  summary of results.
+- [`LeanPRA/Export`](LeanPRA/Export/) is for exporting the specifications and proof scripts, and
+  [`checker`](checker/) is an independent PRA checker written in Rust; see
+  [`checker/README.md`](checker/README.md) for how to run it.

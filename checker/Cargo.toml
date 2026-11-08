@@ -1,0 +1,10 @@
+[package]
+name = "pra-checker"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+publish = false
+
+[[bin]]
+name = "pra-check"
+path = "src/main.rs"

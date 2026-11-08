@@ -1,0 +1,131 @@
+import Lake
+
+open Lake DSL
+
+/-!
+# PRA builds and exports
+
+- The module facet `pra` writes a module's specification and object file after its imports are
+  built.
+- The library facet `pra` collects exports in dependency order and writes `modules.txt`.
+- The package facet `praBuiltins` exports the builtin declarations once per build directory.
+
+The default `LeanPRA` build runs its `pra` facet and builds all Library source modules.
+-/
+
+package «lean-pra» where
+  version := v!"0.1.0"
+
+@[default_target]
+lean_lib LeanPRA where
+  globs := #[.one `LeanPRA]
+  precompileModules := true
+  defaultFacets := #[LeanLib.leanArtsFacet, LeanLib.facetKind ++ `pra]
+
+lean_lib PRAExport where
+  roots := #[`LeanPRA.Export.Specification, `LeanPRA.Export.Writer]
+  precompileModules := true
+
+private def exportMarker (pkg : Package) (owner : Lean.Name) : System.FilePath :=
+  Lean.modToFilePath pkg.irDir owner "pra-export"
+
+private def removePair (dir : System.FilePath) (owner : Lean.Name) : IO Unit := do
+  for ext in ["pra", "prao"] do
+    let path := Lean.modToFilePath dir owner ext
+    if ← path.pathExists then IO.FS.removeFile path
+
+private def exportAfter (pkg : Package) (owner : Lean.Name) (deps : Job Unit) :
+    FetchM (Job System.FilePath) := do
+  let some writer ← findModule? `LeanPRA.Export.Writer | error "exporter module missing"
+  let native ← writer.dynlib.fetch
+  let driver := writer.pkg.dir / "LeanPRA/Export/Main.lean"
+  let source ← inputTextFile driver
+  let config ← inputTextFile (writer.pkg.dir / "lakefile.lean")
+  let deps := ((deps.mix source).mix config).zipWith (fun _ p => p) native
+  let out := pkg.buildDir / "pra"
+  let marker := exportMarker pkg owner
+  if ← marker.pathExists then
+    unless (← IO.FS.readFile marker).isEmpty do
+      for ext in ["pra", "prao"] do
+        unless ← (Lean.modToFilePath out owner ext).pathExists do
+          if ← marker.pathExists then IO.FS.removeFile marker
+  deps.mapM fun path => do
+    buildFileUnlessUpToDate' marker do
+      let plugins := (path.deps ++ path.runtimeOnlyDeps ++ #[path]).map fun lib =>
+        s!"--{if lib.plugin then "plugin" else "load-dynlib"}={lib.path}"
+      let args := if owner == `PRA.Builtins then
+          #["builtins", out.toString, marker.toString]
+        else #["module", out.toString, marker.toString, owner.toString]
+      proc { cmd := (← getLean).toString
+             env := ← getAugmentedEnv
+             args := plugins ++ #[s!"--root={writer.pkg.dir}", "--run", driver.toString] ++ args }
+    return marker
+
+package_facet praBuiltins (pkg) : System.FilePath :=
+  exportAfter pkg `PRA.Builtins Job.nil
+
+module_facet pra (mod) : Option System.FilePath := do
+  let pkg ← getRootPackage
+  let imports ← (← mod.transImports.fetch).await
+  let arts ← mod.leanArts.fetch
+  -- Modules without the PRA environment extension have no PRA declarations.
+  if mod.name != `LeanPRA.Surface.Environment &&
+      !imports.any (·.name == `LeanPRA.Surface.Environment) then
+    return ← arts.mapM fun _ => do
+      removePair (pkg.buildDir / "pra") mod.name
+      let marker := exportMarker pkg mod.name
+      if ← marker.pathExists then IO.FS.removeFile marker
+      return none
+  let dependencies ← (← (← mod.imports.fetch).await).mapM fun imp => fetch <| imp.facet `pra
+  let builtins ← fetch <| pkg.facet `praBuiltins
+  let deps := ((Job.mixArray dependencies).mix arts).mix builtins
+  return (← exportAfter pkg mod.name deps).map (some ·)
+
+private def exportModules (lib : LeanLib) : FetchM (Array Module) := do
+  let mut roots ← lib.getModuleArray
+  if lib.name == `LeanPRA then
+    let (_, names) ← StateT.run (s := #[]) do
+      (Glob.submodules `LeanPRA.Library).forEachModuleIn lib.pkg.dir fun name =>
+        modify (·.push name)
+    for name in names.qsort (fun a b => a.toString < b.toString) do
+      let some mod := lib.pkg.findModule? name | error s!"unknown module {name}"
+      roots := roots.push mod
+  let mut modules := OrdModuleSet.empty
+  for root in roots do
+    modules := modules.appendArray (← (← root.transImports.fetch).await)
+    modules := modules.insert root
+  return modules.toArray
+
+private def pruneExports (dir : System.FilePath) (owners : Array String) : IO Unit := do
+  let keep := owners.flatMap fun owner =>
+    #[Lean.modToFilePath dir owner.toName "pra", Lean.modToFilePath dir owner.toName "prao"]
+  for path in ← dir.walkDir do
+    if path.extension == some "pra" || path.extension == some "prao" then
+      unless keep.contains path do IO.FS.removeFile path
+
+library_facet pra (lib) : System.FilePath := do
+  let pkg ← getRootPackage
+  let modules ← exportModules lib
+  let jobs ← modules.mapM fun mod => fetch <| mod.facet `pra
+  let builtins ← fetch <| pkg.facet `praBuiltins
+  let markers := (Job.collectArray jobs).zipWith
+    (fun files builtin => #[builtin] ++ files.filterMap id) builtins
+  let some writer ← findModule? `LeanPRA.Export.Writer | error "exporter module missing"
+  let config ← inputTextFile (writer.pkg.dir / "lakefile.lean")
+  let markers := markers.zipWith (fun files _ => files) config
+  let out := pkg.buildDir / "pra"
+  let marker := out / "modules.txt"
+  let names := modules.toList.map (·.name.toString)
+  let trace := Hash.ofString (String.intercalate "\n" names)
+  markers.mapM fun files => do
+    addTrace (BuildTrace.ofHash trace)
+    buildFileUnlessUpToDate' marker do
+      let mut owners := #[]
+      for file in files do
+        for owner in (← IO.FS.readFile file).splitOn "\n" do
+          unless owner.isEmpty || owners.contains owner do owners := owners.push owner
+      pruneExports out owners
+      let temporary := marker.addExtension "tmp"
+      IO.FS.writeFile temporary (String.intercalate "\n" owners.toList ++ "\n")
+      IO.FS.rename temporary marker
+    return marker
