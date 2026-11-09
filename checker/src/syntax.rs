@@ -111,5 +111,9 @@ pub(crate) fn node(tag: &str, xs: Vec<R>) -> R {
         TAGS.iter().position(|x| *x == tag).unwrap() as u8
     ))];
     out.extend(xs);
-    Rc::new(X::L(out))
+    Rc::new(tree(out))
+}
+
+pub(crate) fn tree(xs: Vec<R>) -> X {
+    X::L(xs)
 }

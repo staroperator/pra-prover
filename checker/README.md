@@ -22,11 +22,17 @@ To build the library exports explicitly, run `lake build LeanPRA:pra`. To update
 imported modules, run `lake build +LeanPRA.Library.Nat.Defs:pra`. Run the library facet before
 checking the directory so `modules.txt` lists the current module set.
 
-Then run the checker on the export directory:
+Then run the checker on the export directory, allowing input records up to 4 GiB:
 
 ```sh
-cargo run --release --manifest-path checker/Cargo.toml -- .lake/build/pra
+cargo run --release --manifest-path checker/Cargo.toml -- .lake/build/pra --max-record-mib 4096
 ```
+
+The option applies to each specification and object record. It sets an input-size limit;
+the memory used by parsing and checking can be larger. The object parser shares identical
+subtrees within each record to reduce memory use. It also reuses decoded spans after comparing all
+of their bytes and checking their depth. Every proof is checked with the same typing and conversion
+rules at either setting.
 
 `lake build` exports every module containing PRA declarations in the root and Library import
 closures. Modules without PRA declarations produce no files. For an exported module such as
@@ -51,8 +57,10 @@ removing the theorem proof field.
 
 The checker starts from an empty environment, admits each declaration in order, and stores
 definition bodies and theorem statements for later references. It drops each theorem proof after
-checking it. You can copy `.lake/build/pra` to another machine and run the checker without a Lean
-installation.
+checking it. Temporary caches reuse syntax validation, substitution, and node counts for shared
+subtrees; they are dropped after each traversal. Substitution results are cached separately for
+each binder depth. You can copy `.lake/build/pra` to another machine and run the checker without a
+Lean installation.
 
 When all modules pass, the checker prints declaration and proof-node counts and phase timings as
 JSON and exits with status 0 (`proof_nodes` counts the syntax nodes in theorem proofs, including
@@ -62,8 +70,9 @@ prints an error and exits with status 1.
 This checker is an independent executable implementation of the core typing and conversion rules;
 the formal soundness and completeness proofs in
 [`LeanPRA/Metatheory/Core`](../LeanPRA/Metatheory/Core) apply to the Lean core checker. Input limits
-are 256 MiB per declaration record, syntax depth 2048, and variable indices and arities at most
-1,000,000; inputs that exceed a limit are rejected.
+default to 256 MiB per declaration record, configurable with `--max-record-mib`. Syntax depth
+is limited to 2048, and variable indices and arities to 1,000,000. Inputs that exceed a limit
+are rejected.
 
 ## Source layout
 

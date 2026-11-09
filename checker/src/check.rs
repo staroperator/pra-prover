@@ -15,7 +15,7 @@ pub(crate) struct Timings {
     pub(crate) checking: Duration,
 }
 
-pub(crate) fn run(dir: &Path) -> Res<(Timings, usize, usize)> {
+pub(crate) fn run(dir: &Path, record_bytes: usize) -> Res<(Timings, usize, usize)> {
     let order = std::fs::read_to_string(dir.join("modules.txt")).map_err(|e| e.to_string())?;
     let mut kernel = Kernel::default();
     let mut times = Timings::default();
@@ -30,8 +30,8 @@ pub(crate) fn run(dir: &Path) -> Res<(Timings, usize, usize)> {
             return Err("duplicate module".into());
         }
         let base = dir.join(m.replace('.', "/"));
-        let mut spec = Specifications::open(&base.with_extension("pra"))?;
-        let mut full = Records::open(&base.with_extension("prao"))?;
+        let mut spec = Specifications::open(&base.with_extension("pra"), record_bytes)?;
+        let mut full = Records::open(&base.with_extension("prao"), record_bytes)?;
         let mut i = 0;
         loop {
             let start = Instant::now();

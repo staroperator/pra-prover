@@ -31,11 +31,41 @@ fn ensure(b: bool, msg: &str) -> Res<()> {
 }
 
 fn depth(d: usize) -> Res<usize> {
-    d.checked_sub(1).ok_or("resource depth exhausted".into())
+    d.checked_sub(1)
+        .ok_or_else(|| "resource depth exhausted".into())
 }
 
 /// Check constructor categories and field counts before type checking.
-pub fn shape(x: &R, category: &str, d: usize) -> Res<()> {
+pub fn shape(x: &R, category: &'static str, d: usize) -> Res<()> {
+    shape_cached(x, category, d, &mut HashMap::new())
+}
+
+// A successful check can be reused with at least as much remaining depth. The root keeps all
+// pointer keys alive, and categories stay separate because a node can occur in different fields.
+fn shape_cached(
+    x: &R,
+    category: &'static str,
+    d: usize,
+    cache: &mut HashMap<(usize, &'static str), usize>,
+) -> Res<()> {
+    let key = (Rc::as_ptr(x) as usize, category);
+    let shared = matches!(**x, X::L(..)) && Rc::strong_count(x) > 1;
+    if shared && cache.get(&key).is_some_and(|&checked| checked <= d) {
+        return Ok(());
+    }
+    shape_visit(x, category, d, cache)?;
+    if shared {
+        cache.insert(key, d);
+    }
+    Ok(())
+}
+
+fn shape_visit(
+    x: &R,
+    category: &'static str,
+    d: usize,
+    cache: &mut HashMap<(usize, &'static str), usize>,
+) -> Res<()> {
     let d = depth(d)?;
     match category {
         "nat" => {
@@ -52,14 +82,14 @@ pub fn shape(x: &R, category: &str, d: usize) -> Res<()> {
             return Ok(());
         }
         "terms" | "preds" | "params" => {
-            ensure(matches!(**x, X::L(_)), "expected list")?;
+            ensure(matches!(**x, X::L(..)), "expected list")?;
             let cat = match category {
                 "terms" => "term",
                 "preds" => "pred",
                 _ => "param",
             };
             for a in list(x) {
-                shape(a, cat, d)?;
+                shape_cached(a, cat, d, cache)?;
             }
             return Ok(());
         }
@@ -131,7 +161,7 @@ pub fn shape(x: &R, category: &str, d: usize) -> Res<()> {
         "wrong constructor field count",
     )?;
     for (a, c) in fields(x).iter().zip(args) {
-        shape(a, c, d)?;
+        shape_cached(a, c, d, cache)?;
     }
     Ok(())
 }
@@ -145,6 +175,27 @@ enum Transform<'a> {
 }
 
 fn transform(x: &R, tr: &Transform, k: u64) -> R {
+    transform_cached(x, tr, k, &mut HashMap::new())
+}
+
+// Substitution depends on binder depth. Keep sharing within this traversal, and drop the cache
+// when it returns so previous proofs cannot accumulate in the environment.
+fn transform_cached(x: &R, tr: &Transform, k: u64, cache: &mut HashMap<(usize, u64), R>) -> R {
+    let key = (Rc::as_ptr(x) as usize, k);
+    let shared = matches!(**x, X::L(..)) && Rc::strong_count(x) > 1;
+    if shared {
+        if let Some(value) = cache.get(&key) {
+            return value.clone();
+        }
+    }
+    let value = transform_visit(x, tr, k, cache);
+    if shared {
+        cache.insert(key, value.clone());
+    }
+    value
+}
+
+fn transform_visit(x: &R, tr: &Transform, k: u64, cache: &mut HashMap<(usize, u64), R>) -> R {
     let tag = op(x);
     if tag == "name" || tag == "binder" {
         return x.clone();
@@ -169,19 +220,21 @@ fn transform(x: &R, tr: &Transform, k: u64) -> R {
         }
     }
     if let X::L(xs) = &**x {
-        let mut changed = false;
-        let ys = xs
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let bind = matches!(tag, "tlam" | "plam") && i == 2 || tag == "tlet" && i == 3;
-                let b = transform(a, tr, k + u64::from(bind));
-                changed |= !Rc::ptr_eq(a, &b);
-                b
-            })
-            .collect();
-        if changed {
-            Rc::new(X::L(ys))
+        let mut changed: Option<Vec<R>> = None;
+        for (i, a) in xs.iter().enumerate() {
+            let bind = matches!(tag, "tlam" | "plam") && i == 2 || tag == "tlet" && i == 3;
+            let b = transform_cached(a, tr, k + u64::from(bind), cache);
+            if let Some(ys) = &mut changed {
+                ys.push(b);
+            } else if !Rc::ptr_eq(a, &b) {
+                let mut ys = Vec::with_capacity(xs.len());
+                ys.extend(xs[..i].iter().cloned());
+                ys.push(b);
+                changed = Some(ys);
+            }
+        }
+        if let Some(ys) = changed {
+            Rc::new(tree(ys))
         } else {
             x.clone()
         }
@@ -207,7 +260,11 @@ fn subst(x: &R, a: &R) -> R {
 }
 
 fn inst(x: &R, fs: &[R], ps: &[R]) -> R {
-    transform(x, &Transform::Inst(fs, ps), 0)
+    if fs.is_empty() && ps.is_empty() {
+        x.clone()
+    } else {
+        transform(x, &Transform::Inst(fs, ps), 0)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -215,21 +272,43 @@ struct Ctx {
     locals: Vec<u64>,
     fs: Vec<u64>,
     ps: Vec<(u64, bool)>,
-    hs: Vec<R>,
+    // Each hypothesis stores the local-variable count at its introduction.
+    hs: Vec<(usize, R)>,
 }
 
 impl Ctx {
+    // Term and predicate checking uses variable and parameter arities without proof hypotheses.
+    fn expression_local(&self, k: u64) -> Self {
+        let mut locals = self.locals.clone();
+        locals.insert(0, k);
+        Self {
+            locals,
+            fs: self.fs.clone(),
+            ps: self.ps.clone(),
+            hs: Vec::new(),
+        }
+    }
+
     fn local(&self, k: u64) -> Self {
         let mut c = self.clone();
         c.locals.insert(0, k);
-        c.hs = c.hs.iter().map(shift).collect();
         c
     }
 
     fn hyp(&self, p: R) -> Self {
         let mut c = self.clone();
-        c.hs.insert(0, p);
+        c.hs.insert(0, (self.locals.len(), p));
         c
+    }
+
+    fn hypothesis(&self, index: usize) -> Res<R> {
+        let (level, value) = self.hs.get(index).ok_or("unbound hypothesis")?;
+        let distance = self
+            .locals
+            .len()
+            .checked_sub(*level)
+            .ok_or("hypothesis scope")?;
+        Ok(shift_by(value, distance as u64))
     }
 }
 
@@ -274,23 +353,24 @@ impl Kernel {
                 .locals
                 .get(nat(&a[0]) as usize)
                 .copied()
-                .ok_or("unbound local".into()),
+                .ok_or_else(|| "unbound local".into()),
             "tparam" => {
                 c.fs.get(nat(&a[0]) as usize)
                     .copied()
-                    .ok_or("unbound function parameter".into())
+                    .ok_or_else(|| "unbound function parameter".into())
             }
             "zero" => Ok(0),
             "succ" => Ok(1),
-            "tlam" => Ok(self.ti(&c.local(0), &a[1], d)? + 1),
+            "tlam" => Ok(self.ti(&c.expression_local(0), &a[1], d)? + 1),
             "tapp" => {
                 let k = self.ti(c, &a[0], d)?;
                 self.tc(c, &a[1], 0, d)?;
-                k.checked_sub(1).ok_or("application of number".into())
+                k.checked_sub(1)
+                    .ok_or_else(|| "application of number".into())
             }
             "tlet" => {
                 let k = self.ti(c, &a[1], d)?;
-                self.ti(&c.local(k), &a[2], d)
+                self.ti(&c.expression_local(k), &a[2], d)
             }
             "rec" => {
                 self.tc(c, &a[0], 0, d)?;
@@ -333,10 +413,10 @@ impl Kernel {
             "pparam" => {
                 c.ps.get(nat(&a[0]) as usize)
                     .copied()
-                    .ok_or("unbound predicate parameter".into())
+                    .ok_or_else(|| "unbound predicate parameter".into())
             }
             "plam" => {
-                let (k, s) = self.pi(&c.local(0), &a[1], d)?;
+                let (k, s) = self.pi(&c.expression_local(0), &a[1], d)?;
                 Ok((k + 1, s))
             }
             "papp" => {
@@ -410,6 +490,8 @@ impl Kernel {
                 let f = self.wh(&a[0], pred, d)?;
                 if matches!(op(&f), "tlam" | "plam") {
                     self.wh(&subst(&fields(&f)[1], &a[1]), pred, d)
+                } else if Rc::ptr_eq(&f, &a[0]) {
+                    Ok(x.clone())
                 } else {
                     Ok(n2(op(x), f, a[1].clone()))
                 }
@@ -422,6 +504,8 @@ impl Kernel {
                     let m = fields(&n)[1].clone();
                     let r = node("rec", vec![a[0].clone(), a[1].clone(), m.clone()]);
                     self.wh(&n2("tapp", n2("tapp", a[1].clone(), m), r), false, d)
+                } else if Rc::ptr_eq(&n, &a[2]) {
+                    Ok(x.clone())
                 } else {
                     Ok(node("rec", vec![a[0].clone(), a[1].clone(), n]))
                 }
@@ -537,6 +621,8 @@ impl Kernel {
             let m = fields(&n)[1].clone();
             let r = node("rec", vec![a[0].clone(), a[1].clone(), m.clone()]);
             self.expose(&n2("tapp", n2("tapp", a[1].clone(), m), r), false, d)
+        } else if Rc::ptr_eq(&n, &a[2]) {
+            Ok(x.clone())
         } else {
             Ok(node("rec", vec![a[0].clone(), a[1].clone(), n]))
         }
@@ -631,7 +717,9 @@ impl Kernel {
 
     fn head(&self, c: &Ctx, h: &R, tag: &str, d: usize) -> Res<R> {
         let p = self.wh(&self.hi(c, h, d)?, true, d)?;
-        ensure(op(&p) == tag, &format!("expected {tag}, got {}", op(&p)))?;
+        if op(&p) != tag {
+            return Err(format!("expected {tag}, got {}", op(&p)));
+        }
         Ok(p)
     }
 
@@ -639,11 +727,7 @@ impl Kernel {
         let d = depth(d)?;
         let a = fields(h);
         match op(h) {
-            "hyp" => {
-                c.hs.get(nat(&a[0]) as usize)
-                    .cloned()
-                    .ok_or("unbound hypothesis".into())
-            }
+            "hyp" => c.hypothesis(nat(&a[0]) as usize),
             "trueIntro" => Ok(n0("true")),
             "thm" => {
                 let e = self.get(&a[0], "theorem")?;
@@ -836,5 +920,101 @@ impl Kernel {
 }
 
 pub fn count(x: &R) -> usize {
-    1 + list(x).iter().map(count).sum::<usize>()
+    fn visit(x: &R, cache: &mut HashMap<usize, usize>) -> usize {
+        let key = Rc::as_ptr(x) as usize;
+        let shared = matches!(**x, X::L(..)) && Rc::strong_count(x) > 1;
+        if shared {
+            if let Some(&size) = cache.get(&key) {
+                return size;
+            }
+        }
+        let size = 1 + list(x)
+            .iter()
+            .map(|child| visit(child, cache))
+            .sum::<usize>();
+        if shared {
+            cache.insert(key, size);
+        }
+        size
+    }
+    visit(x, &mut HashMap::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lambdas(depth: u64, mut body: R) -> R {
+        for _ in 0..depth {
+            body = n2("tlam", n0("name"), body);
+        }
+        body
+    }
+
+    #[test]
+    fn hypotheses_use_their_introduction_scope() {
+        let outer = Ctx::default().local(0).hyp(n2("eq", var(0), n0("zero")));
+        let inner = outer
+            .local(0)
+            .hyp(n2("eq", var(0), var(1)))
+            .local(0)
+            .local(0);
+        assert_eq!(inner.hypothesis(0).unwrap(), n2("eq", var(2), var(3)));
+        assert_eq!(inner.hypothesis(1).unwrap(), n2("eq", var(3), n0("zero")));
+        assert_eq!(outer.hypothesis(0).unwrap(), n2("eq", var(0), n0("zero")));
+        assert!(inner.hypothesis(2).is_err());
+    }
+
+    #[test]
+    fn substitution_respects_nested_binders() {
+        for depth in 0..5 {
+            for index in 0..9 {
+                let term = lambdas(depth, var(index));
+                let shifted = if index < depth { index } else { index + 2 };
+                assert_eq!(shift_by(&term, 2), lambdas(depth, var(shifted)));
+                for actual in 0..4 {
+                    let replaced = if index < depth {
+                        index
+                    } else if index == depth {
+                        actual + depth
+                    } else {
+                        index - 1
+                    };
+                    assert_eq!(subst(&term, &var(actual)), lambdas(depth, var(replaced)));
+                }
+            }
+            let formal = lambdas(depth, n1("tparam", num(0)));
+            assert_eq!(
+                inst(&formal, &[var(3)], &[]),
+                lambdas(depth, var(3 + depth))
+            );
+        }
+    }
+
+    #[test]
+    fn substitution_respects_let_and_predicate_scopes() {
+        let term = node("tlet", vec![n0("name"), var(0), var(1)]);
+        assert_eq!(
+            subst(&term, &var(2)),
+            node("tlet", vec![n0("name"), var(2), var(3)])
+        );
+        let binder = node("binder", vec![n0("name"), num(0)]);
+        let formal = n2("plam", binder.clone(), n1("pparam", num(0)));
+        let actual = n2("eq", var(0), n0("zero"));
+        assert_eq!(
+            inst(&formal, &[], &[actual]),
+            n2("plam", binder, n2("eq", var(1), n0("zero")))
+        );
+        let expanded = node(
+            "pletTerm",
+            vec![n0("name"), var(0), n2("eq", var(0), var(1))],
+        );
+        assert_eq!(
+            subst(&expanded, &n0("zero")),
+            node(
+                "pletTerm",
+                vec![n0("name"), n0("zero"), n2("eq", n0("zero"), var(0))]
+            )
+        );
+    }
 }

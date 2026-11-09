@@ -1,7 +1,6 @@
 //! Parse readable specifications into the same constructor trees as object declarations.
 
-use crate::parser::LIMIT;
-use crate::syntax::{node, num, Res, R, TAGS, X};
+use crate::syntax::{node, num, tree, Res, R, TAGS, X};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -295,7 +294,7 @@ impl Parser<'_> {
             }
         }
         self.lex.expect(":")?;
-        let parameters = Rc::new(X::L(parameters));
+        let parameters = Rc::new(tree(parameters));
         let result = if theorem {
             node(
                 "theorem",
@@ -375,7 +374,7 @@ impl Parser<'_> {
         }
         Ok(Expression {
             height: args.iter().map(|x| x.height).max().unwrap_or(0) + 1,
-            value: Rc::new(X::L(args.into_iter().map(|x| x.value).collect())),
+            value: Rc::new(tree(args.into_iter().map(|x| x.value).collect())),
         })
     }
 
@@ -529,16 +528,18 @@ pub(crate) struct Specifications {
     reader: BufReader<File>,
     path: String,
     records: usize,
+    limit: usize,
 }
 
 impl Specifications {
-    pub(crate) fn open(path: &Path) -> Res<Self> {
+    pub(crate) fn open(path: &Path, limit: usize) -> Res<Self> {
         Ok(Self {
             reader: BufReader::new(
                 File::open(path).map_err(|e| format!("{}: {e}", path.display()))?,
             ),
             path: path.display().to_string(),
             records: 0,
+            limit,
         })
     }
 
@@ -596,8 +597,11 @@ impl Specifications {
                     }
                 }
             }
-            if data.len() + used > LIMIT {
-                return Err("specification record too large".into());
+            if used > self.limit.saturating_sub(data.len()) {
+                return Err(format!(
+                    "specification record too large: limit is {} bytes; use --max-record-mib",
+                    self.limit
+                ));
             }
             data.extend_from_slice(&input[..used]);
             self.reader.consume(used);
