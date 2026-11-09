@@ -312,7 +312,8 @@ private def binding (n : Name) : ObjectElabM (Option VariableKind) := do
     | .proof .. => .proof
 
 private def remember (stx : Syntax) (subject : Metavariable.Subject) : ObjectElabM Unit := do
-  if stx.isMissing || !(← getInfoState).enabled then return
+  if stx.isMissing then return
+  let collectInfo ← editorInfoEnabled
   let s ← read
   let id := if stx.isIdent then stx else stx[0]
   let target := if id.isIdent then
@@ -320,7 +321,7 @@ private def remember (stx : Syntax) (subject : Metavariable.Subject) : ObjectEla
   let context ← currentContext
   -- Reserve a slot in the info tree to fill once metavariables are resolved.
   let hasUnknowns := !Metavariable.Frontend.isEmpty (← get).unification
-  let infoHole ← if hasUnknowns && (← getInfoState).enabled then do
+  let infoHole ← if hasUnknowns && collectInfo then do
     let hole : MVarId := ⟨← liftTermElabM (mkFreshUserName `praInfo)⟩
     pushInfoTree (.hole hole)
     pure (some hole)
@@ -329,7 +330,7 @@ private def remember (stx : Syntax) (subject : Metavariable.Subject) : ObjectEla
   modify fun state => { state with origins := state.origins.push {
     site := ⟨context, subject⟩, ref := stx, names, localIds := s.localIds,
     target, infoHole } }
-  if infoHole.isNone then
+  if collectInfo && infoHole.isNone then
     expressionInfo stx s.environment context (← displayNames) subject target
 
 private def unknownTerm (ref : Syntax) (arity : Nat) (name : Name := .anonymous) :
@@ -355,7 +356,7 @@ private def withGoal (stx : Syntax) (expected : Option DraftGoalTarget)
     (infer : Metavariable.Projection → Nat → α → Scope → Core.CheckResult DraftGoalTarget) (action
         : ObjectElabM α) :
     ObjectElabM α := do
-  if (← read).inTactic || !(← getInfoState).enabled then return ← action
+  if (← read).inTactic || !(← editorInfoEnabled) then return ← action
   let scope ← read
   let ref := if (stx.getRange? (canonicalOnly := true)).isSome then stx
     else missingRange scope.parentExpression
@@ -1019,7 +1020,7 @@ private def scheduleProof (ref : Syntax) (type : Predicate)
   let value ← runSolver (Metavariable.Frontend.freshProof type scope.context scope.localIds)
   let .mvar goal _ _ := value | throwError "expected a proof metavariable"
   let failed := match status with | .failed _ => true | _ => false
-  let infoHole ← if (← getInfoState).enabled && !failed then do
+  let infoHole ← if (← editorInfoEnabled) && !failed then do
     let hole : MVarId := ⟨← liftTermElabM (mkFreshUserName `praTask)⟩
     pushInfoTree (.hole hole)
     pure (some hole)
@@ -1065,7 +1066,7 @@ private partial def proofNow (stx : Syntax) (expected : Option Predicate) :
       return ⟨value, type⟩
     let p ← proofBody hole expected
     if let some type := expected then constrainFormulas p.type type stx
-    if (← getInfoState).enabled then
+    if (← editorInfoEnabled) then
       let hole : MVarId := ⟨← liftTermElabM (mkFreshUserName `praProofInfo)⟩
       pushInfoTree (.hole hole)
       let scope ← read
@@ -1206,6 +1207,10 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
       let commandState ← get
       return do stateRef.set saved; set commandState
     snapshot := fun goals ref => do
+      unless ← editorInfoEnabled do
+        return .ofCommandInfo { elaborator := `Delab, stx := .missing }
+      unless (ref.getRange? (canonicalOnly := true)).isSome do
+        return .ofCommandInfo { elaborator := `Delab, stx := .missing }
       let views ← goals.mapM fun id => do
         run (← goalScope id) do
           let type ← goalType id
@@ -1643,6 +1648,7 @@ private def parameterScope (environment : Core.Environment) (ps : Array Syntax) 
   return (s, parameters)
 
 private def completeGoalInfo : ObjectElabM Unit := do
+  unless ← editorInfoEnabled do return
   let state ← get
   let failures := Metavariable.Frontend.conflicts state.unification
   let conflict := failures.any (fun (_, p, error) => !p.heuristic && !error.isExhausted &&
@@ -1728,6 +1734,7 @@ private def reportConflicts : ObjectElabM Unit := do
       | _ => throwErrorAt ref "{error}{choice}"
 
 private def completeExpressionInfo : ObjectElabM Unit := do
+  unless ← editorInfoEnabled do return
   let state ← get
   let environment := (← read).environment
   let depth ← getMaxDepth

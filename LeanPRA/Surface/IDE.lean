@@ -33,6 +33,7 @@ inductive GoalTarget where
   | term (arity : Nat)
   | predicate (signature : Core.PredicateSignature)
   | proof (type : Core.Predicate)
+  deriving BEq
 
 /-- Whether a saved goal is open, waiting for inference, or part of a conflicting declaration. -/
 inductive GoalStatus where
@@ -77,9 +78,10 @@ private def targetSyntax (names : Names) : GoalTarget → CommandElabM (TSyntax 
 
 private def targetExpr (environment : Core.Environment) (context : Core.Context) (names : Names)
     (target : GoalTarget) : CommandElabM Expr := do
-  match target with
-  | .proof type => makeTypeDisplay environment context names type
-  | _ => makeSignatureDisplay (← targetSyntax names target)
+  deferDisplay do
+    match target with
+    | .proof type => makeTypeDisplay environment context names type
+    | _ => makeSignatureDisplay (← targetSyntax names target)
 
 private def inferTarget (environment : Core.Environment) (context : Core.Context)
     (subject : Core.CheckSubject) : CommandElabM (Option GoalTarget) := do
@@ -113,12 +115,20 @@ private def goalContext (view : GoalView) : CommandElabM (LocalContext × Expr) 
   let mut names := { names with termAliases := [], predicateAliases := [] }
   for (binding, id, _) in locals do
     names := renameBinding names binding (lctx.get! id).userName
+  let mut previous : Option (GoalTarget × Expr) := none
   for (binding, id, type) in locals do
-    lctx := lctx.setType id (← targetExpr environment context names type)
-    -- Register each alias after formatting its own type so later entries can use it.
+    let expr ← match previous with
+      | some (previousType, expr) =>
+        if previousType == type then pure expr else targetExpr environment context names type
+      | none => targetExpr environment context names type
+    lctx := lctx.setType id expr
+    -- Equal adjacent types share an expression so Lean can group their hypotheses.
+    previous := some (type, expr)
+    -- Save each alias's own type before making that alias available to later displays.
     let name := (lctx.get! id).userName
     match binding with
-    | .termAlias _ t => names := { names with termAliases := (name, t) :: names.termAliases }
+    | .termAlias _ t =>
+      names := { names with termAliases := (name, t) :: names.termAliases }
     | .predicateAlias _ p =>
       names := { names with predicateAliases := (name, p) :: names.predicateAliases }
     | _ => pure ()
@@ -130,7 +140,7 @@ private def goalContext (view : GoalView) : CommandElabM (LocalContext × Expr) 
 /-- Build one native tactic snapshot containing an ordered list of PRA goals. -/
 def makeGoalsInfo (stx : Syntax) (views : List GoalView) : CommandElabM Info := do
   let absent := Info.ofCommandInfo { elaborator := `Delab, stx := .missing }
-  unless (← getInfoState).enabled do return absent
+  unless ← editorInfoEnabled do return absent
   unless (stx.getRange? (canonicalOnly := true)).isSome do return absent
   try
     let contexts ← views.mapM goalContext
@@ -186,10 +196,10 @@ def sourceLocation (stx : Syntax) : CommandElabM (Option DeclarationLocation) :=
   return some { module := (← getEnv).mainModule
                 range := .ofStringPositions (← getFileMap) range.start range.stop }
 
-private def addInfo (stx : Syntax) (text? : Option String)
+private def addInfo (stx : Syntax) (text? : Option (Options → IO String))
     (location? : Option DeclarationLocation) (doc : String := "") :
     CommandElabM Unit := do
-  unless (← getInfoState).enabled do return
+  unless ← editorInfoEnabled do return
   unless (stx.getRange? (canonicalOnly := true)).isSome do return
   -- `Delab` prevents Lean from falling back to the command elaborator's definition.
   pushInfoLeaf (.ofDelabTermInfo {
@@ -199,8 +209,9 @@ private def addInfo (stx : Syntax) (text? : Option String)
     expectedType? := none
     expr := mkSort .zero
     location?
-    mkDocString? := text?.map fun text => fun _ =>
-      pure (s!"```lean\n{text}\n```" ++ if doc.isEmpty then "" else "\n\n" ++ doc) })
+    mkDocString? := text?.map fun render => fun context => do
+      let text ← render context.opts
+      return s!"```lean\n{text}\n```" ++ if doc.isEmpty then "" else "\n\n" ++ doc })
 
 /-- Record empty `DelabTermInfo` on `stx` so unresolved names do not jump to the elaborator. -/
 def addUnresolvedInfo (stx : Syntax) : CommandElabM Unit :=
@@ -208,50 +219,54 @@ def addUnresolvedInfo (stx : Syntax) : CommandElabM Unit :=
 
 /-- Attach the hover signature, documentation, and go-to-definition target for `d` to `stx`. -/
 def addDeclarationInfo (stx : Syntax) (d : DeclarationSignature) : CommandElabM Unit := do
-  unless (← getInfoState).enabled do return
-  try
+  unless ← editorInfoEnabled do return
+  unless (stx.getRange? (canonicalOnly := true)).isSome do return
+  let text ← captureDisplay do
     let text ← (← delabSignature d).toString
-    let text := if (primitiveDeclaration? d.name).isSome then s!"primitive {text}" else text
-    let metadata := ((declarationMetadata.getState (← getEnv)).find? d.name).getD {}
-    addInfo stx text metadata.location? (metadata.doc?.getD "")
-  catch ex =>
-    if ex.isInterrupt then throw ex
+    return if (primitiveDeclaration? d.name).isSome then s!"primitive {text}" else text
+  let metadata := ((declarationMetadata.getState (← getEnv)).find? d.name).getD {}
+  addInfo stx text metadata.location? (metadata.doc?.getD "")
 
 /-- Attach hover info and optional binder location for a proof expression's resolved formula `type`.
 -/
 def addProofTypeInfo (stx : Syntax) (names : Names) (type : Core.Predicate)
     (target : Syntax := .missing) : CommandElabM Unit := do
-  unless (← getInfoState).enabled do return
-  let depth := pra.maxDepth.get (← getOptions)
-  let type ← delabPredicate names (Core.betaReducePredicate depth type)
-  let type := (← formatSyntax `praExpr type).pretty
-  let id := if stx.isIdent then stx else stx[0]
-  let text := if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type
+  unless ← editorInfoEnabled do return
+  unless (stx.getRange? (canonicalOnly := true)).isSome do return
+  let text ← captureDisplay do
+    let depth := pra.maxDepth.get (← getOptions)
+    let type ← delabPredicate names (Core.betaReducePredicate depth type)
+    let type := (← formatSyntax `praExpr type).pretty
+    let id := if stx.isIdent then stx else stx[0]
+    return if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type
   addInfo stx text (← sourceLocation target)
+
+private def displayResult (result : Core.CheckResult α) : CommandElabM α :=
+  match result with
+  | .ok value => pure value
+  | .error error => throwError error.message
 
 /-- Infer the type of `subject` and attach hover and optional binder location info to `stx`. -/
 def addExpressionInfo (stx : Syntax) (environment : Core.Environment) (context : Core.Context)
     (names : Names) (subject : Core.CheckSubject) (target : Syntax := .missing) :
     CommandElabM Unit := do
-  unless (← getInfoState).enabled do return
+  unless ← editorInfoEnabled do return
   unless (stx.getRange? (canonicalOnly := true)).isSome do return
-  try
+  let text ← captureDisplay do
     let depth := pra.maxDepth.get (← getOptions)
     let type ← match subject with
       | .term t =>
-        let .ok arity := Core.inferTerm depth environment context t | return
+        let arity ← displayResult (Core.inferTerm depth environment context t)
         delabArity arity
       | .predicate p =>
-        let .ok signature := Core.inferPredicate depth environment context p | return
+        let signature ← displayResult (Core.inferPredicate depth environment context p)
         delabPredicateType signature
       | .proof p =>
-        let .ok type := Core.inferProof depth environment context p | return
+        let type ← displayResult (Core.inferProof depth environment context p)
         delabPredicate names (Core.betaReducePredicate depth type)
     let type := (← formatSyntax `praExpr type).pretty
     let id := if stx.isIdent then stx else stx[0]
-    let text := if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type
-    addInfo stx text (← sourceLocation target)
-  catch ex =>
-    if ex.isInterrupt then throw ex
+    return if id.isIdent then s!"{id.getId.eraseMacroScopes} : {type}" else type
+  addInfo stx text (← sourceLocation target)
 
 end LeanPRA.Surface

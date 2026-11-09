@@ -64,7 +64,7 @@ private def inPra : Parser := { fn := inPraFn }
       { state with categories := state.categories.insert `command category }
 
 /-- Elaborate one PRA entry and publish declarations only after Core checking succeeds. -/
-@[command_elab praEntry] def elaborateEntry : CommandElab := fun stx => do
+@[command_elab praEntry] def elaborateEntry : CommandElab := fun stx => withDeferredDisplays do
   let entry := stx[0]
   try
     withRef entry do

@@ -115,6 +115,8 @@ def saveState : TacticM (TacticM Unit) := do
 
 /-- Record goals before and after `action` at `stx`, with nested editor information. -/
 def withTacticInfo (stx : Syntax) (action : TacticM α) : TacticM α := do
+  unless ← editorInfoEnabled do return ← action
+  unless (stx.getRange? (canonicalOnly := true)).isSome do return ← action
   let info ← (← read).snapshot (← get) stx
   withInfoTreeContext action fun children => do
     let after ← (← read).snapshot (← get) stx

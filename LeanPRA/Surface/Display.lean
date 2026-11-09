@@ -10,6 +10,9 @@ Encoding of PRA syntax and subterm types as Lean `Expr`s for the infoview:
 - `displayType` encodes a syntax tree, its hover type text, and its child displays.
 - `displayValue` attaches the hover type text to a displayed subterm.
 - `makeTypeDisplay` builds an interactive display for a formula.
+- `deferDisplay` saves display work until a native goal request needs it.
+- `captureDisplay` saves the source context for later goal and hover rendering.
+- `withDeferredDisplays` scopes the display store to one command and its generated declarations.
 
 Lean's `@[app_delab]` handlers decode these `Expr`s to render goal types and subterm hover popups.
 -/
@@ -29,6 +32,87 @@ open Core (Predicate)
 
 /-- Term wrapper whose type `goalType typeText` is shown when hovering over `_node`. -/
 @[expose] def displayValue (_node : Type) (typeText : String) : goalType typeText := PUnit.unit
+
+/-- Carrier for a display saved in the current information tree's environment. -/
+@[expose] def deferredDisplay (_key : String) : Type := PUnit
+
+private structure DisplayState where
+  nextId : Nat := 0
+  entries : PersistentHashMap String (Options → IO Expr) := {}
+  deriving Inhabited
+
+private initialize deferredDisplays : EnvExtension (Option (IO.Ref DisplayState)) ←
+  registerEnvExtension (pure none) (asyncMode := .local)
+
+/-- Scope display storage to a command, sharing it with nested generated declarations.
+The command's information tree saves the store; compiled modules omit it. -/
+def withDeferredDisplays (action : CommandElabM α) : CommandElabM α := do
+  unless ← editorInfoEnabled do return ← action
+  let saved := deferredDisplays.getState (← getEnv)
+  if saved.isSome then return ← action
+  let store ← IO.mkRef ({} : DisplayState)
+  modifyEnv (deferredDisplays.setState · (some store))
+  try
+    withInfoTreeContext action fun children => do
+      let state ← get
+      let scope ← getScope
+      return .context (.commandCtx {
+        env := deferredDisplays.setState state.env (some store)
+        fileMap := ← getFileMap
+        currNamespace := scope.currNamespace
+        openDecls := scope.openDecls
+        options := scope.opts
+        ngen := state.ngen })
+        (.node (.ofCommandInfo { elaborator := `Delab, stx := .missing }) children)
+  finally
+    modifyEnv (deferredDisplays.setState · saved)
+
+/-- Save immutable source scope for a renderer, with request-specific printing options.
+Rendering runs in a fresh command state with information collection disabled. -/
+def captureDisplay (action : CommandElabM α) : CommandElabM (Options → IO α) := do
+  let env := deferredDisplays.setState (← getEnv) none
+  let scope ← getScope
+  let context : Command.Context := {
+    fileName := (← read).fileName
+    fileMap := ← getFileMap
+    snap? := none
+    cancelTk? := none }
+  return fun opts => do
+    let state := { Command.mkState env {} opts with
+      scopes := [{ scope with opts }]
+      infoState.enabled := false }
+    match ← ((action.run context).run' state).toBaseIO with
+    | .ok value => return value
+    | .error error => throw (IO.userError (← error.toMessageData.toString))
+
+/-- Build a display on its first request and reuse it while printing options stay unchanged.
+Call this inside `withDeferredDisplays`. -/
+def deferDisplay (action : CommandElabM Expr) : CommandElabM Expr := do
+  let some store := deferredDisplays.getState (← getEnv)
+    | throwError "PRA display storage is unavailable"
+  let render ← captureDisplay action
+  let cache ← IO.mkRef (none : Option (Options × Expr))
+  -- The counter survives tactic backtracking, so saved displays always have distinct keys.
+  let index ← store.modifyGet fun state => (state.nextId, { state with nextId := state.nextId + 1 })
+  let key := toString index
+  let render := fun opts => do
+    if let some (previous, value) ← cache.get then
+      if previous == opts then return value
+    let value ← render opts
+    cache.set (some (opts, value))
+    return value
+  store.modify fun state =>
+    { state with entries := state.entries.insert key render }
+  return mkApp (mkConst ``deferredDisplay) (mkStrLit key)
+
+open PrettyPrinter.Delaborator SubExpr in
+/-- Render a saved PRA display through Lean's ordinary delaborator and subterm annotations. -/
+@[app_delab deferredDisplay] def delabDeferredDisplay : Delab := do
+  let .lit (.strVal key) := (← getExpr).getArg! 0 | failure
+  let some store := deferredDisplays.getState (← getEnv) | failure
+  let some render := (← store.get).entries.find? key | failure
+  let value ← render (← getOptions)
+  withTheReader Lean.SubExpr (fun context => { context with expr := value }) delab
 
 declare_syntax_cat praGoalDisplay
 syntax (name := goalText) str : praGoalDisplay
@@ -108,10 +192,10 @@ private def canonical (stx : Syntax) : Syntax :=
     | .ident _ _ n _ => mkIdent n.eraseMacroScopes
     | other => other.setInfo .none
 
-private partial def encodeShape (stx : Syntax) (children : Array DelabTree)
+private partial def encodeShape (stx : Syntax) (children : Array Syntax)
     (root := true) : Json := Id.run do
   if !root then
-    if let some index := children.findIdx? (canonical ·.stx == canonical stx) then
+    if let some index := children.findIdx? (· == stx) then
       return Json.mkObj [("child", toJson index)]
   return match stx with
     | .atom _ text => Json.mkObj [("atom", toJson text)]
@@ -134,7 +218,8 @@ private partial def DelabTree.toExpr (tree : DelabTree) : CommandElabM Expr := d
     return { child with stx }
   let children ← displayedChildren.toList.mapM DelabTree.toExpr
   let children ← liftTermElabM (Meta.mkListLit (mkSort (.succ .zero)) children)
-  return mkApp3 (mkConst ``displayType) (mkStrLit (encodeShape stx displayedChildren).compress)
+  let shape := encodeShape (canonical stx) (displayedChildren.map (canonical ·.stx))
+  return mkApp3 (mkConst ``displayType) (mkStrLit shape.compress)
     (mkStrLit (← tree.type.text)) children
 
 /-- Build an interactive display `Expr` for `type` after beta-reduction, using a well-formed
