@@ -28,15 +28,15 @@ private def Finish (n : Nat) (E : Environment) : Term → CheckResult Term
   | .zero => pure .zero
   | .bvar i => pure (.bvar i)
   | .parameter i => pure (.parameter i)
+  | .app (.primrec b s) a => do
+      let b ← reduceTerm n E 0 b
+      let s ← reduceTerm n E 2 s
+      let a ← reduceTerm n E 0 a
+      pure (.app (.primrec b s) a)
   | .app f a => do
       let f ← reduceTermNeutral n E f
       let a ← reduceTerm n E 0 a
       pure (.app f a)
-  | .primrec b s a => do
-      let b ← reduceTerm n E 0 b
-      let s ← reduceTerm n E 2 s
-      let a ← reduceTerm n E 0 a
-      pure (.primrec b s a)
   | t => fail (.expectedForm .number (.term t))
 
 private theorem reduce_zero (n E t) : reduceTerm (n + 1) E 0 t =
@@ -44,18 +44,21 @@ private theorem reduce_zero (n E t) : reduceTerm (n + 1) E 0 t =
   simp only [reduceTerm, Finish]
   congr 1
   funext w
-  cases w <;> rfl
+  cases w <;> try rfl
+  case app f a => cases f <;> rfl
 
 private theorem finish_mono {n m E w v} (le : n ≤ m) (run : Finish n E w = .ok v) :
     Finish m E w = .ok v := by
-  cases w <;> simp only [Finish, CheckResult.bind_eq_ok, fail] at run ⊢ <;>
+  cases w <;> simp only [Finish, fail] at run ⊢ <;>
     try contradiction
   case app f a =>
-    obtain ⟨g, hg, b, hb, hv⟩ := run
-    exact ⟨g, reduceTermNeutral_mono le hg, b, reduceTerm_mono le hb, hv⟩
-  case primrec b s a =>
-    obtain ⟨c, hc, t, ht, m, hm, hv⟩ := run
-    exact ⟨c, reduceTerm_mono le hc, t, reduceTerm_mono le ht, m, reduceTerm_mono le hm, hv⟩
+    cases f <;> simp only [CheckResult.bind_eq_ok] at run ⊢
+    case primrec b s =>
+      obtain ⟨c, hc, t, ht, m, hm, hv⟩ := run
+      exact ⟨c, reduceTerm_mono le hc, t, reduceTerm_mono le ht, m, reduceTerm_mono le hm, hv⟩
+    all_goals
+      obtain ⟨g, hg, b, hb, hv⟩ := run
+      exact ⟨g, reduceTermNeutral_mono le hg, b, reduceTerm_mono le hb, hv⟩
   all_goals exact run
 
 private abbrev HeadEq (E : Environment) (t u : Term) : Prop :=
@@ -88,7 +91,15 @@ private theorem transfer_app {E t u a v n}
       refine ⟨max n m + 1, ?_⟩
       simp only [whnfTerm, CheckResult.bind_eq_ok]
       refine ⟨w, whnfTerm_mono (by omega) hm, ?_⟩
-      cases w <;> first | exact whnfTerm_mono (by omega) run | exact run
+      cases w <;> try first | exact whnfTerm_mono (by omega) run | exact run
+      case primrec base step =>
+        simp only [CheckResult.bind_eq_ok] at run ⊢
+        obtain ⟨v', hv', run⟩ := run
+        refine ⟨v', whnfTerm_mono (by omega) hv', ?_⟩
+        cases v' with
+        | zero => exact whnfTerm_mono (by omega) run
+        | app f p => cases f <;> first | exact whnfTerm_mono (by omega) run | exact run
+        | _ => exact run
 
 private theorem head_app {E t u} (eq : HeadEq E t u) (a : Term) :
     HeadEq E (.app t a) (.app u a) := by
@@ -203,7 +214,7 @@ private theorem neutral_zero {n E t u} (applications : TermApplications t) (notS
       | bvar => exact run
       | parameter => exact run
       | succ => exact False.elim (notSucc rfl)
-      | app => exact run
+      | app h => cases h <;> exact run
 
 private theorem neutral_app_run {E f a F A n m} (applications : TermApplications f)
     (hf : reduceTermNeutral n E f = .ok F) (ha : reduceTerm m E 0 a = .ok A) :
@@ -334,8 +345,11 @@ private theorem zero_inv {E t n} (run : reduceTerm n E 0 t = .ok .zero) :
   | succ n =>
       rw [reduce_zero] at run
       obtain ⟨w, hw, hf⟩ := CheckResult.bind_eq_ok.mp run
-      cases w <;> simp [Finish, CheckResult.bind_eq_ok, pure, Except.pure, fail] at hf
-      exact ⟨n, hw⟩
+      cases w <;> simp only [Finish, pure, Except.pure,
+        Except.ok.injEq, fail] at hf <;> try contradiction
+      case zero => exact ⟨n, hw⟩
+      case app f a =>
+        cases f <;> simp [CheckResult.bind_eq_ok] at hf
 
 private theorem succ_inv {E t v n} (run : reduceTerm n E 0 t = .ok (.app .succ v)) :
     ∃ m p j, whnfTerm m E t = .ok (.app .succ p) ∧ j < n ∧ reduceTerm j E 0 p = .ok v := by
@@ -345,20 +359,22 @@ private theorem succ_inv {E t v n} (run : reduceTerm n E 0 t = .ok (.app .succ v
       rw [reduce_zero] at run
       obtain ⟨w, hw, hf⟩ := CheckResult.bind_eq_ok.mp run
       have head := whnfTerm_normal hw
-      cases w <;> simp only [Finish, CheckResult.bind_eq_ok, pure, Except.pure,
+      cases w <;> simp only [Finish, pure, Except.pure,
         Except.ok.injEq, fail] at hf <;> try contradiction
       case app f a =>
-        obtain ⟨g, hg, b, hb, eq⟩ := hf
-        obtain ⟨ef, ea⟩ := Term.app.inj eq
-        subst g; subst b
-        cases head with
-        | app head notLam =>
-            have : f = .succ := (reduceTermNeutral_succ_iff head hg).mp rfl
-            subst f
-            exact ⟨n, a, n, hw, by omega, hb⟩
-      case primrec =>
-        obtain ⟨_, _, _, _, _, _, eq⟩ := hf
-        cases eq
+        cases f <;> simp only [CheckResult.bind_eq_ok,
+          Except.ok.injEq] at hf
+        case primrec base step =>
+          obtain ⟨_, _, _, _, _, _, eq⟩ := hf
+          cases eq
+        all_goals
+          obtain ⟨g, hg, b, hb, eq⟩ := hf
+          obtain ⟨ef, ea⟩ := Term.app.inj eq
+          subst g; subst b
+          cases head with
+          | app head notLam notRec =>
+              have eqf := (reduceTermNeutral_succ_iff head hg).mp rfl
+              cases eqf <;> exact ⟨n, a, n, hw, by omega, hb⟩
 
 private theorem finish_reduce {E w v n} (head : TermWhnf w) (run : Finish n E w = .ok v) :
     ∃ m, reduceTerm m E 0 w = .ok v := by
@@ -378,68 +394,90 @@ private theorem blocked_inv {E t v n} (blocked : TermBlocked v)
       have head := whnfTerm_normal hw
       obtain ⟨j, hj⟩ := finish_reduce head hf
       refine ⟨n, w, j, hw, ?_, hj⟩
-      cases w <;> simp only [Finish, CheckResult.bind_eq_ok, pure, Except.pure,
+      cases w <;> simp only [Finish, pure, Except.pure,
         Except.ok.injEq, fail] at hf <;> try contradiction
       case zero => subst v; exact False.elim (blocked.1 rfl)
       case app f a =>
-        obtain ⟨g, hg, b, hb, eq⟩ := hf
-        subst v
-        cases head with
-        | app hf notLam =>
-            constructor
-            · intro h; cases h
-            · intro p h
-              have : f = .succ := (Term.app.inj h).1
-              subst f
-              have : g = .succ := (reduceTermNeutral_succ_iff .succ hg).mpr rfl
-              subst g
-              exact blocked.2 b rfl
-      case primrec =>
-        constructor
-        · intro h; cases h
-        · intro p h; cases h
+        cases f <;> simp only [CheckResult.bind_eq_ok,
+          Except.ok.injEq] at hf
+        case primrec base step =>
+          constructor
+          · intro h; cases h
+          · intro p h; cases h
+        all_goals
+          obtain ⟨g, hg, b, hb, eq⟩ := hf
+          subst v
+          cases head with
+          | app hf notLam notRec =>
+              constructor
+              · intro h; cases h
+              · intro p h
+                have eqf := (Term.app.inj h).1
+                cases eqf
+                all_goals
+                  have : g = .succ := (reduceTermNeutral_succ_iff .succ hg).mpr rfl
+                  subst g
+                  exact blocked.2 b rfl
       all_goals
         constructor
         · intro h; cases h
         · intro p h; cases h
 
+private theorem whnf_rec (n E b s a) :
+    whnfTerm (n + 2) E (.app (.primrec b s) a) = (do
+      let a ← whnfTerm (n + 1) E a
+      match a with
+      | .zero => whnfTerm (n + 1) E b
+      | .app .succ p => whnfTerm (n + 1) E (.app (.app s p) (.app (.primrec b s) p))
+      | _ => pure (.app (.primrec b s) a)) := rfl
+
 private theorem rec_zero_runs {E b s a n v} (arg : whnfTerm n E a = .ok .zero) :
-    (∃ m, whnfTerm m E (.primrec b s a) = .ok v) ↔ ∃ m, whnfTerm m E b = .ok v := by
+    (∃ m, whnfTerm m E (.app (.primrec b s) a) = .ok v) ↔ ∃ m, whnfTerm m E b = .ok v := by
   constructor
   · rintro ⟨m, hm⟩
     cases m with
     | zero => simp [whnfTerm, exhausted, fail] at hm
     | succ m =>
-        simp only [whnfTerm, CheckResult.bind_eq_ok] at hm
-        obtain ⟨w, hw, hm⟩ := hm
-        have : w = .zero := whnfTerm_unique hw arg
-        subst w
-        exact ⟨m, hm⟩
+        cases m with
+        | zero => simp [whnfTerm, exhausted, fail] at hm
+        | succ m =>
+          rw [whnf_rec] at hm
+          simp only [CheckResult.bind_eq_ok] at hm
+          obtain ⟨w, hw, hm⟩ := hm
+          have : w = .zero := whnfTerm_unique hw arg
+          subst w
+          exact ⟨m + 1, hm⟩
   · rintro ⟨m, hm⟩
-    refine ⟨max n m + 1, ?_⟩
-    simp only [whnfTerm, CheckResult.bind_eq_ok]
+    refine ⟨max n m + 2, ?_⟩
+    rw [whnf_rec]
+    simp only [CheckResult.bind_eq_ok]
     exact ⟨.zero, whnfTerm_mono (by omega) arg, whnfTerm_mono (by omega) hm⟩
 
 private theorem rec_succ_runs {E b s a p n v} (arg : whnfTerm n E a = .ok (.app .succ p)) :
-    (∃ m, whnfTerm m E (.primrec b s a) = .ok v) ↔
-      ∃ m, whnfTerm m E (.app (.app s p) (.primrec b s p)) = .ok v := by
+    (∃ m, whnfTerm m E (.app (.primrec b s) a) = .ok v) ↔
+      ∃ m, whnfTerm m E (.app (.app s p) (.app (.primrec b s) p)) = .ok v := by
   constructor
   · rintro ⟨m, hm⟩
     cases m with
     | zero => simp [whnfTerm, exhausted, fail] at hm
     | succ m =>
-        simp only [whnfTerm, CheckResult.bind_eq_ok] at hm
-        obtain ⟨w, hw, hm⟩ := hm
-        have : w = .app .succ p := whnfTerm_unique hw arg
-        subst w
-        exact ⟨m, hm⟩
+        cases m with
+        | zero => simp [whnfTerm, exhausted, fail] at hm
+        | succ m =>
+          rw [whnf_rec] at hm
+          simp only [CheckResult.bind_eq_ok] at hm
+          obtain ⟨w, hw, hm⟩ := hm
+          have : w = .app .succ p := whnfTerm_unique hw arg
+          subst w
+          exact ⟨m + 1, hm⟩
   · rintro ⟨m, hm⟩
-    refine ⟨max n m + 1, ?_⟩
-    simp only [whnfTerm, CheckResult.bind_eq_ok]
+    refine ⟨max n m + 2, ?_⟩
+    rw [whnf_rec]
+    simp only [CheckResult.bind_eq_ok]
     exact ⟨.app .succ p, whnfTerm_mono (by omega) arg, whnfTerm_mono (by omega) hm⟩
 
 private theorem head_rec_zero {E b s a n} (valid : EnvironmentWF E)
-    (arg : whnfTerm n E a = .ok .zero) : HeadEq E (.primrec b s a) b := by
+    (arg : whnfTerm n E a = .ok .zero) : HeadEq E (.app (.primrec b s) a) b := by
   intro r v
   have renamed := whnfTerm_rename valid arg r
   simp only [Term.rename] at renamed ⊢
@@ -447,7 +485,7 @@ private theorem head_rec_zero {E b s a n} (valid : EnvironmentWF E)
 
 private theorem head_rec_succ {E b s a p n} (valid : EnvironmentWF E)
     (arg : whnfTerm n E a = .ok (.app .succ p)) :
-    HeadEq E (.primrec b s a) (.app (.app s p) (.primrec b s p)) := by
+    HeadEq E (.app (.primrec b s) a) (.app (.app s p) (.app (.primrec b s) p)) := by
   intro r v
   have renamed := whnfTerm_rename valid arg r
   simp only [Term.rename] at renamed ⊢
@@ -457,28 +495,29 @@ private theorem blocked_rec_run {E b s a w B S A n j k l}
     (arg : whnfTerm n E a = .ok w) (blocked : TermBlocked w)
     (base : reduceTerm j E 0 b = .ok B) (step : reduceTerm k E 2 s = .ok S)
     (value : reduceTerm l E 0 w = .ok A) :
-    ∃ m, reduceTerm m E 0 (.primrec b s a) = .ok (.primrec B S A) := by
-  have head : whnfTerm (n + 1) E (.primrec b s a) = .ok (.primrec b s w) := by
-    simp only [whnfTerm, CheckResult.bind_eq_ok]
-    refine ⟨w, arg, ?_⟩
+    ∃ m, reduceTerm m E 0 (.app (.primrec b s) a) = .ok (.app (.primrec B S) A) := by
+  have head : whnfTerm (n + 2) E (.app (.primrec b s) a) = .ok (.app (.primrec b s) w) := by
+    rw [whnf_rec]
+    simp only [CheckResult.bind_eq_ok]
+    refine ⟨w, whnfTerm_mono (Nat.le_succ n) arg, ?_⟩
     split
     next => exact False.elim (blocked.1 rfl)
     next => exact False.elim (blocked.2 _ rfl)
     next => rfl
-  refine ⟨max (n + 1) (max j (max k l)) + 1, ?_⟩
+  refine ⟨max (n + 2) (max j (max k l)) + 1, ?_⟩
   rw [reduce_zero]
   apply CheckResult.bind_eq_ok.mpr
-  refine ⟨.primrec b s w, whnfTerm_mono (by omega) head, ?_⟩
+  refine ⟨.app (.primrec b s) w, whnfTerm_mono (by omega) head, ?_⟩
   simp only [Finish, CheckResult.bind_eq_ok]
   exact ⟨B, reduceTerm_mono (by omega) base, S, reduceTerm_mono (by omega) step,
     A, reduceTerm_mono (by omega) value, rfl⟩
 
 private theorem rec_related {E b c s t a d} (valid : EnvironmentWF E)
     (base : Related E 0 b c) (step : Related E 2 s t) (arg : Related E 0 a d) :
-    Related E 0 (.primrec b s a) (.primrec c t d) := by
+    Related E 0 (.app (.primrec b s) a) (.app (.primrec c t) d) := by
   obtain ⟨n, m, v, ha, hd⟩ := arg
   suffices ∀ q n m a d v, n + m = q → reduceTerm n E 0 a = .ok v →
-      reduceTerm m E 0 d = .ok v → Related E 0 (.primrec b s a) (.primrec c t d) from
+      reduceTerm m E 0 d = .ok v → Related E 0 (.app (.primrec b s) a) (.app (.primrec c t) d) from
     this (n + m) n m a d v rfl ha hd
   intro q
   induction q using Nat.strongRecOn with
@@ -508,7 +547,19 @@ private theorem rec_related {E b c s t a d} (valid : EnvironmentWF E)
           obtain ⟨z, o, S, hs, ht⟩ := related_normalize step
           obtain ⟨u, hu⟩ := blocked_rec_run hj bp hb hs hp
           obtain ⟨w, hw⟩ := blocked_rec_run hk br hc ht hr
-          exact ⟨u, w, .primrec B S v, hu, hw⟩
+          exact ⟨u, w, .app (.primrec B S) v, hu, hw⟩
+
+private theorem recursor_related {E b c s t} (valid : EnvironmentWF E)
+    (base : Related E 0 b c) (step : Related E 2 s t) :
+    Related E 1 (.primrec b s) (.primrec c t) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro r; exact ⟨1, .primrec (b.rename r) (s.rename r),
+      by simp [Term.rename, whnfTerm, pure, Except.pure]⟩
+  · intro r; exact ⟨1, .primrec (c.rename r) (t.rename r),
+      by simp [Term.rename, whnfTerm, pure, Except.pure]⟩
+  · intro r a d arg
+    simp only [Term.rename]
+    exact rec_related valid (related_rename valid base r) (related_rename valid step r) arg
 
 private theorem successor_related {E} (valid : EnvironmentWF E) : Related E 1 .succ .succ := by
   refine ⟨?_, ?_, ?_⟩
@@ -610,10 +661,10 @@ private theorem term_fundamental {E F Ξ Γ t k} (valid : EnvironmentWF F)
             exact iha s u p q locals parameters
         | succ i => exact locals i j hi
       · exact parameters
-  | primrec b f a ihb ihf iha =>
+  | primrec b f ihb ihf =>
       simp only [Term.replace]
-      exact rec_related valid (ihb s u p q locals parameters) (ihf s u p q locals parameters)
-        (iha s u p q locals parameters)
+      exact recursor_related valid (ihb s u p q locals parameters)
+        (ihf s u p q locals parameters)
   | definition lookup args ih =>
       simp only [Term.replace]
       exact globals _ _ lookup _ _ (ih s u p q locals parameters)
@@ -796,10 +847,10 @@ private theorem equality_fundamental {E Ξ Γ t v k} (valid : EnvironmentWF E)
       apply related_head_right (head_zeta E _ _)
       rw [Term.subst_lift_subst0, Term.subst_lift_subst0]
       exact ihb _ _ (index_cons locals (ihv s u locals))
-  | primrec base step arg ihb ihs iha =>
+  | primrec base step ihb ihs =>
       intro s u locals
       simp only [Term.subst]
-      exact rec_related valid (ihb s u locals) (ihs s u locals) (iha s u locals)
+      exact recursor_related valid (ihb s u locals) (ihs s u locals)
   | definition lookup arguments ih =>
       intro s u locals
       simp only [Term.subst]

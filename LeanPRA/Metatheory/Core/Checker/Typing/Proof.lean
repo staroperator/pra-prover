@@ -75,51 +75,31 @@ private theorem proof_correct (n : Nat) (E : Environment) (valid : EnvironmentWF
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
           obtain ⟨B, hp, C, hq, rfl⟩ := run
           exact .andIntro (ih.1 ctx hp) (ih.1 ctx hq)
-        case andLeft p =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨C, hp, B, hw, run⟩ := run
-          have tp := ih.1 ctx hp
-          have tp := ProofTyping.conversion tp
-            (whnfPredicate_sound valid (tp.regularity valid ctx) hw)
-          cases B <;> simp only [pure, Except.pure, Except.ok.injEq, fail] at run <;>
-            try contradiction
-          case and B C => subst A; exact .andLeft tp
-        case andRight p =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨C, hp, B, hw, run⟩ := run
-          have tp := ih.1 ctx hp
-          have tp := ProofTyping.conversion tp
-            (whnfPredicate_sound valid (tp.regularity valid ctx) hw)
-          cases B <;> simp only [pure, Except.pure, Except.ok.injEq, fail] at run <;>
-            try contradiction
-          case and B C => subst A; exact .andRight tp
-        case orLeft B p =>
+        case andLeft a b =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨s, hB, C, hp, rfl⟩ := run
-          exact .orLeft (inferFormula_sound hB).toProp (ih.1 ctx hp)
-        case orRight B p =>
+          obtain ⟨sa, ha, sb, hb, rfl⟩ := run
+          exact .andLeft (inferFormula_sound ha).toProp (inferFormula_sound hb).toProp
+        case andRight a b =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨s, hB, C, hp, rfl⟩ := run
-          exact .orRight (inferFormula_sound hB).toProp (ih.1 ctx hp)
-        case orElim target p q r =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨s, ht, C, hp, B, hw, run⟩ := run
-          have tt := (inferFormula_sound ht).toProp
-          have tp := ih.1 ctx hp
-          have tp := ProofTyping.conversion tp
-            (whnfPredicate_sound valid (tp.regularity valid ctx) hw)
-          cases B <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
-            Except.ok.injEq, fail] at run <;> try contradiction
-          case or B C =>
-            obtain ⟨⟨⟩, hq, ⟨⟩, hr, rfl⟩ := run
-            obtain ⟨s, tB, tC, sub⟩ := (tp.regularity valid ctx).inv_or
-            exact .orElim tt tp (ih.2 (ctx.pushProof (.subsumption tB sub)) tt hq)
-              (ih.2 (ctx.pushProof (.subsumption tC sub)) tt hr)
-        case falseElim target p =>
+          obtain ⟨sa, ha, sb, hb, rfl⟩ := run
+          exact .andRight (inferFormula_sound ha).toProp (inferFormula_sound hb).toProp
+        case orLeft a b =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨s, ht, ⟨⟩, hp, rfl⟩ := run
-          exact .falseElim (inferFormula_sound ht).toProp
-            (ih.2 ctx (.subsumption .false .lift) hp)
+          obtain ⟨sa, ha, sb, hb, rfl⟩ := run
+          exact .orLeft (inferFormula_sound ha).toProp (inferFormula_sound hb).toProp
+        case orRight a b =>
+          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
+          obtain ⟨sa, ha, sb, hb, rfl⟩ := run
+          exact .orRight (inferFormula_sound ha).toProp (inferFormula_sound hb).toProp
+        case orElim a b c =>
+          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
+          obtain ⟨sa, ha, sb, hb, sc, hc, rfl⟩ := run
+          exact .orElim (inferFormula_sound ha).toProp (inferFormula_sound hb).toProp
+            (inferFormula_sound hc).toProp
+        case falseElim a =>
+          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
+          obtain ⟨sa, ha, rfl⟩ := run
+          exact .falseElim (inferFormula_sound ha).toProp
         case forallIntro motive p =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
           obtain ⟨⟨⟩, ht, ⟨⟩, hp, rfl⟩ := run
@@ -143,21 +123,10 @@ private theorem proof_correct (n : Nat) (E : Environment) (valid : EnvironmentWF
           have tm := checkMotive_sound ht
           have tw := checkTerm_sound hw
           exact .existsIntro tm tw (ih.2 ctx (.app tm tw) hp)
-        case existsElim target p q =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨s, ht, C, hp, B, hw, run⟩ := run
-          have tt := (inferFormula_sound ht).toProp
-          have tp := ih.1 ctx hp
-          have tp := ProofTyping.conversion tp
-            (whnfPredicate_sound valid (tp.regularity valid ctx) hw)
-          cases B <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
-            Except.ok.injEq, fail] at run <;> try contradiction
-          case ex motive =>
-            obtain ⟨⟨⟩, hq, rfl⟩ := run
-            have tm := (tp.regularity valid ctx).inv_ex.2
-            exact .existsElim tt tp
-              (ih.2 ((ctx.pushLocal valid 0).pushProof
-                (.app (tm.shift valid 0) (.bvar rfl))) (tt.shift valid 0) hq)
+        case existsElim a b =>
+          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
+          obtain ⟨⟨⟩, ha, sb, hb, rfl⟩ := run
+          exact .existsElim (checkMotive_sound ha) (inferFormula_sound hb).toProp
         case letE type value body =>
           simp only [CheckResult.bind_eq_ok] at run
           obtain ⟨s, ht, ⟨⟩, hv, hb⟩ := run
@@ -176,57 +145,30 @@ private theorem proof_correct (n : Nat) (E : Environment) (valid : EnvironmentWF
           obtain ⟨s, ht, ⟨⟩, hp, rfl⟩ := run
           have tt := (inferFormula_sound ht).toProp
           exact .ascribe tt (ih.2 ctx tt hp)
-        case eqRefl t =>
-          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨⟨⟩, ht, rfl⟩ := run
-          exact .eqRefl (checkTerm_sound ht)
-        case eqSubst motive equality p =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨⟨⟩, ht, C, he, B, hw, ⟨a, b⟩, hs, ⟨⟩, hp, run⟩ := run
-          have te := ih.1 ctx he
-          have te := ProofTyping.conversion te
-            (whnfPredicate_sound valid (te.regularity valid ctx) hw)
-          have hb := equalitySides_sound hs
-          subst B
+        case eqRefl =>
           simp only [pure, Except.pure, Except.ok.injEq] at run
           subst A
-          have tm := checkMotive_sound ht
-          have ta := (te.regularity valid ctx).inv_equal.1
-          exact .eqSubst tm te (ih.2 ctx (.app tm ta) hp)
-        case succNeZero t =>
+          exact .eqRefl
+        case eqSubst a =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨⟨⟩, ht, rfl⟩ := run
-          exact .succNeZero (checkTerm_sound ht)
-        case succInj p =>
-          simp only [CheckResult.bind_eq_ok] at run
-          obtain ⟨C, hp, B, hw, ⟨a, b⟩, hs, a', ha, b', hb, run⟩ := run
-          have tp := ih.1 ctx hp
-          have tp := ProofTyping.conversion tp
-            (whnfPredicate_sound valid (tp.regularity valid ctx) hw)
-          have heq := equalitySides_sound hs
-          subst B
-          obtain ⟨ta, tb, _⟩ := (tp.regularity valid ctx).inv_equal
-          have ea := whnfTerm_sound valid ta ha
-          have eb := whnfTerm_sound valid tb hb
-          split at run
-          next left right =>
-            simp only [pure, Except.pure, Except.ok.injEq] at run
-            subst A
-            exact .succInj (.conversion tp (.subsumption (.equal ea eb) .lift))
-          next => simp [fail] at run
+          obtain ⟨⟨⟩, ha, rfl⟩ := run
+          exact .eqSubst (checkMotive_sound ha)
+        case succNeZero =>
+          simp only [pure, Except.pure, Except.ok.injEq] at run
+          subst A
+          exact .succNeZero
+        case succInj =>
+          simp only [pure, Except.pure, Except.ok.injEq] at run
+          subst A
+          exact .succInj
         case lem P =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
           obtain ⟨s, hP, rfl⟩ := run
           exact .lem (inferFormula_sound hP).toProp
-        case induction motive base step argument =>
+        case induction a =>
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨⟨⟩, ht, ⟨⟩, ha, ⟨⟩, hb, ⟨⟩, hs, rfl⟩ := run
-          have tm := checkMotive_sound ht
-          exact .induction tm (ih.2 ctx (PredicateTyping.app tm .zero).toProp hb)
-            (ih.2 ((ctx.pushLocal valid 0).pushProof
-              (PredicateTyping.app (tm.shift valid 0) (.bvar rfl)).toProp)
-              (PredicateTyping.app (tm.shift valid 0) (.app .succ (.bvar rfl))).toProp hs)
-            (checkTerm_sound ha)
+          obtain ⟨⟨⟩, ha, rfl⟩ := run
+          exact .induction (checkMotive_sound ha)
       · intro c p A ctx type run
         simp only [checkProof, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok] at run
         obtain ⟨B, hp, equal, hequal, run⟩ := run

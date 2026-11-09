@@ -113,19 +113,17 @@ private theorem term_complete {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k) :
           simp only [inferTerm, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok]
           refine ⟨_, ihv m (by omega) c hc hl, ?_⟩
           exact ihb m (by omega) (c.pushLocal _) hc (by simp [Context.pushLocal, hl])
-  | primrec b s a ihb ihs iha =>
+  | primrec b s ihb ihs =>
       obtain ⟨n, ihb⟩ := ihb
       obtain ⟨j, ihs⟩ := ihs
-      obtain ⟨l, iha⟩ := iha
-      refine ⟨max n (max j l) + 1, ?_⟩
+      refine ⟨max n j + 1, ?_⟩
       intro m hm c hc hl
       cases m with
       | zero => omega
       | succ m =>
           simp only [inferTerm, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok]
           exact ⟨(), ⟨_, ihb m (by omega) c hc hl, arity_refl _⟩,
-            (), ⟨_, ihs m (by omega) c hc hl, arity_refl _⟩,
-            (), ⟨_, iha m (by omega) c hc hl, arity_refl _⟩, rfl⟩
+            (), ⟨_, ihs m (by omega) c hc hl, arity_refl _⟩, rfl⟩
   | definition lookup args ih =>
       obtain ⟨n, ih⟩ := ih
       refine ⟨n + 1, ?_⟩

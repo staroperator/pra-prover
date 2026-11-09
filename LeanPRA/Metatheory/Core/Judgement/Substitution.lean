@@ -33,31 +33,26 @@ declaration parameters are unchanged. Numerical proof binders lift the local sub
   | .impIntro binderName A p => .impIntro binderName (A.subst s) (p.subst s)
   | .impElim p q => .impElim (p.subst s) (q.subst s)
   | .andIntro p q => .andIntro (p.subst s) (q.subst s)
-  | .andLeft p => .andLeft (p.subst s)
-  | .andRight p => .andRight (p.subst s)
-  | .orLeft A p => .orLeft (A.subst s) (p.subst s)
-  | .orRight A p => .orRight (A.subst s) (p.subst s)
-  | .orElim leftName rightName A p q r =>
-      .orElim leftName rightName (A.subst s) (p.subst s) (q.subst s) (r.subst s)
-  | .falseElim A p => .falseElim (A.subst s) (p.subst s)
+  | .andLeft a b => .andLeft (a.subst s) (b.subst s)
+  | .andRight a b => .andRight (a.subst s) (b.subst s)
+  | .orLeft a b => .orLeft (a.subst s) (b.subst s)
+  | .orRight a b => .orRight (a.subst s) (b.subst s)
+  | .orElim a b c => .orElim (a.subst s) (b.subst s) (c.subst s)
+  | .falseElim a => .falseElim (a.subst s)
   | .forallIntro binderName P p => .forallIntro binderName (P.subst s) (p.subst (Subst.lift 1 s))
   | .forallElim p a => .forallElim (p.subst s) (a.subst s)
   | .existsIntro P a p => .existsIntro (P.subst s) (a.subst s) (p.subst s)
-  | .existsElim variableName hypothesisName A p q =>
-      .existsElim variableName hypothesisName (A.subst s)
-        (p.subst s) (q.subst (Subst.lift 1 s))
+  | .existsElim a b => .existsElim (a.subst s) (b.subst s)
   | .letE binderName A p q => .letE binderName (A.subst s) (p.subst s) (q.subst s)
   | .letTerm binderName a p => .letTerm binderName (a.subst s) (p.subst s)
   | .letPredicate binderName P p => .letPredicate binderName (P.subst s) (p.subst s)
   | .ascribe A p => .ascribe (A.subst s) (p.subst s)
-  | .eqRefl t => .eqRefl (t.subst s)
-  | .eqSubst P e p => .eqSubst (P.subst s) (e.subst s) (p.subst s)
-  | .succNeZero t => .succNeZero (t.subst s)
-  | .succInj p => .succInj (p.subst s)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst (a.subst s)
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
   | .lem A => .lem (A.subst s)
-  | .induction variableName hypothesisName P b step a =>
-      .induction variableName hypothesisName (P.subst s)
-        (b.subst s) (step.subst (Subst.lift 1 s)) (a.subst s)
+  | .induction a => .induction (a.subst s)
 
 /-- Rename local term variables in proof data, leaving proof-hypothesis indices unchanged. -/
 @[expose] public def Proof.rename (r : Renaming) (p : Proof) : Proof :=
@@ -263,8 +258,8 @@ private theorem term_rename {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
   | app f a ihf iha => simp only [Term.rename]; exact .app (ihf _ hr) (iha _ hr)
   | letE a body iha ihb =>
       simp only [Term.rename]; exact .letE (iha _ hr) (ihb _ (renaming_lift hr _))
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.rename]; exact .primrec (ihb _ hr) (ihs _ hr) (ihn _ hr)
+  | primrec b s ihb ihs =>
+      simp only [Term.rename]; exact .primrec (ihb _ hr) (ihs _ hr)
   | definition lookup args ih => simp only [Term.rename]; exact .definition lookup (ih _ hr)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -299,8 +294,8 @@ private theorem term_subst {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
   | app f a ihf iha => simp only [Term.subst]; exact .app (ihf _ hs) (iha _ hs)
   | letE a body iha ihb =>
       simp only [Term.subst]; exact .letE (iha _ hs) (ihb _ (substitution_lift hs _))
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs) (ihn _ hs)
+  | primrec b s ihb ihs =>
+      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs)
   | definition lookup args ih => simp only [Term.subst]; exact .definition lookup (ih _ hs)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -314,7 +309,7 @@ private def TermScoped : Nat → Term → Prop
   | n, .lam _ t => TermScoped (n + 1) t
   | n, .app f a => TermScoped n f ∧ TermScoped n a
   | n, .letE _ a t => TermScoped n a ∧ TermScoped (n + 1) t
-  | n, .primrec b s t => TermScoped n b ∧ TermScoped n s ∧ TermScoped n t
+  | n, .primrec b s => TermScoped n b ∧ TermScoped n s
   | n, .definition _ fs => ∀ t ∈ fs, TermScoped n t
 
 private def PredicateScoped : Nat → Predicate → Prop
@@ -338,7 +333,7 @@ private theorem term_scoped {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k) :
   case lam body ih => exact ih
   case app f a ihf iha => exact ⟨ihf, iha⟩
   case letE a body iha ihb => exact ⟨iha, ihb⟩
-  case primrec b s n ihb ihs ihn => exact ⟨ihb, ihs, ihn⟩
+  case primrec b s ihb ihs => exact ⟨ihb, ihs⟩
   case definition lookup args ih => exact ih
   case nil => contradiction
   case cons ihh iht t ht =>
@@ -431,11 +426,10 @@ private theorem instantiate_subst (t : Term) (n : Nat) (h : TermScoped n t)
       simp only [TermScoped] at h
       simp only [Term.instantiate, Term.subst, subst_lift_add, Nat.add_comm 1 n]
       rw [instantiate_subst a n h.1 fs s, instantiate_subst t (n + 1) h.2 fs s]
-  | primrec b step a =>
+  | primrec b step =>
       simp only [TermScoped] at h
       simp only [Term.instantiate, Term.subst]
-      rw [instantiate_subst b n h.1 fs s, instantiate_subst step n h.2.1 fs s,
-        instantiate_subst a n h.2.2 fs s]
+      rw [instantiate_subst b n h.1 fs s, instantiate_subst step n h.2 fs s]
   | definition name ts =>
       simp only [TermScoped] at h
       simp only [Term.instantiate, Term.subst, List.map_map]
@@ -634,8 +628,8 @@ private theorem term_eq_subst {E Ξ Γ t u k} (valid : EnvironmentWF E)
   | app f a ihf iha => simp only [Term.subst]; exact .app (ihf _ hs) (iha _ hs)
   | letE a body iha ihb =>
       simp only [Term.subst]; exact .letE (iha _ hs) (ihb _ (substitution_lift hs _))
-  | primrec b step n ihb ihs ihn =>
-      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs) (ihn _ hs)
+  | primrec b step ihb ihs =>
+      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs)
   | definition lookup args ih => simp only [Term.subst]; exact .definition lookup (ih _ hs)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -742,26 +736,31 @@ private theorem proof_subst {E Ξ Γ H p A} (valid : EnvironmentWF E)
       · exact iha s hs
   | andIntro a b iha ihb =>
       simp only [Proof.subst, Predicate.subst]; exact .andIntro (iha _ hs) (ihb _ hs)
-  | andLeft pair ih =>
-      simp only [Proof.subst]
-      exact .andLeft (by simpa only [Predicate.subst] using ih s hs)
-  | andRight pair ih =>
-      simp only [Proof.subst]
-      exact .andRight (by simpa only [Predicate.subst] using ih s hs)
-  | orLeft other proof ih =>
-      simp only [Proof.subst, Predicate.subst]
-      exact .orLeft (predicate_subst valid other _ hs) (ih _ hs)
-  | orRight other proof ih =>
-      simp only [Proof.subst, Predicate.subst]
-      exact .orRight (predicate_subst valid other _ hs) (ih _ hs)
-  | orElim target scrutinee left right ihp ihl ihr =>
-      simp only [Proof.subst]
-      exact .orElim (predicate_subst valid target _ hs)
-        (by simpa only [Predicate.subst] using ihp s hs) (ihl _ hs) (ihr _ hs)
-  | falseElim target proof ih =>
-      simp only [Proof.subst]
-      exact .falseElim (predicate_subst valid target _ hs)
-        (by simpa only [Predicate.subst] using ih s hs)
+  | andLeft a b =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.andLeft (predicate_subst valid a s hs) (predicate_subst valid b s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | andRight a b =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.andRight (predicate_subst valid a s hs) (predicate_subst valid b s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | orLeft a b =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.orLeft (predicate_subst valid a s hs) (predicate_subst valid b s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | orRight a b =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.orRight (predicate_subst valid a s hs) (predicate_subst valid b s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | orElim a b c =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.orElim (predicate_subst valid a s hs)
+          (predicate_subst valid b s hs)
+          (predicate_subst valid c s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | falseElim a =>
+      simpa [Proof.subst, Predicate.subst] using
+        (ProofTyping.falseElim (predicate_subst valid a s hs) (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
   | forallIntro motive body ih =>
       simp only [Proof.subst, Predicate.subst]
       apply ProofTyping.forallIntro (predicate_subst valid motive _ hs)
@@ -774,13 +773,11 @@ private theorem proof_subst {E Ξ Γ H p A} (valid : EnvironmentWF E)
       simp only [Proof.subst, Predicate.subst]
       exact .existsIntro (predicate_subst valid motive _ hs) (term_subst witness _ hs)
         (by simpa only [Predicate.subst] using ih s hs)
-  | existsElim target scrutinee body ihp ihb =>
-      simp only [Proof.subst]
-      apply ProofTyping.existsElim (predicate_subst valid target _ hs)
-        (by simpa only [Predicate.subst] using ihp s hs)
-      simpa only [List.map_cons, Predicate.subst, Term.subst, subst_lift_head,
-        predicate_subst_shift, hypotheses_subst_shift] using
-        ihb (Subst.lift 1 s) (substitution_lift hs 0)
+  | existsElim a b =>
+      simpa [Proof.subst, Predicate.subst, existentialEliminationType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.existsElim (predicate_subst valid a s hs) (predicate_subst valid b s hs)
+          (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
   | letE type value body ihv ihb =>
       simp only [Proof.subst]
       exact .letE (predicate_subst valid type _ hs) (ihv _ hs) (ihb _ hs)
@@ -790,28 +787,28 @@ private theorem proof_subst {E Ξ Γ H p A} (valid : EnvironmentWF E)
       simp only [Proof.subst]; exact .letPredicate (predicate_subst valid P _ hs) (ih _ hs)
   | ascribe type proof ih =>
       simp only [Proof.subst]; exact .ascribe (predicate_subst valid type _ hs) (ih _ hs)
-  | eqRefl term =>
-      simp only [Proof.subst, Predicate.subst]; exact .eqRefl (term_subst term _ hs)
-  | eqSubst motive equality proof ihe ihp =>
-      simp only [Proof.subst, Predicate.subst]
-      exact .eqSubst (predicate_subst valid motive _ hs)
-        (by simpa only [Predicate.subst] using ihe s hs)
-        (by simpa only [Predicate.subst] using ihp s hs)
-  | succNeZero term =>
-      simp only [Proof.subst, Predicate.subst, Term.subst]; exact .succNeZero (term_subst term _ hs)
-  | succInj proof ih =>
-      simp only [Proof.subst, Predicate.subst]
-      exact .succInj (by simpa only [Predicate.subst, Term.subst] using ih s hs)
+  | eqRefl =>
+      simpa [Proof.subst, Predicate.subst, reflexivityType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.eqRefl (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | eqSubst a =>
+      simpa [Proof.subst, Predicate.subst, substitutionType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.eqSubst (predicate_subst valid a s hs) (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | succNeZero =>
+      simpa [Proof.subst, Predicate.subst, successorNonzeroType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.succNeZero (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
+  | succInj =>
+      simpa [Proof.subst, Predicate.subst, successorInjectivityType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.succInj (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
   | lem formula =>
       simp only [Proof.subst, Predicate.subst]; exact .lem (predicate_subst valid formula _ hs)
-  | induction motive base step argument ihb ihs =>
-      simp only [Proof.subst, Predicate.subst]
-      apply ProofTyping.induction (predicate_subst valid motive _ hs)
-      · simpa only [Predicate.subst, Term.subst] using ihb s hs
-      · simpa only [List.map_cons, Predicate.subst, Term.subst, subst_lift_head,
-          predicate_subst_shift, hypotheses_subst_shift] using
-          ihs (Subst.lift 1 s) (substitution_lift hs 0)
-      · exact term_subst argument _ hs
+  | induction a =>
+      simpa [Proof.subst, Predicate.subst, inductionType,
+        Term.subst, subst_lift_add, predicate_subst_shift, Subst.lift] using
+        (ProofTyping.induction (predicate_subst valid a s hs) (E := E) (Ξ := Ξ) (Γ := Δ) (H := _))
   | conversion proof type ih =>
       exact .conversion (ih _ hs) (predicate_eq_subst valid type _ hs)
 

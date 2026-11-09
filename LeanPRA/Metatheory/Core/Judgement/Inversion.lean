@@ -112,11 +112,11 @@ public theorem TermTyping.inv_let {E Ξ Γ a t k} (h : TermTyping E Ξ Γ (.letE
     ∃ j, TermTyping E Ξ Γ a j ∧ TermTyping E Ξ (j :: Γ) t k := by
   cases h with | letE value body => exact ⟨_, value, body⟩
 
-/-- Primitive recursion has numerical base/result and a binary numerical step. -/
-public theorem TermTyping.inv_primrec {E Ξ Γ b s n k}
-    (h : TermTyping E Ξ Γ (.primrec b s n) k) :
-    k = 0 ∧ TermTyping E Ξ Γ b 0 ∧ TermTyping E Ξ Γ s 2 ∧ TermTyping E Ξ Γ n 0 := by
-  cases h with | primrec base step argument => exact ⟨rfl, base, step, argument⟩
+/-- Primitive recursion has unary arity, a numerical base, and a binary numerical step. -/
+public theorem TermTyping.inv_primrec {E Ξ Γ b s k}
+    (h : TermTyping E Ξ Γ (.primrec b s) k) :
+    k = 1 ∧ TermTyping E Ξ Γ b 0 ∧ TermTyping E Ξ Γ s 2 := by
+  cases h with | primrec base step => exact ⟨rfl, base, step⟩
 
 /-- A function reference supplies all declared function actuals. -/
 public theorem TermTyping.inv_definition {E Ξ Γ name fs k}

@@ -1,6 +1,6 @@
 module
 
-public meta import LeanPRA.Surface.Builtins
+public meta import LeanPRA.Surface.Primitive
 
 /-!
 # PRA environments and module imports
@@ -10,7 +10,7 @@ Environment extensions for PRA declarations across Lean modules:
 - `ModuleBundle` groups the declarations introduced by one Lean module.
 - `ModuleExport` stores a module's declarations and the private dependency bundles they use.
 - `importModuleExports` loads cached declarations and checks module metadata.
-- `checkModuleExports` rechecks all imported declarations over the checked builtin environment.
+- `checkModuleExports` rechecks all imported declarations over the empty Core environment.
 - `CoreEnvironment.getState` reads the Core declaration map.
 - `publishDeclaration` records an accepted declaration in the environment extension.
 - `registerNamespaceParents` registers PRA namespaces in Lean's scope table.
@@ -36,7 +36,7 @@ structure ModuleExport where
 
 /-- Persistent environment state for PRA declarations and module ownership. -/
 structure ModuleState where
-  environment : Core.Environment := builtinEnvironment
+  environment : Core.Environment := ∅
   modules : Lean.NameMap (Array Lean.Name) := {}
   order : Array Lean.Name := #[]
   localNames : Array Lean.Name := #[]

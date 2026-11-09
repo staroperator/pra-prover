@@ -49,7 +49,7 @@ private theorem term_weaken {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
   | lam body ih => exact .lam ih
   | app f a ihf iha => exact .app ihf iha
   | letE a t iha iht => exact .letE iha iht
-  | primrec b s n ihb ihs ihn => exact .primrec ihb ihs ihn
+  | primrec b s ihb ihs => exact .primrec ihb ihs
   | definition lookup args ih => exact .definition (ext _ _ lookup) ih
   | nil => exact .nil
   | cons head tail ihh iht => exact .cons ihh iht
@@ -110,7 +110,7 @@ private theorem term_eq_weaken {E Ξ Γ t u k} (h : TermEq E Ξ Γ t u k)
   | lam body ih => exact .lam ih
   | app f a ihf iha => exact .app ihf iha
   | letE a body iha ihb => exact .letE iha ihb
-  | primrec b s n ihb ihs ihn => exact .primrec ihb ihs ihn
+  | primrec b s ihb ihs => exact .primrec ihb ihs
   | definition lookup args ih => exact .definition (ext _ _ lookup) ih
   | nil => exact .nil
   | cons head tail ihh iht => exact .cons ihh iht
@@ -162,27 +162,27 @@ private theorem proof_weaken {E Ξ Γ H p A} (h : ProofTyping E Ξ Γ H p A)
   | impIntro A body ih => exact .impIntro (predicate_weaken A ext) ih
   | impElim p q ihp ihq => exact .impElim ihp ihq
   | andIntro p q ihp ihq => exact .andIntro ihp ihq
-  | andLeft p ih => exact .andLeft ih
-  | andRight p ih => exact .andRight ih
-  | orLeft A p ih => exact .orLeft (predicate_weaken A ext) ih
-  | orRight A p ih => exact .orRight (predicate_weaken A ext) ih
-  | orElim A p q r ihp ihq ihr => exact .orElim (predicate_weaken A ext) ihp ihq ihr
-  | falseElim A p ih => exact .falseElim (predicate_weaken A ext) ih
+  | andLeft a b => exact .andLeft (predicate_weaken a ext) (predicate_weaken b ext)
+  | andRight a b => exact .andRight (predicate_weaken a ext) (predicate_weaken b ext)
+  | orLeft a b => exact .orLeft (predicate_weaken a ext) (predicate_weaken b ext)
+  | orRight a b => exact .orRight (predicate_weaken a ext) (predicate_weaken b ext)
+  | orElim a b c =>
+      exact .orElim (predicate_weaken a ext) (predicate_weaken b ext) (predicate_weaken c ext)
+  | falseElim a => exact .falseElim (predicate_weaken a ext)
   | forallIntro P p ih => exact .forallIntro (predicate_weaken P ext) ih
   | forallElim p a ih => exact .forallElim ih (term_weaken a ext)
   | existsIntro P a p ih => exact .existsIntro (predicate_weaken P ext) (term_weaken a ext) ih
-  | existsElim A p q ihp ihq => exact .existsElim (predicate_weaken A ext) ihp ihq
+  | existsElim a b => exact .existsElim (predicate_weaken a ext) (predicate_weaken b ext)
   | letE A p q ihp ihq => exact .letE (predicate_weaken A ext) ihp ihq
   | letTerm a p ih => exact .letTerm (term_weaken a ext) ih
   | letPredicate P p ih => exact .letPredicate (predicate_weaken P ext) ih
   | ascribe A p ih => exact .ascribe (predicate_weaken A ext) ih
-  | eqRefl t => exact .eqRefl (term_weaken t ext)
-  | eqSubst P e p ihe ihp => exact .eqSubst (predicate_weaken P ext) ihe ihp
-  | succNeZero t => exact .succNeZero (term_weaken t ext)
-  | succInj p ih => exact .succInj ih
+  | eqRefl => exact .eqRefl
+  | eqSubst a => exact .eqSubst (predicate_weaken a ext)
+  | succNeZero => exact .succNeZero
+  | succInj => exact .succInj
   | lem A => exact .lem (predicate_weaken A ext)
-  | induction P b s n ihb ihs =>
-      exact .induction (predicate_weaken P ext) ihb ihs (term_weaken n ext)
+  | induction a => exact .induction (predicate_weaken a ext)
   | conversion p type ih => exact .conversion ih (predicate_eq_weaken type ext)
 
 private theorem predicate_list_eq_weaken {E Ξ Γ ps qs signatures}

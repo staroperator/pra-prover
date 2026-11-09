@@ -1,6 +1,7 @@
 module
 
 public import LeanPRA.Metatheory.Translation.Defs
+import LeanPRA.Metatheory.Translation.Derivation
 import LeanPRA.Metatheory.PRA.Basic
 import Std.Data.ExtHashMap.Lemmas
 
@@ -183,8 +184,8 @@ private theorem term_rename {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
   | app f a ihf iha => simp only [Term.rename]; exact .app (ihf _ hr) (iha _ hr)
   | letE a body iha ihb =>
       simp only [Term.rename]; exact .letE (iha _ hr) (ihb _ (renaming_lift hr _))
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.rename]; exact .primrec (ihb _ hr) (ihs _ hr) (ihn _ hr)
+  | primrec b s ihb ihs =>
+      simp only [Term.rename]; exact .primrec (ihb _ hr) (ihs _ hr)
   | definition lookup args ih => simp only [Term.rename]; exact .definition lookup (ih _ hr)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -219,8 +220,8 @@ private theorem term_subst {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
   | app f a ihf iha => simp only [Term.subst]; exact .app (ihf _ hs) (iha _ hs)
   | letE a body iha ihb =>
       simp only [Term.subst]; exact .letE (iha _ hs) (ihb _ (substitution_lift hs _))
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs) (ihn _ hs)
+  | primrec b s ihb ihs =>
+      simp only [Term.subst]; exact .primrec (ihb _ hs) (ihs _ hs)
   | definition lookup args ih => simp only [Term.subst]; exact .definition lookup (ih _ hs)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -264,10 +265,10 @@ private theorem Theory.TermTyping.inv_let {E Ξ Γ a t k}
     ∃ j, TermTyping E Ξ Γ a j ∧ TermTyping E Ξ (j :: Γ) t k := by
   cases h with | letE value body => exact ⟨_, value, body⟩
 
-private theorem Theory.TermTyping.inv_primrec {E Ξ Γ b s n k}
-    (h : TermTyping E Ξ Γ (.primrec b s n) k) :
-    k = 0 ∧ TermTyping E Ξ Γ b 0 ∧ TermTyping E Ξ Γ s 2 ∧ TermTyping E Ξ Γ n 0 := by
-  cases h with | primrec base step argument => exact ⟨rfl, base, step, argument⟩
+private theorem Theory.TermTyping.inv_primrec {E Ξ Γ b s k}
+    (h : TermTyping E Ξ Γ (.primrec b s) k) :
+    k = 1 ∧ TermTyping E Ξ Γ b 0 ∧ TermTyping E Ξ Γ s 2 := by
+  cases h with | primrec base step => exact ⟨rfl, base, step⟩
 
 private theorem Theory.TermTyping.inv_definition {E Ξ Γ name fs k}
     (h : TermTyping E Ξ Γ (.definition name fs) k) :
@@ -283,7 +284,7 @@ private def Term.replace (s p : Subst) : Term → Term
   | .app f a => .app (f.replace s p) (a.replace s p)
   | .letE binderName a t => .letE binderName (a.replace s p)
       (t.replace (Subst.lift 1 s) (fun i => (p i).shift))
-  | .primrec b f a => .primrec (b.replace s p) (f.replace s p) (a.replace s p)
+  | .primrec b f => .primrec (b.replace s p) (f.replace s p)
   | .definition name fs => .definition name (fs.map (Term.replace s p))
 
 private theorem lift_subst (s u : Subst) :
@@ -380,9 +381,9 @@ private theorem replace_instantiate {E Ξ Γ t k} (h : Theory.TermTyping E Ξ Γ
         | succ i => simp [Subst.lift, locals i j hi, Term.shift, Term.rename]
       · intro i j hi
         simp only [parameters i j hi, shift_add, List.length_cons]
-  | primrec b f a ihb ihf iha =>
+  | primrec b f ihb ihf =>
       simp only [Term.replace, Term.instantiate]
-      rw [ihb _ _ locals parameters, ihf _ _ locals parameters, iha _ _ locals parameters]
+      rw [ihb _ _ locals parameters, ihf _ _ locals parameters]
   | definition lookup args ih =>
       simp only [Term.replace, Term.instantiate]
       rw [ih _ _ locals parameters]
@@ -981,9 +982,9 @@ private theorem term_translation_unique {E Ξ ρ n t k f}
   | letE value body ihv ihb =>
       cases other with
       | letE value' body' => exact ihb body'
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       cases other with
-      | primrec base' step' argument' => rw [ihb base', ihs step', iha argument']
+      | primrec base' step' => rw [ihb base', ihs step']
   | definition lookup arguments body iha ihb =>
       obtain ⟨d, hd, g, body', heq⟩ := term_translation_definition other rfl
       cases Declaration.function.inj (Option.some.inj (lookup.symm.trans hd))
@@ -1579,14 +1580,41 @@ private theorem recursion_step_apply (g : Primrec (2 + n)) (a b : PRA.Term q)
     (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))
     (Fin.cases a (Fin.cases b (Fin.addCases Fin.elim0 v)))).toQFProof
 
-private theorem recursion_apply (f : Primrec k) (g : Primrec (k + 2)) (a : Primrec k)
-    (v : Fin k → PRA.Term q) :
-    PRA.QFProof (.eq (.app (.comp (.prec f g) (Fin.cases a Primrec.proj)) v)
-      (.app (.prec f g) (Fin.cases (.app a v) v))) := by
-  apply PRA.QFProof.eq_trans_rule .app_comp
+private theorem recursor_apply (f : Primrec (0 + n)) (g : Primrec (2 + n))
+    (x : Fin 1 → PRA.Term q) (v : Fin n → PRA.Term q) :
+    PRA.QFProof (.eq
+      (.app (Primrec.reindex (.prec f (Primrec.reindex g
+        (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))))
+        (Fin.cases (Fin.embedLeft 0) (Fin.addCases Fin.elim0 (Fin.natAdd 1))))
+        (Fin.addCases x v))
+      (.app (.prec f (Primrec.reindex g
+        (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))))
+        (Fin.cases (x 0) (Fin.addCases Fin.elim0 v)))) := by
+  apply PRA.QFProof.eq_trans_rule (PRA.QFProofI.app_reindex _ _ _).toQFProof
   apply PRA.QFProof.app_congr
   intro i
-  exact Fin.cases PRA.QFProof.eq_refl (fun _ => PRA.QFProof.app_proj) i
+  refine Fin.cases ?_ (fun i => ?_) i
+  · simpa only [Fin.cases_zero, addCases_embedLeft] using
+      (PRA.QFProof.eq_refl (t := x 0))
+  · simp only [Fin.cases_succ]
+    refine Fin.addCases (fun i => Fin.elim0 i) (fun i => ?_) i
+    simp only [Fin.addCases_right]
+    exact .eq_refl
+
+private theorem recursion_apply (f : Primrec (0 + n)) (g : Primrec (2 + n))
+    (a : Primrec (0 + n)) (v : Fin n → PRA.Term q) :
+    PRA.QFProof (.eq
+      (.app (.comp (Primrec.reindex (.prec f (Primrec.reindex g
+        (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))))
+        (Fin.cases (Fin.embedLeft 0) (Fin.addCases Fin.elim0 (Fin.natAdd 1))))
+        (fun i => Fin.cases
+          (Primrec.reindex a (Fin.addCases Fin.elim0 (Fin.natAdd 0)))
+          Primrec.proj (Fin.succAdd i))) (Fin.addCases Fin.elim0 v))
+      (.app (.prec f (Primrec.reindex g
+        (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))))
+        (Fin.cases (.app a (Fin.addCases Fin.elim0 v)) (Fin.addCases Fin.elim0 v)))) := by
+  exact PRA.QFProof.eq_trans_rule (term_app_apply _ _ Fin.elim0 v)
+    (recursor_apply f g _ v)
 
 private def unaryFormula (A : PRA.Formula (1 + n)) : PRA.Formula ((0 + n) + 1) :=
   A.subst (fun i => .var (Fin.succAdd i))
@@ -1787,24 +1815,18 @@ private theorem term_translation_rename {E Ξ ρ n t k f} (valid : EnvironmentWF
       obtain ⟨b, tb, hb⟩ := ihb r s hs
       rw [rename_subst0] at tb
       exact ⟨b, .letE tg tb, hb⟩
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       intro m r s hs
       simp only [Term.rename]
       obtain ⟨b, tb, hb⟩ := ihb r s hs
       obtain ⟨g, tg, hg⟩ := ihs r s hs
-      obtain ⟨a, ta, ha⟩ := iha r s hs
-      refine ⟨_, .primrec tb tg ta, ?_⟩
+      refine ⟨_, .primrec tb tg, ?_⟩
       intro q x v
-      have empty : x = Fin.elim0 := by funext i; exact Fin.elim0 i
-      subst x
-      apply PRA.QFProof.eq_trans_rule (recursion_apply _ _ _ _)
+      apply PRA.QFProof.eq_trans_rule (recursor_apply _ _ _ _)
       apply PRA.QFProof.eq_trans_rule (recursion_congr_apply
         (Fin.addCases Fin.elim0 v) (Fin.addCases Fin.elim0 (fun i => v (s i)))
         (hb Fin.elim0 v) ?_ _)
-      · apply PRA.QFProof.eq_trans_rule (PRA.QFProof.app_congr ?_)
-        · exact PRA.QFProof.eq_symm_rule (recursion_apply _ _ _ _)
-        · intro i
-          exact Fin.cases (ha Fin.elim0 v) (fun _ => PRA.QFProof.eq_refl) i
+      · exact PRA.QFProof.eq_symm_rule (recursor_apply _ _ _ _)
       · simp only [addCases_shift]
         apply PRA.QFProof.eq_trans_rule (recursion_step_apply g _ _ _)
         apply PRA.QFProof.eq_trans_rule (hg _ (fun i => (v i).shift.shift))
@@ -1932,25 +1954,19 @@ private theorem term_translation_subst {E Ξ ρ n t k f} (valid : EnvironmentWF 
       obtain ⟨b, tb, hb⟩ := ihb r s hs
       rw [Term.subst_subst0] at tb
       exact ⟨b, .letE tg tb, hb⟩
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       intro m r s hs
       simp only [Term.subst]
       obtain ⟨b, tb, hb⟩ := ihb r s hs
       obtain ⟨g, tg, hg⟩ := ihs r s hs
-      obtain ⟨a, ta, ha⟩ := iha r s hs
-      refine ⟨_, .primrec tb tg ta, ?_⟩
+      refine ⟨_, .primrec tb tg, ?_⟩
       intro q x v
-      have empty : x = Fin.elim0 := by funext i; exact Fin.elim0 i
-      subst x
-      apply PRA.QFProof.eq_trans_rule (recursion_apply _ _ _ _)
+      apply PRA.QFProof.eq_trans_rule (recursor_apply _ _ _ _)
       apply PRA.QFProof.eq_trans_rule (recursion_congr_apply
         (Fin.addCases Fin.elim0 v)
         (Fin.addCases Fin.elim0 (fun i => .app (s i) (Fin.addCases Fin.elim0 v)))
         (hb Fin.elim0 v) ?_ _)
-      · apply PRA.QFProof.eq_trans_rule (PRA.QFProof.app_congr ?_)
-        · exact PRA.QFProof.eq_symm_rule (recursion_apply _ _ _ _)
-        · intro i
-          exact Fin.cases (ha Fin.elim0 v) (fun _ => PRA.QFProof.eq_refl) i
+      · exact PRA.QFProof.eq_symm_rule (recursor_apply _ _ _ _)
       · simp only [app_shift, addCases_shift]
         apply PRA.QFProof.eq_trans_rule (recursion_step_apply g _ _ _)
         apply PRA.QFProof.eq_trans_rule (hg _ (fun i => (v i).shift.shift))
@@ -2041,10 +2057,10 @@ private theorem typing_of_subst (t : Term) {E Ξ Γ Δ s k}
       simp only [Term.subst] at h
       obtain ⟨j, value, body⟩ := h.inv_let
       exact .letE (iht reflect value) (ihu (reflect_lift reflect j) body)
-  | primrec b step t ihb ihs iht =>
+  | primrec b step ihb ihs =>
       simp only [Term.subst] at h
-      obtain ⟨rfl, base, step, argument⟩ := h.inv_primrec
-      exact .primrec (ihb reflect base) (ihs reflect step) (iht reflect argument)
+      obtain ⟨rfl, base, step⟩ := h.inv_primrec
+      exact .primrec (ihb reflect base) (ihs reflect step)
   | definition name ts ih =>
       simp only [Term.subst] at h
       obtain ⟨d, lookup, arguments, rfl⟩ := h.inv_definition
@@ -2075,7 +2091,7 @@ private theorem term_translation_typed {E Ξ ρ n t k f}
   | lam body ih => exact .lam (by simpa only [List.replicate_succ] using ih)
   | app function argument ihf iha => exact .app ihf iha
   | letE value body ihv ihb => exact .letE ihv (typing_of_subst0 ihv ihb)
-  | primrec base step argument ihb ihs iha => exact .primrec ihb ihs iha
+  | primrec base step ihb ihs => exact .primrec ihb ihs
   | definition lookup arguments body iha ihb => exact .definition lookup iha
   | nil => exact .nil
   | cons head tail ihh iht => exact .cons ihh iht
@@ -2236,13 +2252,12 @@ private theorem term_translates {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
         cases i with
         | zero => cases Option.some.inj hi; exact hv
         | succ i => exact hl i a hi⟩
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       intro m r hr
       obtain ⟨b, hb⟩ := ihb locals parameters m r hr
       obtain ⟨s, hs⟩ := ihs locals parameters m r hr
-      obtain ⟨a, ha⟩ := iha locals parameters m r hr
       simp only [Term.replace, Term.rename]
-      exact ⟨_, .primrec hb hs ha⟩
+      exact ⟨_, .primrec hb hs⟩
   | definition lookup arguments ih =>
       simpa only [Term.replace] using functions _ _ lookup Ω ρ n _ (ih locals parameters)
   | nil => exact .nil
@@ -3257,17 +3272,14 @@ private theorem term_related_app {E Ξ ρ n t u a b k}
     · simp only [Fin.addCases_right]
       exact .eq_refl
 
-private theorem term_related_primrec {E Ξ ρ n b c s t a d}
-    (hb : TermRelated E Ξ ρ n b c 0) (hs : TermRelated E Ξ ρ n s t 2)
-    (ha : TermRelated E Ξ ρ n a d 0) :
-    TermRelated E Ξ ρ n (.primrec b s a) (.primrec c t d) 0 := by
+private theorem term_related_primrec {E Ξ ρ n b c s t}
+    (hb : TermRelated E Ξ ρ n b c 0) (hs : TermRelated E Ξ ρ n s t 2) :
+    TermRelated E Ξ ρ n (.primrec b s) (.primrec c t) 1 := by
   obtain ⟨b, c, tb, tc, hb⟩ := hb
   obtain ⟨s, t, ts, tt, hs⟩ := hs
-  obtain ⟨a, d, ta, td, ha⟩ := ha
-  refine ⟨_, _, .primrec tb ts ta, .primrec tc tt td, ?_⟩
-  apply codeEq_comp (codeEq_prec hb (codeEq_comp hs (fun _ => codeEq_refl _)))
-  intro i
-  exact Fin.cases ha (fun _ => codeEq_refl _) i
+  refine ⟨_, _, .primrec tb ts, .primrec tc tt, ?_⟩
+  exact codeEq_comp (codeEq_prec hb (codeEq_comp hs (fun _ => codeEq_refl _)))
+    (fun _ => codeEq_refl _)
 
 private theorem term_related_translates {E Ξ ρ n t u k} (valid : EnvironmentWF E)
     (h : TermRelated E Ξ ρ n t u k) : TermTranslates E Ξ ρ n t k := by
@@ -3358,10 +3370,9 @@ private theorem term_related_typing {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k)
       refine ⟨a, b, .letE tf ?_, .letE tg ?_, hab⟩
       · simpa only [Term.replace_beta] using ta
       · simpa only [Term.replace_beta] using tb
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       simp only [Term.replace]
       exact term_related_primrec (ihb locals parameters) (ihs locals parameters)
-        (iha locals parameters)
   | definition lookup arguments ih =>
       simpa only [Term.replace] using functions _ _ lookup Ω ρ n _ _ (ih locals parameters)
   | nil => exact .nil
@@ -3481,8 +3492,8 @@ private theorem term_related_eta {E Ξ ρ n t k f} {name : Lean.Name}
 
 private theorem term_related_zero {E Ξ ρ n b s f g}
     (base : TermTranslation E Ξ ρ n b 0 f) (step : TermTranslation E Ξ ρ n s 2 g) :
-    TermRelated E Ξ ρ n (.primrec b s .zero) b 0 := by
-  refine ⟨_, f, .primrec base step .zero, base, codeEq_of_apply (fun x v => ?_)⟩
+    TermRelated E Ξ ρ n (.app (.primrec b s) .zero) b 0 := by
+  refine ⟨_, f, .app (.primrec base step) .zero, base, codeEq_of_apply (fun x v => ?_)⟩
   have hx : x = Fin.elim0 := by funext i; exact Fin.elim0 i
   subst x
   apply PRA.QFProof.eq_trans_rule (recursion_apply _ _ _ _)
@@ -3497,10 +3508,10 @@ private theorem term_related_zero {E Ξ ρ n b s f g}
 private theorem term_related_successor {E Ξ ρ n b s a f g h}
     (base : TermTranslation E Ξ ρ n b 0 f) (step : TermTranslation E Ξ ρ n s 2 g)
     (argument : TermTranslation E Ξ ρ n a 0 h) :
-    TermRelated E Ξ ρ n (.primrec b s (.app .succ a))
-      (.app (.app s a) (.primrec b s a)) 0 := by
-  refine ⟨_, _, .primrec base step (.app .succ argument),
-    .app (.app step argument) (.primrec base step argument), codeEq_of_apply (fun x v => ?_)⟩
+    TermRelated E Ξ ρ n (.app (.primrec b s) (.app .succ a))
+      (.app (.app s a) (.app (.primrec b s) a)) 0 := by
+  refine ⟨_, _, .app (.primrec base step) (.app .succ argument),
+    .app (.app step argument) (.app (.primrec base step) argument), codeEq_of_apply (fun x v => ?_)⟩
   have hx : x = Fin.elim0 := by funext i; exact Fin.elim0 i
   subst x
   apply PRA.QFProof.eq_trans_rule (recursion_apply _ _ _ _)
@@ -3616,7 +3627,8 @@ private theorem term_related_conversion {E Ξ Γ a b k} (equality : TermEq E Ξ 
       have first := term_related_successor tb ts ta
       have second := term_related_app
         (term_related_app ⟨s, t, ts, tt, hst⟩ ⟨a, d, ta, td, had⟩)
-        (term_related_primrec ⟨b, c, tb, tc, hbc⟩ ⟨s, t, ts, tt, hst⟩ ⟨a, d, ta, td, had⟩)
+        (term_related_app (term_related_primrec ⟨b, c, tb, tc, hbc⟩ ⟨s, t, ts, tt, hst⟩)
+          ⟨a, d, ta, td, had⟩)
       simpa only [Term.replace] using term_related_trans first second
   | lam body ih =>
       simpa only [Term.replace] using term_related_lam
@@ -3632,9 +3644,9 @@ private theorem term_related_conversion {E Ξ Γ a b k} (equality : TermEq E Ξ 
       refine ⟨a, b, .letE tf ?_, .letE tg ?_, h'⟩
       · simpa only [Term.replace_beta] using ta
       · simpa only [Term.replace_beta] using tb
-  | primrec base step argument ihb ihs iha =>
+  | primrec base step ihb ihs =>
       simpa only [Term.replace] using term_related_primrec
-        (ihb locals parameters) (ihs locals parameters) (iha locals parameters)
+        (ihb locals parameters) (ihs locals parameters)
   | definition lookup arguments ih =>
       simpa only [Term.replace] using functions _ _ lookup Ω ρ n _ _ (ih locals parameters)
   | nil => exact .nil
@@ -4210,8 +4222,8 @@ private def TheoremsTranslate (E F : Environment) : Prop :=
       RelatedPredicateArguments F Ξ ρ π n ps ps d.predicates →
         ProvableTranslation F Ξ ρ π n [] (d.type.instantiate fs ps)
 
-private theorem proof_replaced_translation {E Ξ Γ H proof P}
-    (typed : ProofTyping E Ξ Γ H proof P) (validE : EnvironmentWF E)
+private theorem derivation_replaced_translation {E Ξ Γ H P}
+    (typed : Derivation E Ξ Γ H P) (validE : EnvironmentWF E)
     {F} (valid : EnvironmentWF F) (ext : EnvironmentExtends E F)
     (theorems : TheoremsTranslate E F)
     {Ω} {ρ : FunctionAssignment Ω.functions} {π : PredicateAssignment Ω.predicates} :
@@ -4530,7 +4542,8 @@ private theorem theorems_translate {E} (valid : EnvironmentWF E) :
         subst e
         cases declaration with
         | theoremE type body =>
-            have proof := proof_replaced_translation body previous valid older earlier
+            have proof := derivation_replaced_translation (body.toDerivation previous)
+              previous valid older earlier
               n Term.bvar _ _ (by intro i k hi; simp at hi)
               (related_arguments_bindings actuals)
               (related_predicate_arguments_bindings predicateActuals) [] (by simp)
@@ -4554,7 +4567,8 @@ private theorem proofTranslation_sound {E p P} {Ξ : ParameterContext}
       Predicate.parameter Predicate.parameter := by
     intro i σ hi
     exact predicate_related_refl (.parameter hi (.inr rfl))
-  have proof := proof_replaced_translation typed valid valid (fun _ _ h => h)
+  have proof := derivation_replaced_translation (typed.toDerivation valid)
+    valid valid (fun _ _ h => h)
     (theorems_translate valid E valid (fun _ _ h => h))
     0 Term.bvar Term.parameter Predicate.parameter (by intro i k hi; simp at hi)
     parameters predicates [] (by simp)

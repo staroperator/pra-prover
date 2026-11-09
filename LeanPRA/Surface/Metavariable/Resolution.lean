@@ -38,11 +38,10 @@ def renameTerm (source target : List Nat) (depth : Nat) : Term → Except Failur
     return (.letE n
       (← renameTerm source target depth a)
       (← renameTerm source target (depth + 1) b))
-  | .primrec b s n =>
+  | .primrec b s =>
     return (.primrec
       (← renameTerm source target depth b)
-      (← renameTerm source target depth s)
-      (← renameTerm source target depth n))
+      (← renameTerm source target depth s))
   | .definition n fs => return .definition n (← fs.mapM (renameTerm source target depth))
   | t => pure t
 end
@@ -73,11 +72,10 @@ def resolveTerm (state : State) (locals : List Nat) : Nat → Term → Except Fa
       return (.letE n
         (← resolveTerm state locals fuel a)
         (← resolveTerm state (0 :: locals) fuel b))
-    | .primrec b s n =>
+    | .primrec b s =>
       return (.primrec
         (← resolveTerm state locals fuel b)
-        (← resolveTerm state locals fuel s)
-        (← resolveTerm state locals fuel n))
+        (← resolveTerm state locals fuel s))
     | .definition n fs => return .definition n (← fs.mapM (resolveTerm state locals fuel))
     | _ => pure t
 
@@ -175,7 +173,6 @@ def renamePredicate (source target : List Nat) (depth : Nat) :
   | p => pure p
 end
 
-
 private def checkProofContext (state : State) (locals : List Nat) (hypotheses : Nat) (p : Proof) :
     Except Failure Unit := do
   let term (t : Term) : Except Failure Unit := do
@@ -197,26 +194,11 @@ private def checkProofContext (state : State) (locals : List Nat) (hypotheses : 
   | .forallIntro _ a p =>
     pred a
     checkProofContext state (0 :: locals) hypotheses p
-  | .orElim _ _ a p q r =>
-    pred a
-    checkProofContext state locals hypotheses p
-    checkProofContext state locals (hypotheses + 1) q
-    checkProofContext state locals (hypotheses + 1) r
   | .letE _ a p q =>
     pred a
     checkProofContext state locals hypotheses p
     checkProofContext state locals (hypotheses + 1) q
-  | .existsElim _ _ a p q =>
-    pred a
-    checkProofContext state locals hypotheses p
-    checkProofContext state (0 :: locals) (hypotheses + 1) q
-  | .induction _ _ a p q t =>
-    pred a
-    term t
-    checkProofContext state locals hypotheses p
-    checkProofContext state (0 :: locals) (hypotheses + 1) q
-  | .andLeft p | .andRight p | .succInj p => checkProofContext state locals hypotheses p
-  | .orLeft a p | .orRight a p | .falseElim a p | .letPredicate _ a p | .ascribe a p =>
+  | .letPredicate _ a p | .ascribe a p =>
     pred a
     checkProofContext state locals hypotheses p
   | .forallElim p t | .letTerm _ t p =>
@@ -229,16 +211,19 @@ private def checkProofContext (state : State) (locals : List Nat) (hypotheses : 
   | .impElim p q | .andIntro p q =>
     checkProofContext state locals hypotheses p
     checkProofContext state locals hypotheses q
-  | .eqSubst a p q =>
-    pred a
-    checkProofContext state locals hypotheses p
-    checkProofContext state locals hypotheses q
-  | .eqRefl t | .succNeZero t => term t
   | .lem p => pred p
   | .theoremE _ ts ps =>
     for t in ts do term t
     for p in ps do pred p
-  | .trueIntro => pure ()
+  | .andLeft a b | .andRight a b | .orLeft a b | .orRight a b | .existsElim a b =>
+    pred a
+    pred b
+  | .orElim a b c =>
+    pred a
+    pred b
+    pred c
+  | .falseElim a | .eqSubst a | .induction a => pred a
+  | .trueIntro | .eqRefl | .succNeZero | .succInj => pure ()
 
 /-- Resolve proof assignments and embedded numerical and predicate assignments. Each proof
 metavariable is resolved in its creation context, then instantiated with the occurrence's context
@@ -261,7 +246,6 @@ where
       let proof := go visiting locals hypotheses fuel
       let hypothesis := go visiting locals (hypotheses + 1) fuel
       let numerical := go visiting (0 :: locals) hypotheses fuel
-      let both := go visiting (0 :: locals) (hypotheses + 1) fuel
       match p with
       | .mvar id ts ps =>
         if visiting.contains id then throw (.invalid "cyclic proof metavariable assignment")
@@ -283,27 +267,26 @@ where
       | .impIntro n a p => return .impIntro n (← pred a) (← hypothesis p)
       | .impElim p q => return .impElim (← proof p) (← proof q)
       | .andIntro p q => return .andIntro (← proof p) (← proof q)
-      | .andLeft p => return .andLeft (← proof p)
-      | .andRight p => return .andRight (← proof p)
-      | .orLeft a p => return .orLeft (← pred a) (← proof p)
-      | .orRight a p => return .orRight (← pred a) (← proof p)
-      | .orElim l r a p q s =>
-        return .orElim l r (← pred a) (← proof p) (← hypothesis q) (← hypothesis s)
-      | .falseElim a p => return .falseElim (← pred a) (← proof p)
+      | .andLeft a b => return .andLeft (← pred a) (← pred b)
+      | .andRight a b => return .andRight (← pred a) (← pred b)
+      | .orLeft a b => return .orLeft (← pred a) (← pred b)
+      | .orRight a b => return .orRight (← pred a) (← pred b)
+      | .orElim a b c => return .orElim (← pred a) (← pred b) (← pred c)
+      | .falseElim a => return .falseElim (← pred a)
       | .forallIntro n a p => return .forallIntro n (← pred a) (← numerical p)
       | .forallElim p a => return .forallElim (← proof p) (← term a)
       | .existsIntro a t p => return .existsIntro (← pred a) (← term t) (← proof p)
-      | .existsElim n h a p q => return .existsElim n h (← pred a) (← proof p) (← both q)
+      | .existsElim a b => return .existsElim (← pred a) (← pred b)
       | .letE n a p q => return .letE n (← pred a) (← proof p) (← hypothesis q)
       | .letTerm n a p => return .letTerm n (← term a) (← proof p)
       | .letPredicate n a p => return .letPredicate n (← pred a) (← proof p)
       | .ascribe a p => return .ascribe (← pred a) (← proof p)
-      | .eqRefl t => return .eqRefl (← term t)
-      | .eqSubst a p q => return .eqSubst (← pred a) (← proof p) (← proof q)
-      | .succNeZero t => return .succNeZero (← term t)
-      | .succInj p => return .succInj (← proof p)
+      | .eqRefl => return .eqRefl
+      | .eqSubst a => return .eqSubst (← pred a)
+      | .succNeZero => return .succNeZero
+      | .succInj => return .succInj
       | .lem a => return .lem (← pred a)
-      | .induction n h a b s t => return .induction n h (← pred a) (← proof b) (← both s) (← term t)
+      | .induction a => return .induction (← pred a)
       | .hyp i =>
         unless i < hypotheses do throw (.invalid "unbound proof hypothesis")
         pure p
@@ -312,14 +295,12 @@ where
 /-- Proof metavariable references occurring in a proof and its context arguments. -/
 def proofMetas : Proof → List Nat
   | .mvar id _ ps => id :: ps.flatMap proofMetas
-  | .impIntro _ _ p | .andLeft p | .andRight p | .orLeft _ p
-  | .orRight _ p | .falseElim _ p | .forallIntro _ _ p | .forallElim p _
-  | .existsIntro _ _ p | .letTerm _ _ p | .letPredicate _ _ p | .ascribe _ p
-  | .succInj p => proofMetas p
-  | .impElim p q | .andIntro p q | .existsElim _ _ _ p q | .letE _ _ p q
-  | .eqSubst _ p q | .induction _ _ _ p q _ => proofMetas p ++ proofMetas q
-  | .orElim _ _ _ p q r => proofMetas p ++ proofMetas q ++ proofMetas r
-  | .hyp _ | .trueIntro | .theoremE .. | .eqRefl _ | .succNeZero _ | .lem _ => []
+  | .impIntro _ _ p | .forallIntro _ _ p | .forallElim p _
+  | .existsIntro _ _ p | .letTerm _ _ p | .letPredicate _ _ p | .ascribe _ p => proofMetas p
+  | .impElim p q | .andIntro p q | .letE _ _ p q => proofMetas p ++ proofMetas q
+  | .hyp _ | .trueIntro | .theoremE .. | .eqRefl | .succNeZero | .succInj
+  | .andLeft .. | .andRight .. | .orLeft .. | .orRight .. | .orElim ..
+  | .falseElim .. | .existsElim .. | .eqSubst .. | .lem _ | .induction _ => []
 
 /-- Assign a proof in its recorded context, checking proof-reference scopes and rejecting
 duplicate assignments and cycles.

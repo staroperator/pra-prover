@@ -42,24 +42,27 @@ private theorem blocked_preserved {n E t u} (head : TermWhnf t) (blocked : TermB
       obtain ⟨w, hw, run⟩ := run
       have := whnfTerm_fixed head hw
       subst w
-      cases t <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+      cases t <;> simp only [pure, Except.pure,
         Except.ok.injEq, fail] at run <;> try contradiction
       case zero => exact False.elim (blocked.1 rfl)
       case app f a =>
-        obtain ⟨g, hg, b, hb, rfl⟩ := run
-        cases head with
-        | app hf notLam =>
-            constructor
-            · intro h; cases h
-            · intro p h
-              have eqg := (Term.app.inj h).1
-              have eqf := (neutral_succ hf hg).mp eqg
-              exact blocked.2 a (by rw [eqf])
-      case primrec b s a =>
-        obtain ⟨c, hc, v, hv, m, hm, rfl⟩ := run
-        constructor
-        · intro h; cases h
-        · intro p h; cases h
+        cases f <;> simp only [CheckResult.bind_eq_ok,
+          Except.ok.injEq] at run
+        case primrec base step =>
+          obtain ⟨b, hb, s, hs, a', ha, rfl⟩ := run
+          constructor
+          · intro h; cases h
+          · intro p h; cases h
+        all_goals
+          obtain ⟨g, hg, b, hb, rfl⟩ := run
+          cases head with
+          | app hf notLam notRec =>
+              constructor
+              · intro h; cases h
+              · intro p h
+                have eqg := (Term.app.inj h).1
+                have eqf := (neutral_succ hf hg).mp eqg
+                exact blocked.2 a (by rw [eqf])
       all_goals
         subst u
         constructor
@@ -85,20 +88,24 @@ private theorem term_normal (n : Nat) :
             simp only [reduceTerm, CheckResult.bind_eq_ok] at run
             obtain ⟨w, hw, run⟩ := run
             have head := whnfTerm_normal hw
-            cases w <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+            cases w <;> simp only [pure, Except.pure,
               Except.ok.injEq, fail] at run <;> try contradiction
             case bvar i => subst u; exact .bvar
             case parameter i => subst u; exact .parameter
             case zero => subst u; exact .zero
             case app f a =>
-              obtain ⟨g, hg, b, hb, rfl⟩ := run
-              exact .app (ih.2 hg) (ih.1 hb)
-            case primrec b s a =>
-              obtain ⟨c, hc, v, hv, m, hm, rfl⟩ := run
-              cases head with
-              | primrec argument blocked =>
-                  exact .primrec (ih.1 hc) (ih.1 hv) (ih.1 hm)
-                    (blocked_preserved argument blocked hm)
+              cases f <;> simp only [CheckResult.bind_eq_ok,
+                Except.ok.injEq] at run
+              case primrec base step =>
+                obtain ⟨b, hb, s, hs, a', ha, rfl⟩ := run
+                cases head with
+                | app _ _ notRec => exact False.elim (notRec _ _ rfl)
+                | primrec argument blocked =>
+                    exact .primrec (ih.1 hb) (ih.1 hs) (ih.1 ha)
+                      (blocked_preserved argument blocked ha)
+              all_goals
+                obtain ⟨g, hg, b, hb, rfl⟩ := run
+                exact .app (ih.2 hg) (ih.1 hb)
       · intro E t u run
         simp only [reduceTermNeutral, CheckResult.bind_eq_ok] at run
         obtain ⟨w, hw, run⟩ := run

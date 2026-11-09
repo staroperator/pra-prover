@@ -52,25 +52,28 @@ private theorem term_whnf_correct {n E Ξ Γ t u k} (valid : EnvironmentWF E)
               have : k = j := Nat.succ.inj hj
               subst j
               exact .trans congr (.trans (.beta hb ha) (ih (hb.subst0 ha) run))
-          | _ =>
-              simp only [pure, Except.pure, Except.ok.injEq] at run
-              subst u
-              exact congr
-      | primrec b s a =>
-          obtain ⟨rfl, hb, hs, ha⟩ := typed.inv_primrec
-          simp only [whnfTerm, CheckResult.bind_eq_ok] at run
-          obtain ⟨m, hm, run⟩ := run
-          have eqa := ih ha hm
-          have tm := eqa.regularity.2
-          have congr := TermEq.primrec (.refl hb) (.refl hs) eqa
-          cases m with
-          | zero => exact .trans congr (.trans (.primrecZero hb hs) (ih hb run))
-          | app f p =>
-              cases f with
-              | succ =>
-                  have hp := tm.inv_app.2
-                  exact .trans congr (.trans (.primrecSucc hb hs hp)
-                    (ih (.app (.app hs hp) (.primrec hb hs hp)) run))
+          | primrec b s =>
+              have arity : k + 1 = 1 := tg.inv_primrec.1
+              have : k = 0 := Nat.add_right_cancel arity
+              subst k
+              obtain ⟨_, hb, hs⟩ := tg.inv_primrec
+              simp only [CheckResult.bind_eq_ok] at run
+              obtain ⟨m, hm, run⟩ := run
+              have eqa := ih ha hm
+              have tm := eqa.regularity.2
+              have congr := congr.trans (.app (.refl tg) eqa)
+              cases m with
+              | zero => exact .trans congr (.trans (.primrecZero hb hs) (ih hb run))
+              | app f p =>
+                  cases f with
+                  | succ =>
+                      have hp := tm.inv_app.2
+                      exact .trans congr (.trans (.primrecSucc hb hs hp)
+                        (ih (.app (.app hs hp) (.app (.primrec hb hs) hp)) run))
+                  | _ =>
+                      simp only [pure, Except.pure, Except.ok.injEq] at run
+                      subst u
+                      exact congr
               | _ =>
                   simp only [pure, Except.pure, Except.ok.injEq] at run
                   subst u
@@ -108,18 +111,22 @@ private theorem term_reduce_correct (n : Nat) (E : Environment) (valid : Environ
             obtain ⟨m, hm, run⟩ := run
             have eqm := term_whnf_correct valid typed hm
             have tm := eqm.regularity.2
-            cases m <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+            cases m <;> simp only [pure, Except.pure,
               Except.ok.injEq, fail] at run <;> try contradiction
             case bvar i => subst u; exact eqm
             case parameter i => subst u; exact eqm
             case zero => subst u; exact eqm
             case app f a =>
-              obtain ⟨g, hg, b, hb, rfl⟩ := run
-              exact .trans eqm (.app (ih.2 tm.inv_app.1 hg) (ih.1 tm.inv_app.2 hb))
-            case primrec b s a =>
-              obtain ⟨c, hc, v, hv, m, hm, rfl⟩ := run
-              obtain ⟨_, hb, hs, ha⟩ := tm.inv_primrec
-              exact .trans eqm (.primrec (ih.1 hb hc) (ih.1 hs hv) (ih.1 ha hm))
+              cases f <;> simp only [CheckResult.bind_eq_ok,
+                Except.ok.injEq] at run
+              case primrec base step =>
+                obtain ⟨b, hb, s, hs, a', ha, rfl⟩ := run
+                obtain ⟨_, tb, ts⟩ := tm.inv_app.1.inv_primrec
+                exact .trans eqm (.app (.primrec (ih.1 tb hb) (ih.1 ts hs))
+                  (ih.1 tm.inv_app.2 ha))
+              all_goals
+                obtain ⟨g, hg, b, hb, rfl⟩ := run
+                exact .trans eqm (.app (ih.2 tm.inv_app.1 hg) (ih.1 tm.inv_app.2 hb))
       · intro Ξ Γ t u k typed run
         simp only [reduceTermNeutral, CheckResult.bind_eq_ok] at run
         obtain ⟨m, hm, run⟩ := run

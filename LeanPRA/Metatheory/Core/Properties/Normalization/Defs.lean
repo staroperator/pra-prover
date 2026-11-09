@@ -30,8 +30,10 @@ inductive TermWhnf : Term → Prop where
   | zero : TermWhnf .zero
   | succ : TermWhnf .succ
   | lam : TermWhnf (.lam binderName t)
-  | app (function : TermWhnf f) (notLam : ∀ t n, f ≠ .lam n t) : TermWhnf (.app f a)
-  | primrec (argument : TermWhnf a) (blocked : TermBlocked a) : TermWhnf (.primrec b s a)
+  | recursor : TermWhnf (.primrec b s)
+  | app (function : TermWhnf f) (notLam : ∀ t n, f ≠ .lam n t)
+      (notRec : ∀ b s, f ≠ .primrec b s) : TermWhnf (.app f a)
+  | primrec (argument : TermWhnf a) (blocked : TermBlocked a) : TermWhnf (.app (.primrec b s) a)
 
 /-- A local, function parameter, or successor followed by possibly unreduced arguments. -/
 inductive TermApplications : Term → Prop where
@@ -50,7 +52,8 @@ public theorem TermApplications.whnf {t} (h : TermApplications t) : TermWhnf t :
   | bvar => exact .bvar
   | parameter => exact .parameter
   | succ => exact .succ
-  | app f ih => exact .app ih (applications_not_lam f)
+  | app f ih =>
+      exact .app ih (applications_not_lam f) (by intro b s h; cases f <;> cases h)
 
 /-- Local renaming preserves the head's kind and the number of applications. -/
 public theorem TermApplications.rename {t} (h : TermApplications t) (r : Renaming) :
@@ -70,7 +73,7 @@ inductive TermNormal : Arity → Term → Prop where
   | parameter : TermNormal 0 (.parameter i)
   | app (function : TermNeutral f) (argument : TermNormal 0 a) : TermNormal 0 (.app f a)
   | primrec (base : TermNormal 0 b) (step : TermNormal 2 s) (argument : TermNormal 0 a)
-      (blocked : TermBlocked a) : TermNormal 0 (.primrec b s a)
+      (blocked : TermBlocked a) : TermNormal 0 (.app (.primrec b s) a)
   | lam (body : TermNormal k t) : TermNormal (k + 1) (.lam .anonymous t)
 
 /-- A term application chain headed by a local, a function parameter, or successor. -/

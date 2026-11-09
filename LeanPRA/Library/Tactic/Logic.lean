@@ -186,7 +186,7 @@ def evalLogical : Tactic := fun stx => do
   | `(praTactic| rfl) =>
     let goal ← getGoal
     let .equal lhs _ ← headPredicate goal goal.target | throwError "rfl expects an equality goal"
-    Tactic.close (.eqRefl lhs)
+    Tactic.close (.forallElim .eqRefl lhs)
   | `(praTactic| exfalso) => Tactic.refine (← `(praExpr| false_elim ?_))
   | `(praTactic| by_contra $[$name:ident]?) =>
     let goal ← getGoal

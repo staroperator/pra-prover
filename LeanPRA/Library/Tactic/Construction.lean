@@ -33,11 +33,10 @@ def numeral : Nat → Term
   | 0 => .zero
   | n + 1 => .app .succ (numeral n)
 
-/-- Read the `Nat` value of a numeral built from `0` and `succ` or `S`. -/
+/-- Read the `Nat` value of a numeral built from `0` and `succ`. -/
 def numeralValue? : Term → Option Nat
   | .zero => some 0
   | .app .succ n => (numeralValue? n).map (· + 1)
-  | .app (.definition `S []) n => (numeralValue? n).map (· + 1)
   | _ => none
 
 /-- Apply a named PRA function to its declaration parameters and numerical arguments. -/
@@ -78,7 +77,7 @@ partial def proveArithmeticLe (a b : Term) : CommandElabM Proof := do
   if numeralValue? a == some 0 then return applyTheorem `zero_le [b]
   if let some x := numeralValue? a then
     if let some y := numeralValue? b then
-      if x ≤ y then return .eqRefl (numeral 0)
+      if x ≤ y then return .forallElim .eqRefl (numeral 0)
   let (bh, bs) := getAppFnArgs b
   let (ah, as) := getAppFnArgs a
   let trans (mid : Term) (h : Proof) : CommandElabM Proof := do
@@ -117,7 +116,7 @@ partial def proveArithmeticLe (a b : Term) : CommandElabM Proof := do
       if let some k := numeralValue? x then
         if k > 0 then
           return ← trans y (applyTheorem `le_mul_of_pos [y, x] []
-            [applyTheorem `succ_ne_zero [numeral (k - 1)]])
+            [.forallElim .succNeZero (numeral (k - 1))])
       throwError "cannot establish multiplication bound"
     | `S, [x] => return ← trans x (applyTheorem `le_succ_self [x])
     | _, _ => pure ()

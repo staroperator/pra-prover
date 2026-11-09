@@ -86,15 +86,14 @@ private theorem infer_correct {n E c t k} (run : inferTerm n E c t = .ok k) :
         simp only [CheckResult.bind_eq_ok] at run
         obtain ⟨j, hj, hb⟩ := run
         exact .letE (ih hj) (ih hb)
-      case primrec b s a =>
+      case primrec b s =>
         simp only [CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok, pure,
           Except.pure, Except.ok.injEq] at run
-        obtain ⟨⟨⟩, ⟨j, hj, hbc⟩, ⟨⟩, ⟨l, hl, hsc⟩, ⟨⟩, ⟨m, hm, hac⟩, rfl⟩ := run
+        obtain ⟨⟨⟩, ⟨j, hj, hbc⟩, ⟨⟩, ⟨l, hl, hsc⟩, rfl⟩ := run
         have := checkArity_sound hbc
         have := checkArity_sound hsc
-        have := checkArity_sound hac
-        subst j; subst l; subst m
-        exact .primrec (ih hj) (ih hl) (ih hm)
+        subst j; subst l
+        exact .primrec (ih hj) (ih hl)
       case definition name fs =>
         split at run
         next d lookup =>

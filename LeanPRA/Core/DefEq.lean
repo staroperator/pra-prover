@@ -41,7 +41,7 @@ public def exposeTerm : Nat → Bool → Term → CheckResult (Option Term)
   | depth + 1, changed, expression => do
     match expression with
     | .letE _ value body => exposeTerm depth true (body.subst0 value)
-    | .primrec base _ .zero => exposeTerm depth true base
+    | .app (.primrec base _) .zero => exposeTerm depth true base
     | .app function argument =>
       let computed ← exposeTerm depth false function
       match computed.getD function with
@@ -69,13 +69,13 @@ Return `none` when the input is unchanged. -/
 @[expose]
 public def exposeRecursor (depth : Nat) (environment : Environment) :
     Term → CheckResult (Option Term)
-  | .primrec base step argument => do
+  | .app (.primrec base step) argument => do
     let value ← whnfTerm depth environment argument
     match value with
     | .zero => exposeTerm depth true base
     | .app .succ predecessor =>
-      exposeTerm depth true (.app (.app step predecessor) (.primrec base step predecessor))
-    | _ => pure (if value == argument then none else some (.primrec base step value))
+      exposeTerm depth true (.app (.app step predecessor) (.app (.primrec base step) predecessor))
+    | _ => pure (if value == argument then none else some (.app (.primrec base step) value))
   | _ => pure none
 
 mutual
@@ -93,7 +93,8 @@ public def defEqTerm : Nat → Environment → Arity → Term → Term → Check
       match arity with
       | k + 1 => return ← defEqTerm depth environment k a b
       | 0 => return false
-    | .primrec a _ .zero, .primrec b _ .zero => return ← defEqTerm depth environment 0 a b
+    | .app (.primrec a _) .zero, .app (.primrec b _) .zero =>
+      return ← defEqTerm depth environment 0 a b
     | _, _ => pure ()
     let structural : CheckResult Bool := do
       match left, right with
@@ -101,10 +102,8 @@ public def defEqTerm : Nat → Environment → Arity → Term → Term → Check
         if ← compareTermApplications depth environment (arity + 1) f g then
           defEqTerm depth environment 0 a b
         else pure false
-      | .primrec a s n, .primrec b t m =>
-        if ← defEqTerm depth environment 0 a b then
-          if ← defEqTerm depth environment 2 s t then defEqTerm depth environment 0 n m
-          else pure false
+      | .primrec a s, .primrec b t =>
+        if ← defEqTerm depth environment 0 a b then defEqTerm depth environment 2 s t
         else pure false
       | .definition f as, .definition g bs =>
         if f != g then return false
@@ -126,17 +125,17 @@ public def defEqTerm : Nat → Environment → Arity → Term → Term → Check
       if a.isSome || b.isSome then
         return ← defEqTerm depth environment 0 (a.getD left) (b.getD right)
       match left, right with
-      | .primrec .., .primrec .. =>
+      | .app (.primrec ..) _, .app (.primrec ..) _ =>
         let a ← exposeRecursor (depth + 1) environment left
         let b ← exposeRecursor (depth + 1) environment right
         match a, b with
         | none, none => structural
         | _, _ => defEqTerm depth environment 0 (a.getD left) (b.getD right)
-      | .primrec .., _ =>
+      | .app (.primrec ..) _, _ =>
         let value ← whnfTerm (depth + 1) environment left
         if value == left then return ← structural
         defEqTerm depth environment 0 value right
-      | _, .primrec .. =>
+      | _, .app (.primrec ..) _ =>
         let value ← whnfTerm (depth + 1) environment right
         if value == right then return ← structural
         defEqTerm depth environment 0 left value
@@ -155,6 +154,9 @@ public def compareTermApplications : Nat → Environment → Arity → Term → 
     | .app f a, .app g b =>
       if ← compareTermApplications depth environment (arity + 1) f g then
         defEqTerm depth environment 0 a b
+      else pure false
+    | .primrec a s, .primrec b t =>
+      if ← defEqTerm depth environment 0 a b then defEqTerm depth environment 2 s t
       else pure false
     | .definition f as, .definition g bs =>
       if f != g then return false

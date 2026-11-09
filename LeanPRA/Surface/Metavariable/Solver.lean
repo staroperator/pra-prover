@@ -211,6 +211,20 @@ private def solveTerm : Nat → Nat → Environment → Context → List Nat →
             if (← get).revision != revision then
               modify fun s => { s with usedHeuristic := true }
             return true
+    if let .primrec base step := head then
+      if let .primrec base' step' := head' then
+        if args.length == args'.length && (← get).allowHeuristics then
+          let revision := (← get).revision
+          let solved ← tryCongruence do
+            unless ← solveTerm fuel depth env ctx locals 0 base base' do return false
+            unless ← solveTerm fuel depth env ctx locals 2 step step' do return false
+            for (a, b) in args.zip args' do
+              unless ← solveTerm fuel depth env ctx locals 0 a b do return false
+            return true
+          if solved then
+            if (← get).revision != revision then
+              modify fun s => { s with usedHeuristic := true }
+            return true
     if arity > 0 then
       match left, right with
       | .lam _ a, .lam _ b =>
@@ -234,15 +248,14 @@ private def solveTerm : Nat → Nat → Environment → Context → List Nat →
       return ← solveTerm fuel depth env ctx locals arity left exposed
     if let some error := assignmentFailure then throw error
     match left, right with
-    | .primrec base step n, .primrec base' step' n' =>
+    | .primrec base step, .primrec base' step' =>
       let state ← get
       if !(termMetas left ++ termMetas right).isEmpty then
         unless state.allowHeuristics do return false
         let solved ← tryCongruence do
           let baseSolved ← solveTerm fuel depth env ctx locals 0 base base'
           let stepSolved ← solveTerm fuel depth env ctx locals 2 step step'
-          let inputSolved ← solveTerm fuel depth env ctx locals 0 n n'
-          return baseSolved && stepSolved && inputSolved
+          return baseSolved && stepSolved
         if solved then modify fun s => { s with usedHeuristic := true }
         return solved
     | _, _ => pure ()
@@ -330,7 +343,6 @@ private def solvePredicate : Nat → Nat → Environment → Context → List Na
     if !(a.1 ++ b.1).isEmpty || !(a.2 ++ b.2).isEmpty then return false
     checked (Bridge.equalPredicates (← get).projection depth env arity left right)
     return true
-
 
 end
 

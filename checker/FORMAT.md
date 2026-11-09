@@ -5,7 +5,7 @@
 Specifications use `.pra` and object files use `.prao`, where `o` stands for an object file. Paths
 follow Lean's module hierarchy: for example, `LeanPRA.Library.Nat.Defs` produces
 `LeanPRA/Library/Nat/Defs.pra` and `LeanPRA/Library/Nat/Defs.prao` under the output directory.
-Builtin declarations use `PRA/Builtins.pra` and `PRA/Builtins.prao`.
+Primitive operations appear directly in expressions.
 
 Other proof systems use similar pairs: [Metamath Zero](https://github.com/digama0/mm0) pairs `.mm0`
 specifications with `.mmb` binary proofs and `.mmu` text proofs, and
@@ -53,7 +53,8 @@ succ                           -- successor function
 (f x y)                        -- numerical application
 (fun (x : Nat) => BODY)         -- numerical lambda
 (let f := VALUE; BODY)          -- local term binding (number or function)
-(primrec BASE STEP ARGUMENT)    -- primitive recursion
+(primrec BASE STEP)             -- unary primitive-recursion function
+((primrec BASE STEP) ARGUMENT)  -- its numerical application
 @Definition[FUNCTION_ACTUALS]   -- function definition reference
 ```
 
@@ -127,8 +128,8 @@ All remaining term, predicate, and proof constructors match
 `modules.txt` lists each module once in dependency order. Each dot-separated component of a module
 name must be non-empty and free of path separators (`/`, `\`, `:`). For each module in
 `modules.txt`, the checker opens `<module>.pra` and `<module>.prao` and reads declarations in
-lockstep until both files end. `PRA.Builtins` is checked first from an empty environment like any
-other module. Global references may refer only to declarations admitted earlier.
+lockstep until both files end, starting from an empty environment. Global references may refer
+only to declarations admitted earlier.
 
 ## Binary encoding (`.prao`)
 

@@ -42,35 +42,51 @@ private theorem proof_regularity {E Ξ Γ H p A} (valid : EnvironmentWF E)
       obtain ⟨s, ha, hb, sub⟩ := PredicateTyping.inv_imp (ihf context)
       exact .subsumption hb sub
   | andIntro a b iha ihb => exact .and (iha context) (ihb context)
-  | andLeft pair ih =>
-      obtain ⟨s, ha, hb, sub⟩ := PredicateTyping.inv_and (ih context)
-      exact .subsumption ha sub
-  | andRight pair ih =>
-      obtain ⟨s, ha, hb, sub⟩ := PredicateTyping.inv_and (ih context)
-      exact .subsumption hb sub
-  | orLeft other proof ih => exact .or (ih context) other
-  | orRight other proof ih => exact .or other (ih context)
-  | orElim target scrutinee left right ihp ihl ihr => exact target
-  | falseElim target proof ih => exact target
+  | andLeft a b =>
+      exact .imp (.and a b) a
+  | andRight a b =>
+      exact .imp (.and a b) b
+  | orLeft a b =>
+      exact .imp a (.or a b)
+  | orRight a b =>
+      exact .imp b (.or a b)
+  | orElim a b c =>
+      exact .imp (.or a b) (.imp (.imp a c) (.imp (.imp b c) c))
+  | falseElim a =>
+      exact .imp (.subsumption .false .lift) a
   | forallIntro motive body ih => exact .all motive
   | forallElim proof argument ih =>
       exact .app (PredicateTyping.inv_all (ih context)).2 argument
   | existsIntro motive witness proof ih => exact .ex motive
-  | existsElim target scrutinee body ihp ihb => exact target
+  | existsElim motive target =>
+      exact .imp (.ex motive) (.imp (.all (.lam (.imp
+        (.app (PredicateTyping.shift valid motive 0) (.bvar rfl))
+        (PredicateTyping.shift valid target 0)))) target)
   | letE type value body ihv ihb => exact ihb (.cons type context)
   | letTerm value body ih => exact ih context
   | letPredicate value body ih => exact ih context
   | ascribe type proof ih => exact type
-  | eqRefl term => exact .subsumption (.equal term term) .lift
-  | eqSubst motive equality proof ihe ihp =>
-      exact .app motive (PredicateTyping.inv_equal (ihe context)).2.1
-  | succNeZero term =>
-      exact .imp (.subsumption (.equal (.app .succ term) .zero) .lift) (.subsumption .false .lift)
-  | succInj proof ih =>
-      obtain ⟨left, right, sub⟩ := PredicateTyping.inv_equal (ih context)
-      exact .subsumption (.equal (TermTyping.inv_app left).2 (TermTyping.inv_app right).2) .lift
+  | eqRefl =>
+      exact .all (.lam (.subsumption (.equal (.bvar rfl) (.bvar rfl)) .lift))
+  | eqSubst motive =>
+      have shifted := PredicateTyping.rename valid motive (Δ := 0 :: 0 :: _)
+        (fun i => i + 2) (by intro i k h; exact h)
+      exact .all (.lam (.all (.lam (.imp
+        (.subsumption (.equal (.bvar rfl) (.bvar rfl)) .lift)
+        (.imp (.app shifted (.bvar rfl)) (.app shifted (.bvar rfl)))))))
+  | succNeZero =>
+      exact .all (.lam (.imp (.subsumption (.equal (.app .succ (.bvar rfl)) .zero) .lift)
+        (.subsumption .false .lift)))
+  | succInj =>
+      exact .all (.lam (.all (.lam (.imp
+        (.subsumption (.equal (.app .succ (.bvar rfl)) (.app .succ (.bvar rfl))) .lift)
+        (.subsumption (.equal (.bvar rfl) (.bvar rfl)) .lift)))))
   | lem formula => exact .or formula (.imp formula (.subsumption .false .lift))
-  | induction motive base step argument ihb ihs => exact .subsumption (.app motive argument) .lift
+  | induction motive =>
+      have motive := PredicateTyping.subsumption motive PredicateSubtyping.lift
+      have shifted := PredicateTyping.shift valid motive 0
+      exact .imp (.app motive .zero) (.imp (.all (.lam (.imp
+        (.app shifted (.bvar rfl)) (.app shifted (.app .succ (.bvar rfl)))))) (.all motive))
   | conversion proof type ih => exact (PredicateEq.regularity valid type).2
 
 /-- A valid hypothesis is an arity-zero predicate of sort Prop. -/

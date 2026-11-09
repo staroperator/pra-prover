@@ -207,10 +207,11 @@ def addUnresolvedInfo (stx : Syntax) : CommandElabM Unit :=
   addInfo stx none none
 
 /-- Attach the hover signature, documentation, and go-to-definition target for `d` to `stx`. -/
-def addDeclarationInfo (stx : Syntax) (d : Core.Declaration) : CommandElabM Unit := do
+def addDeclarationInfo (stx : Syntax) (d : DeclarationSignature) : CommandElabM Unit := do
   unless (← getInfoState).enabled do return
   try
     let text ← (← delabSignature d).toString
+    let text := if (primitiveDeclaration? d.name).isSome then s!"primitive {text}" else text
     let metadata := ((declarationMetadata.getState (← getEnv)).find? d.name).getD {}
     addInfo stx text metadata.location? (metadata.doc?.getD "")
   catch ex =>

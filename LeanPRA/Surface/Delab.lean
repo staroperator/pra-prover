@@ -91,7 +91,7 @@ private def applyExpr (f a : TSyntax `praExpr) : CommandElabM (TSyntax `praExpr)
 private def applyParameters (names : Names) (name : Name) (fs ps : List (TSyntax `praExpr)) :
     CommandElabM (TSyntax `praExpr) := do
   let environment := CoreEnvironment.getState (← getEnv)
-  let parameters ← match environment.lookup name with
+  let parameters ← match lookupSignature environment name with
     | some (.predicate d) => pure d.parameters
     | some (.theoremE d) => pure d.parameters
     | _ => throwError "cannot find predicate/theorem signature for printing `{name}`"
@@ -101,7 +101,7 @@ private def applyParameters (names : Names) (name : Name) (fs ps : List (TSyntax
   let implicitParameters := parameters.any fun
     | .function info _ | .predicate info _ => info.isImplicit
   let depth := pra.maxDepth.get (← getOptions)
-  let implicitUniversals := match environment.lookup name with
+  let implicitUniversals := match lookupSignature environment name with
     | some (.theoremE d) => Metavariable.Frontend.hasImplicitBinders depth environment d.type
     | _ => false
   if implicitParameters || implicitUniversals then
@@ -153,7 +153,7 @@ inductive DelabType where
   | none
   | term (arity : Core.Arity)
   | predicate (signature : Core.PredicateSignature)
-  | declaration (value : Core.Declaration)
+  | declaration (value : DeclarationSignature)
   deriving Inhabited
 
 /-- Delaborated syntax node paired with its `DelabType` and child subtrees. -/
@@ -205,7 +205,7 @@ private def predicateType (typing : Option DelabContext) (p : Predicate) :
   | .error error => throwError "cannot infer a delaboration predicate: {error.message}"
 
 private def declarationTree (names : Names) (n : Name) : CommandElabM DelabTree := do
-  let some d := (CoreEnvironment.getState (← getEnv)).lookup n
+  let some d := lookupSignature (CoreEnvironment.getState (← getEnv)) n
     | throwError "cannot find declaration for printing `{n}`"
   return ⟨← globalExpr names n, .declaration d, #[]⟩
 
@@ -253,12 +253,11 @@ partial def delabTermTree (names : Names) (term : Core.Term)
     let body ← inner body
     node (← `(praExpr| let $(mkIdent x):ident := $(⟨value.stx⟩):praExpr;
       $(⟨body.stx⟩):praExpr)) #[value, binder, body]
-  | .primrec b s n =>
+  | .primrec b s =>
     let b ← recur b
     let s ← recur s
-    let n ← recur n
     let head ← declarationTree names `primrec
-    node (← call `primrec [⟨b.stx⟩, ⟨s.stx⟩, ⟨n.stx⟩]) #[head, b, s, n]
+    node (← call `primrec [⟨b.stx⟩, ⟨s.stx⟩]) #[head, b, s]
   | .definition n fs =>
     let head ← declarationTree names n
     let args ← fs.mapM recur
@@ -378,13 +377,6 @@ private def proofType (context : Core.Context) (p : Proof) : CommandElabM Predic
   | .ok type => return type
   | .error error => throwError "cannot infer a proof type for printing: {error.message}"
 
-private def formulaHead (context : Core.Context) (p : Proof) : CommandElabM Predicate := do
-  let env := CoreEnvironment.getState (← getEnv)
-  let type ← proofType context p
-  match Core.whnfPredicate (pra.maxDepth.get (← getOptions)) env type with
-  | .ok type => return type
-  | .error error => throwError "cannot expose a proof formula for printing: {error.message}"
-
 private def typedLambda (name : Name) (type body : TSyntax `praExpr) :
     CommandElabM (TSyntax `praExpr) := do
   let binder ← `(praFunBinder| $(mkIdent name):ident)
@@ -436,19 +428,18 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
     | .andIntro a b => do
       `(praExpr| ($(← delabProof names a context hasExpected),
         $(← delabProof names b context hasExpected)))
-    | .andLeft p => do call `and_left [← delabProof names p context]
-    | .andRight p => do call `and_right [← delabProof names p context]
-    | .orLeft _ p => do finish (← call `or_left [← delabProof names p context true]) true
-    | .orRight _ p => do finish (← call `or_right [← delabProof names p context true]) true
-    | .orElim ln rn _ p l r =>
-      let .or a b ← formulaHead context p | throwError "expected a disjunction in core proof"
-      let branch hint domain q := do
-        let h := names.freshName "h" hint
-        typedLambda h (← delabPredicate names domain)
-          (← delabProof { names with proofs := h :: names.proofs } q
-            (context.pushProof domain) true)
-      finish (← call `or_elim [← delabProof names p context, ← branch ln a l, ← branch rn b r]) true
-    | .falseElim _ p => do finish (← call `false_elim [← delabProof names p context true]) true
+    | .andLeft a b =>
+      applyParameters names `and_left [] (← [a, b].mapM (delabPredicate names))
+    | .andRight a b =>
+      applyParameters names `and_right [] (← [a, b].mapM (delabPredicate names))
+    | .orLeft a b =>
+      applyParameters names `or_left [] (← [a, b].mapM (delabPredicate names))
+    | .orRight a b =>
+      applyParameters names `or_right [] (← [a, b].mapM (delabPredicate names))
+    | .orElim a b c =>
+      applyParameters names `or_elim [] (← [a, b, c].mapM (delabPredicate names))
+    | .falseElim a =>
+      applyParameters names `false_elim [] (← [a].mapM (delabPredicate names))
     | .forallIntro hint _ p =>
       let x := names.freshName "x" hint
       typedLambda x (← identExpr `Nat)
@@ -456,17 +447,9 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
     | .forallElim p n => do applyExpr (← delabProof names p context) (← delabTerm names n)
     | .existsIntro _ n p => do
       finish (← `(praExpr| ($(← delabTerm names n), $(← delabProof names p context true)))) true
-    | .existsElim xn hn _ p body =>
-      let .ex m ← formulaHead context p | throwError "expected an existential in core proof"
-      let x := names.freshName "x" xn
-      let h := (names.pushLocal x).freshName "h" hn
-      let hypothesis := Predicate.app m.shift (.bvar 0)
-      let extendedNames := (names.pushLocal x)
-      let body ← delabProof { extendedNames with proofs := h :: names.proofs } body
-        ((context.pushLocal 0).pushProof hypothesis) true
-      let branch ← typedLambda x (← identExpr `Nat)
-        (← typedLambda h (← delabPredicate extendedNames hypothesis) body)
-      finish (← call `exists_elim [← delabProof names p context, branch]) true
+    | .existsElim motive target =>
+      applyParameters names `exists_elim []
+        (← [motive, target].mapM (delabPredicate names))
     | .letE hint type value body =>
       let h := names.freshName "h" hint
       `(praExpr| let $(mkIdent h):ident : $(← delabPredicate names type) :=
@@ -481,24 +464,14 @@ partial def delabProof (names : Names) (p : Proof) (context : Core.Context := {}
           (pra.maxDepth.get (← getOptions)) environment type then
         `(praExpr| @($result))
       else pure result
-    | .eqRefl n => do call `eq_refl [← delabTerm names n]
-    | .eqSubst motive e p =>
-      call `eq_subst [← delabPredicate names motive, ← delabProof names e context,
-        ← delabProof names p context true]
-    | .succNeZero n => do call `succ_ne_zero [← delabTerm names n]
-    | .succInj p => do call `succ_inj [← delabProof names p context]
-    | .lem a => do call `lem [← delabPredicate names a]
-    | .induction xn hn motive base step n =>
-      let x := names.freshName "x" xn
-      let h := (names.pushLocal x).freshName "h" hn
-      let hypothesis := Predicate.app motive.shift (.bvar 0)
-      let extendedNames := (names.pushLocal x)
-      let step ← delabProof { extendedNames with proofs := h :: names.proofs } step
-        ((context.pushLocal 0).pushProof hypothesis) true
-      let step ← typedLambda x (← identExpr `Nat)
-        (← typedLambda h (← delabPredicate extendedNames hypothesis) step)
-      let head ← `(praExpr| induction (motive := $(← delabPredicate names motive)))
-      [← delabProof names base context true, step, ← delabTerm names n].foldlM applyExpr head
+    | .eqRefl => identExpr `eq_refl
+    | .eqSubst motive =>
+      applyParameters names `eq_subst [] [← delabPredicate names motive]
+    | .succNeZero => identExpr `succ_ne_zero
+    | .succInj => identExpr `succ_inj
+    | .lem a => call `lem [← delabPredicate names a]
+    | .induction motive =>
+      applyParameters names `induction [] [← delabPredicate names motive]
   return ⟨← unexpandPraSyntax result.raw names.used⟩
 
 private def parameters (signature : List Core.Parameter) :
@@ -544,7 +517,7 @@ def delabDeclaration (d : Core.Declaration) : CommandElabM (TSyntax `praDecl) :=
       $(← delabPredicate names d.type) :=
       $(← delabProof names d.body { functions := d.functions, predicates := d.predicates } true))
 
-private def signatureParts (d : Core.Declaration) :
+private def signatureParts (d : DeclarationSignature) :
     CommandElabM (Array (TSyntax `praParam) × TSyntax `praExpr) := do
   match d with
   | .function d =>
@@ -560,7 +533,7 @@ private def signatureParts (d : Core.Declaration) :
     return (ps, ← delabPredicate names (Core.betaReducePredicate depth d.type))
 
 /-- Format a declaration's parameter and result types separated by `→`, without its name. -/
-def delabSignatureType (d : Core.Declaration) : CommandElabM MessageData := do
+def delabSignatureType (d : DeclarationSignature) : CommandElabM MessageData := do
   let (ps, type) ← signatureParts d
   let mut text := ""
   for p in ps do
@@ -568,7 +541,7 @@ def delabSignatureType (d : Core.Declaration) : CommandElabM MessageData := do
   return m!"{text}{← formatSyntax `praExpr type}"
 
 /-- Format `d`'s name, parameters, and result type. -/
-def delabSignature (d : Core.Declaration) : CommandElabM MessageData := do
+def delabSignature (d : DeclarationSignature) : CommandElabM MessageData := do
   let (ps, type) ← signatureParts d
   let mut text := (← relativeName d.name).toString
   for p in ps do

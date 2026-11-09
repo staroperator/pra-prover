@@ -549,9 +549,9 @@ private partial def predicateSignature? (stx : Syntax) : Option Core.PredicateSi
     else let s ← predicateSignature? b; some { s with arity := s.arity + 1 }
   | _ => none
 
-private def lookup (stx : Syntax) : ObjectElabM Core.Declaration := do
+private def lookup (stx : Syntax) : ObjectElabM DeclarationSignature := do
   let n := objectName stx
-  match ← resolveDeclaration? (← read).environment n with
+  match ← resolveSignature? (← read).environment n with
   | some d => addDeclarationInfo stx d; return d
   | none =>
     addUnresolvedInfo stx
@@ -616,8 +616,8 @@ private partial def abstractNumberTerm (argument : Metavariable.Term) (depth : N
     | .letE hint a b => .letE hint (abstractNumberTerm argument
         depth a)
         (abstractNumberTerm argument (depth + 1) b)
-    | .primrec b s n => .primrec (abstractNumberTerm argument depth b)
-        (abstractNumberTerm argument depth s) (abstractNumberTerm argument depth n)
+    | .primrec b s => .primrec (abstractNumberTerm argument depth b)
+        (abstractNumberTerm argument depth s)
     | .definition n fs => .definition n (fs.map (abstractNumberTerm argument depth))
     | t => t
 
@@ -692,7 +692,7 @@ private partial def expressionKind (stx : Syntax) : ObjectElabM Core.Declaration
       | some .predicateParameter => return .predicate
       | some .proof => return .theoremE
       | none =>
-        if let some d ← resolveDeclaration? (← read).environment n then
+        if let some d ← resolveSignature? (← read).environment n then
           return d.kind
     return .theoremE
 
@@ -780,7 +780,10 @@ private partial def termBody (stx : Syntax) (expected : Option Nat) : ObjectElab
         let .function d ← lookup id | throwArgumentErrorAt id "expected a function definition"
         let (actuals, _, rest) ←
           declarationArguments stx d.name d.parameterSignature args explicit
-        pure (Metavariable.Term.definition d.name actuals, rest)
+        let value := match primitiveDeclaration? d.name with
+          | some { construction := .term t, .. } => (Metavariable.Term.ofCore t).instantiate actuals
+          | _ => Metavariable.Term.definition d.name actuals
+        pure (value, rest)
     remember head (.term value)
     rest.foldlM (fun f a => return .app f (← term a (some 0))) value
 
@@ -868,7 +871,10 @@ private partial def predicateBody (stx : Syntax)
       | none =>
         let .predicate d ← lookup id | throwArgumentErrorAt id "expected a predicate definition"
         let (fs, ps, rest) ← declarationArguments stx d.name d.parameters args explicit
-        pure (Predicate.definition d.name fs ps, rest)
+        let value := match primitiveDeclaration? d.name with
+          | some { construction := .predicate p, .. } => (Predicate.ofCore p).instantiate fs ps
+          | _ => Predicate.definition d.name fs ps
+        pure (value, rest)
     remember head (.predicate value)
     rest.foldlM (fun p a => return .app p (← term a (some 0))) value
 
@@ -1346,12 +1352,16 @@ private partial def bindPattern (pattern : Syntax) (value : ProofResult) (type :
   | .and left right =>
     let destruct (index : Nat) := do
       let start ← read
-      bindPattern first (ProofResult.ready (.andLeft (.hyp index)) left) left expected
+      bindPattern first (ProofResult.ready (.impElim (.andLeft left right) (.hyp index)) left)
+        left expected
           fun expected => do
         let current ← read
         let index := index + current.context.proofs.length - start.context.proofs.length
-        let right := right.shift (current.context.locals.length - start.context.locals.length)
-        bindPattern tail (ProofResult.ready (.andRight (.hyp index)) right) right expected action
+        let shift := current.context.locals.length - start.context.locals.length
+        let left := left.shift shift
+        let right := right.shift shift
+        bindPattern tail (ProofResult.ready (.impElim (.andRight left right) (.hyp index)) right)
+          right expected action
     let body ← withAnonymousProof type (closeProof (destruct 0))
     return ProofResult.map₂ (.letE .anonymous type) body.type value body
   | .ex motive =>
@@ -1372,7 +1382,10 @@ private partial def bindPattern (pattern : Syntax) (value : ProofResult) (type :
           drainTasks
           existentialResult pattern outer (← resolvedProofType pattern body)
       return (body, target)
-    return ProofResult.map₂ (.existsElim name .anonymous target) target value body
+    return ProofResult.map₂ (fun value body =>
+      .impElim (.impElim (.existsElim motive target) value)
+        (.forallIntro name (.lam ⟨name, false⟩ (.imp hypothesis target.shift))
+          (.impIntro .anonymous hypothesis body))) target value body
   | _ =>
     blockOn type "destructuring needs the shape of its proof type"
     throwErrorAt pattern "tuple destructuring requires a conjunction or existential proof"
@@ -1514,7 +1527,7 @@ private partial def applicationTarget (args : List Syntax) (expected : Option Pr
     | .predicate => throwErrorAt arg "proof application requires a numerical term or proof"
   return some target
 
-private partial def constantProof (stx : Syntax) (d : Core.TheoremDefinition)
+private partial def constantProof (stx : Syntax) (d : ProofSignature)
     (args : List Syntax) (expected : Option Predicate) (explicit : Bool) :
     ObjectElabM ProofResult := do
   let hasNamed := args.any fun arg => match arg with
@@ -1526,8 +1539,13 @@ private partial def constantProof (stx : Syntax) (d : Core.TheoremDefinition)
     if let _base :: step :: argument :: rest := args then
       inferred := [(`motive, ← inferInductionMotive stx step argument expected rest)]
   let (fs, ps, rest) ← declarationArguments stx d.name d.parameters args explicit inferred
-  applyInferred stx (ProofResult.ready (.theoremE d.name fs ps) ((Predicate.ofCore
-      d.type).instantiate fs ps))
+  let value ← match primitiveDeclaration? d.name with
+    | some { construction := .proof p, .. } =>
+      match Metavariable.primitiveProof p fs ps with
+      | some p => pure p
+      | none => throwErrorAt stx "invalid primitive proof declaration {d.name}"
+    | _ => pure (.theoremE d.name fs ps)
+  applyInferred stx (ProofResult.ready value ((Predicate.ofCore d.type).instantiate fs ps))
     ((Predicate.ofCore d.type).instantiate fs ps) rest expected explicit
 
 private partial def inferInductionMotive (stx step argument : Syntax)
@@ -1882,7 +1900,7 @@ def elaborateCheck (stx : Syntax) : CommandElabM Unit := do
   let s : Scope := { environment := CoreEnvironment.getState (← getEnv) }
   if let `(praExpr| $id:ident) := unparen stx then
     let n := objectName id
-    if let some d ← resolveDeclaration? s.environment n then
+    if let some d ← resolveSignature? s.environment n then
       addDeclarationInfo stx d
       logInfoAt stx (← delabSignature d)
       return
@@ -1911,7 +1929,10 @@ def elaborateCheck (stx : Syntax) : CommandElabM Unit := do
 /-- Elaborate `#print id` and log the delaborated declaration. -/
 def elaboratePrint (id : Syntax) : CommandElabM Unit := do
   let s : Scope := { environment := CoreEnvironment.getState (← getEnv) }
-  let d ← runObject s (lookup id)
-  logInfoAt id m!"{← formatSyntax `praDecl (← delabDeclaration d)}"
+  let signature ← runObject s (lookup id)
+  if let some d := s.environment.lookup signature.name then
+    logInfoAt id m!"{← formatSyntax `praDecl (← delabDeclaration d)}"
+  else
+    logInfoAt id m!"primitive {← delabSignature signature}"
 
 end LeanPRA.Surface

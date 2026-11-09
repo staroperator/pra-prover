@@ -24,8 +24,7 @@ namespace LeanPRA.Core.Theory
   | locals, .lam _ t => TermScope functions (locals + 1) t
   | locals, .app f a => TermScope functions locals f ∧ TermScope functions locals a
   | locals, .letE _ a t => TermScope functions locals a ∧ TermScope functions (locals + 1) t
-  | locals, .primrec b s n =>
-      TermScope functions locals b ∧ TermScope functions locals s ∧ TermScope functions locals n
+  | locals, .primrec b s => TermScope functions locals b ∧ TermScope functions locals s
   | locals, .definition _ fs => ∀ t ∈ fs, TermScope functions locals t
 
 /-- Every local, function-parameter, and predicate-parameter occurrence lies in its index range. -/
@@ -56,7 +55,7 @@ private theorem term_scope {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k) :
   case lam body ih => exact ih
   case app f a ihf iha => exact ⟨ihf, iha⟩
   case letE a t iha iht => exact ⟨iha, iht⟩
-  case primrec b s n ihb ihs ihn => exact ⟨ihb, ihs, ihn⟩
+  case primrec b s ihb ihs => exact ⟨ihb, ihs⟩
   case definition lookup args ih => exact ih
   case nil => contradiction
   case cons ihh iht t ht =>

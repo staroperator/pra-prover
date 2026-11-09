@@ -7,10 +7,9 @@ public meta import LeanPRA.Library.Tactic.Logic
 
 `rw [h₁, ← h₂]` rewrites the goal using numerical equalities, then tries beta-only reflexivity.
 Universally quantified rules are instantiated from the first matching numerical subterm.
-Equality-rule matching contracts lambda applications and ignores binder names. Both representations
-of builtin successor use the same matching form. Definitions, lets, recursor equations, and eta
-expansion keep their explicit form during matching. Each rule replaces all occurrences of that
-instance, including occurrences beneath binders.
+Equality-rule matching contracts lambda applications and ignores binder names. Definitions, lets,
+recursor equations, and eta expansion keep their explicit form during matching. Each rule replaces
+all occurrences of that instance, including occurrences beneath binders.
 An instance must be expressible in the current goal context; introduce a bound variable before
 using a rule whose instance depends on it. `rw [h] at hp` adds a rewritten version of `hp`
 under the same name.
@@ -44,13 +43,11 @@ syntax praExpr : praRewriteRule
 syntax "← " praExpr : praRewriteRule
 syntax (name := rwTac) "rw" " [" praRewriteRule,+ "]" (" at " ident)? : praTactic
 
--- Numerals and builtin proof types use primitive successor; written `S` uses its declaration.
 private def matchingTerm : Metavariable.Term → Metavariable.Term
-  | .succ => .definition `S []
   | .lam _ body => .lam .anonymous (matchingTerm body)
   | .app f a => .app (matchingTerm f) (matchingTerm a)
   | .letE _ a b => .letE .anonymous (matchingTerm a) (matchingTerm b)
-  | .primrec b s n => .primrec (matchingTerm b) (matchingTerm s) (matchingTerm n)
+  | .primrec b s => .primrec (matchingTerm b) (matchingTerm s)
   | .definition n fs => .definition n (fs.map matchingTerm)
   | t => t
 
@@ -86,7 +83,7 @@ private def termCandidates (depth : Nat) (t : Metavariable.Term) : List Metavari
   | .lam _ body => termCandidates (depth + 1) body
   | .app f a => termCandidates depth f ++ termCandidates depth a
   | .letE _ a b => termCandidates depth a ++ termCandidates (depth + 1) b
-  | .primrec b s n => termCandidates depth b ++ termCandidates depth s ++ termCandidates depth n
+  | .primrec b s => termCandidates depth b ++ termCandidates depth s
   | .definition _ fs => fs.flatMap (termCandidates depth)
   | _ => []
 
@@ -108,8 +105,7 @@ private def abstractTerm (source : Metavariable.Term) (depth : Nat)
   | .lam n b => .lam n (abstractTerm source (depth + 1) b)
   | .app f a => .app (abstractTerm source depth f) (abstractTerm source depth a)
   | .letE n a b => .letE n (abstractTerm source depth a) (abstractTerm source (depth + 1) b)
-  | .primrec b s n => .primrec (abstractTerm source depth b) (abstractTerm source depth s)
-      (abstractTerm source depth n)
+  | .primrec b s => .primrec (abstractTerm source depth b) (abstractTerm source depth s)
   | .definition n fs => .definition n (fs.map (abstractTerm source depth))
   | other => other
 
@@ -266,7 +262,7 @@ private partial def unfoldTermOccurrences (goal : Goal) (name : Name) (depth : N
   | .app f a => return .app (← visit f) (← visit a)
   | .letE n a b =>
     return .letE n (← visit a) (← unfoldTermOccurrences goal name (depth + 1) b)
-  | .primrec b s n => return .primrec (← visit b) (← visit s) (← visit n)
+  | .primrec b s => return .primrec (← visit b) (← visit s)
   | .definition n fs => return .definition n (← fs.mapM visit)
   | t => return t
 
@@ -347,6 +343,6 @@ def evalRewrite : Tactic := fun stx => do
     if location.isNone then
       let goal ← getGoal
       if let .equal a b := Bridge.betaReducePredicate goal.projection goal.maxDepth goal.target then
-        if betaEqual goal a b then discard <| attempt (Tactic.close (.eqRefl a))
+        if betaEqual goal a b then discard <| attempt (Tactic.close (.forallElim .eqRefl a))
 
 end LeanPRA.Library.Tactic

@@ -29,10 +29,10 @@ open Theory
     | _ => referenceError E name .function
   | .letE _ value body => pure (some (body.subst0 value))
   | .app (.lam _ body) a => pure (some (body.subst0 a))
+  | .app (.primrec b _) .zero => pure (some b)
+  | .app (.primrec b s) (.app .succ n) => pure (some (.app (.app s n) (.app (.primrec b s) n)))
+  | .app (.primrec b s) n => (termStep E n).map (Option.map (fun m => .app (.primrec b s) m))
   | .app f a => (termStep E f).map (Option.map (fun g => .app g a))
-  | .primrec b _ .zero => pure (some b)
-  | .primrec b s (.app .succ n) => pure (some (.app (.app s n) (.primrec b s n)))
-  | .primrec b s n => (termStep E n).map (Option.map (fun m => .primrec b s m))
   | _ => pure none
 
 /-- Take one head-reduction step in a predicate, returning `none` at a stationary head. -/
@@ -115,11 +115,11 @@ private theorem HeadTrace.map {step : α → CheckResult (Option α)}
 private theorem term_app_step {E f g a} (run : termStep E f = .ok (some g)) :
     termStep E (.app f a) = .ok (some (.app g a)) := by
   cases f with
-  | lam => simp [termStep, pure, Except.pure] at run
+  | lam | primrec => simp [termStep, pure, Except.pure] at run
   | _ => change (termStep E _).map _ = _; rw [run]; rfl
 
 private theorem term_rec_step {E n m b s} (run : termStep E n = .ok (some m)) :
-    termStep E (.primrec b s n) = .ok (some (.primrec b s m)) := by
+    termStep E (.app (.primrec b s) n) = .ok (some (.app (.primrec b s) m)) := by
   cases n with
   | zero => simp [termStep, pure, Except.pure] at run
   | app f a =>
@@ -136,14 +136,15 @@ private theorem predicate_app_step {E f g a} (run : predicateStep E f = .ok (som
 
 public theorem term_stationary {E t} (head : TermWhnf t) : termStep E t = .ok none := by
   induction head with
-  | app hf notLam ih =>
+  | app hf notLam notRec ih =>
     cases hf with
     | lam => exact False.elim (notLam _ _ rfl)
+    | recursor => exact False.elim (notRec _ _ rfl)
     | _ => change (termStep E _).map _ = _; rw [ih]; rfl
   | primrec hn blocked ih =>
     cases hn with
     | zero => exact False.elim (blocked.1 rfl)
-    | app hf hnot =>
+    | app hf hnot hrec =>
       cases hf with
       | succ => exact False.elim (blocked.2 _ rfl)
       | _ => change (termStep E _).map _ = _; rw [ih]; rfl
@@ -177,19 +178,20 @@ public theorem whnfTerm_trace {n E t u} (run : whnfTerm n E t = .ok u) :
       apply HeadTrace.map (fun h => term_app_step h) (ih hg)
       cases g with
       | lam name body => exact .next rfl (ih run)
-      | _ =>
-        simp only [pure, Except.pure, Except.ok.injEq] at run
-        subst u
-        exact .done (term_stationary (.app (whnfTerm_normal hg) (by intros; simp)))
-    | primrec b s a =>
-      simp only [whnfTerm, CheckResult.bind_eq_ok] at run
-      obtain ⟨m, hm, run⟩ := run
-      apply HeadTrace.map (fun h => term_rec_step h) (ih hm)
-      cases m with
-      | zero => exact .next rfl (ih run)
-      | app f p =>
-        cases f with
-        | succ => exact .next rfl (ih run)
+      | primrec b s =>
+        simp only [CheckResult.bind_eq_ok] at run
+        obtain ⟨m, hm, run⟩ := run
+        apply HeadTrace.map (fun h => term_rec_step h) (ih hm)
+        cases m with
+        | zero => exact .next rfl (ih run)
+        | app f p =>
+          cases f with
+          | succ => exact .next rfl (ih run)
+          | _ =>
+            simp only [pure, Except.pure, Except.ok.injEq] at run
+            subst u
+            exact .done (term_stationary (.primrec (whnfTerm_normal hm)
+              (by constructor <;> intros <;> simp)))
         | _ =>
           simp only [pure, Except.pure, Except.ok.injEq] at run
           subst u
@@ -198,8 +200,8 @@ public theorem whnfTerm_trace {n E t u} (run : whnfTerm n E t = .ok u) :
       | _ =>
         simp only [pure, Except.pure, Except.ok.injEq] at run
         subst u
-        exact .done (term_stationary (.primrec (whnfTerm_normal hm)
-          (by constructor <;> intros <;> simp)))
+        exact .done (term_stationary
+          (.app (whnfTerm_normal hg) (by intros; simp) (by intros; simp)))
     | _ =>
       simp only [whnfTerm, pure, Except.pure, Except.ok.injEq] at run
       subst u; exact .done rfl
@@ -278,6 +280,18 @@ private theorem HeadBatch.next {step : α → CheckResult (Option α)} {changed 
   cases batch with
   | some steps _ => exact .some (.next run steps) (by omega)
 
+private theorem exposeTerm_app_eq {n changed f a}
+    (notZero : ¬ ∃ b s, f = .primrec b s ∧ a = .zero) :
+    exposeTerm (n + 1) changed (.app f a) = (do
+      let computed ← exposeTerm n false f
+      match computed.getD f with
+      | .lam _ body => exposeTerm n true (body.subst0 a)
+      | _ =>
+        match computed with
+        | some g => pure (some (.app g a))
+        | none => pure (if changed then some (.app f a) else none)) := by
+  cases f <;> cases a <;> simp_all [exposeTerm] <;> rfl
+
 public theorem exposeTerm_batch {n changed E a result}
     (run : exposeTerm n changed a = .ok result) : HeadBatch (termStep E) changed a result := by
   induction n generalizing changed a result with
@@ -285,15 +299,12 @@ public theorem exposeTerm_batch {n changed E a result}
   | succ n ih =>
     cases a with
     | letE name value body => exact (ih run).next rfl
-    | primrec b s a =>
-      cases a with
-      | zero => exact (ih run).next rfl
-      | _ =>
-        cases changed <;> simp only [exposeTerm, Bool.false_eq_true, ↓reduceIte,
-          pure, Except.pure, Except.ok.injEq] at run <;> subst result
-        all_goals first | exact .none | exact .some .refl (by simp)
     | app f a =>
-      simp only [exposeTerm, CheckResult.bind_eq_ok] at run
+      by_cases zero : ∃ b s, f = .primrec b s ∧ a = .zero
+      · obtain ⟨b, s, rfl, rfl⟩ := zero
+        exact (ih run).next rfl
+      rw [exposeTerm_app_eq zero] at run
+      simp only [CheckResult.bind_eq_ok] at run
       obtain ⟨g, hg, run⟩ := run
       have batch := ih hg
       obtain ⟨j, steps⟩ := batch.steps
@@ -368,18 +379,15 @@ public theorem exposeTerm_terminates {n E t w} (run : whnfTerm n E t = .ok w)
     | letE name value body =>
       obtain ⟨result, h⟩ := ih run true
       exact ⟨result, eventually_next (fun _ h => h) h⟩
-    | primrec b s a =>
-      cases a with
-      | zero =>
-        simp only [whnfTerm, CheckResult.bind_eq_ok] at run
-        obtain ⟨v, hv, run⟩ := run
-        have eq := whnfTerm_fixed TermWhnf.zero hv
-        subst v
-        obtain ⟨result, h⟩ := ih run true
-        exact ⟨result, eventually_next (fun _ h => h) h⟩
-      | _ => exact ⟨if changed then some _ else none, 1,
-          fun m hm => by cases m <;> first | omega | rfl⟩
     | app f a =>
+      by_cases zero : ∃ b s, f = .primrec b s ∧ a = .zero
+      · obtain ⟨b, s, rfl, rfl⟩ := zero
+        cases n with
+        | zero => simp [whnfTerm, exhausted, fail] at run
+        | succ n =>
+          change whnfTerm (n + 1) E b = .ok w at run
+          obtain ⟨result, h⟩ := ih run true
+          exact ⟨result, eventually_next (fun _ h => h) h⟩
       simp only [whnfTerm, CheckResult.bind_eq_ok] at run
       obtain ⟨g, hg, run⟩ := run
       obtain ⟨out, j, hout⟩ := ih hg false
@@ -391,14 +399,14 @@ public theorem exposeTerm_terminates {n E t w} (run : whnfTerm n E t = .ok w)
         obtain ⟨result, resultRun⟩ := ih run true
         refine ⟨result, eventually_next ?_ (eventually_and ⟨j, hout⟩ resultRun)⟩
         intro m hm
-        simpa only [exposeTerm, hm.1, bind, Except.bind, h] using hm.2
+        simpa only [exposeTerm_app_eq zero, hm.1, bind, Except.bind, h] using hm.2
       | _ =>
         refine ⟨(match out with
           | some g => some (.app g a)
           | none => if changed then some (.app f a) else none), ?_⟩
         refine eventually_next ?_ (⟨j, hout⟩)
         intro m hm
-        simp only [exposeTerm, hm, bind, Except.bind, h]
+        simp only [exposeTerm_app_eq zero, hm, bind, Except.bind, h]
         cases out <;> rfl
     | _ => exact ⟨if changed then some _ else none, 1,
         fun m hm => by cases m <;> first | omega | rfl⟩
@@ -551,39 +559,48 @@ public theorem unfoldPredicateHead_step {E t out}
   | _ => simp [unfoldPredicateHead, pure, Except.pure] at run
 
 public theorem exposeRecursor_terminates {n E b s a w}
-    (run : whnfTerm n E (.primrec b s a) = .ok w) :
-    ∃ result, Eventually (fun m => exposeRecursor m E (.primrec b s a) = .ok result) := by
+    (run : whnfTerm n E (.app (.primrec b s) a) = .ok w) :
+    ∃ result, Eventually (fun m => exposeRecursor m E (.app (.primrec b s) a) = .ok result) := by
   cases n with
   | zero => simp [whnfTerm, exhausted, fail] at run
   | succ n =>
-    simp only [whnfTerm, CheckResult.bind_eq_ok] at run
-    obtain ⟨v, hv, run⟩ := run
-    have ev : Eventually (fun m => whnfTerm m E a = .ok v) :=
-      ⟨n, fun m hm => whnfTerm_mono hm hv⟩
-    let output := if v == a then none else some (Term.primrec b s v)
-    cases v with
-    | zero =>
-      obtain ⟨result, h⟩ := exposeTerm_terminates run true
-      exact ⟨result, eventually_mono (fun m h => by
-        simpa only [exposeRecursor, h.1, bind, Except.bind] using h.2) (eventually_and ev h)⟩
-    | app f p =>
-      cases f with
-      | succ =>
+    cases n with
+    | zero => simp [whnfTerm, exhausted, fail] at run
+    | succ n =>
+      change (do
+        let v ← whnfTerm (n + 1) E a
+        match v with
+        | .zero => whnfTerm (n + 1) E b
+        | .app .succ p => whnfTerm (n + 1) E (.app (.app s p) (.app (.primrec b s) p))
+        | _ => pure (.app (.primrec b s) v)) = .ok w at run
+      simp only [CheckResult.bind_eq_ok] at run
+      obtain ⟨v, hv, run⟩ := run
+      have ev : Eventually (fun m => whnfTerm m E a = .ok v) :=
+        ⟨n + 1, fun m hm => whnfTerm_mono hm hv⟩
+      let output := if v == a then none else some (Term.app (.primrec b s) v)
+      cases v with
+      | zero =>
         obtain ⟨result, h⟩ := exposeTerm_terminates run true
         exact ⟨result, eventually_mono (fun m h => by
           simpa only [exposeRecursor, h.1, bind, Except.bind] using h.2) (eventually_and ev h)⟩
+      | app f p =>
+        cases f with
+        | succ =>
+          obtain ⟨result, h⟩ := exposeTerm_terminates run true
+          exact ⟨result, eventually_mono (fun m h => by
+            simpa only [exposeRecursor, h.1, bind, Except.bind] using h.2) (eventually_and ev h)⟩
+        | _ =>
+          refine ⟨output, eventually_mono (fun m h => ?_) ev⟩
+          simp only [exposeRecursor, h, bind, Except.bind]
+          rfl
       | _ =>
         refine ⟨output, eventually_mono (fun m h => ?_) ev⟩
         simp only [exposeRecursor, h, bind, Except.bind]
         rfl
-    | _ =>
-      refine ⟨output, eventually_mono (fun m h => ?_) ev⟩
-      simp only [exposeRecursor, h, bind, Except.bind]
-      rfl
 
 public theorem exposeRecursor_batch {n E b s a result}
-    (run : exposeRecursor n E (.primrec b s a) = .ok result) :
-    HeadBatch (termStep E) false (.primrec b s a) result := by
+    (run : exposeRecursor n E (.app (.primrec b s) a) = .ok result) :
+    HeadBatch (termStep E) false (.app (.primrec b s) a) result := by
   simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
   obtain ⟨v, hv, run⟩ := run
   obtain ⟨j, steps⟩ := (whnfTerm_trace hv).steps
@@ -621,8 +638,8 @@ public theorem exposeRecursor_batch {n E b s a result}
         | succ => omega)
 
 public theorem exposeRecursor_none {n E b s a}
-    (run : exposeRecursor n E (.primrec b s a) = .ok none) :
-    termStep E (.primrec b s a) = .ok none := by
+    (run : exposeRecursor n E (.app (.primrec b s) a) = .ok none) :
+    termStep E (.app (.primrec b s) a) = .ok none := by
   simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
   obtain ⟨v, hv, run⟩ := run
   cases v with
@@ -651,7 +668,11 @@ private theorem exposeTerm_app_none {n f a}
   cases n with
   | zero => simp [exposeTerm, exhausted, fail] at run
   | succ n =>
-    simp only [exposeTerm, CheckResult.bind_eq_ok] at run
+    by_cases zero : ∃ b s, f = .primrec b s ∧ a = .zero
+    · obtain ⟨b, s, rfl, rfl⟩ := zero
+      cases exposeTerm_batch (E := ∅) (n := n) (changed := true) run
+    rw [exposeTerm_app_eq zero] at run
+    simp only [CheckResult.bind_eq_ok] at run
     obtain ⟨out, hout, run⟩ := run
     cases out with
     | none =>
@@ -700,7 +721,7 @@ private theorem unfoldPredicateHead_app_none {E f a}
 
 public theorem term_ready {n E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k)
     (exposed : exposeTerm n false t = .ok none) (unfolded : unfoldTermHead E t = .ok none)
-    (notRec : ∀ b s a, t ≠ .primrec b s a) : termStep E t = .ok none := by
+    (notRec : ∀ b s a, t ≠ .app (.primrec b s) a) : termStep E t = .ok none := by
   induction t using Term.rec (motive_2 := fun _ => True) generalizing n k with
   | definition name fs ih =>
     obtain ⟨d, lookup, _⟩ := typed.inv_definition
@@ -709,17 +730,17 @@ public theorem term_ready {n E Ξ Γ t k} (typed : TermTyping E Ξ Γ t k)
     cases n with
     | zero => simp [exposeTerm, exhausted, fail] at exposed
     | succ n => cases exposeTerm_batch (E := E) (n := n) (changed := true) exposed
-  | primrec b s a => exact False.elim (notRec b s a rfl)
   | app f a ihf iha =>
     obtain ⟨m, hf, notLam⟩ := exposeTerm_app_none exposed
     have stop := ihf typed.inv_app.1 hf (unfoldTermHead_app_none unfolded) (by
       intro b s a eq
       have ht := typed.inv_app.1
       rw [eq] at ht
-      have bad : k + 1 = 0 := ht.inv_primrec.1
-      exact Nat.noConfusion bad)
+      have bad : k + 1 + 1 = 0 + 1 := ht.inv_app.1.inv_primrec.1
+      exact Nat.noConfusion (Nat.add_right_cancel bad))
     cases f with
     | lam => exact False.elim (notLam _ _ rfl)
+    | primrec b s => exact False.elim (notRec b s a rfl)
     | _ => change (termStep E _).map _ = _; rw [stop]; rfl
   | nil | cons => trivial
   | _ => rfl

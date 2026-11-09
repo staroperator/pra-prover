@@ -1,6 +1,6 @@
 module
 
-public import LeanPRA.Core.Substitution
+public import LeanPRA.Core.PrimitiveTypes
 
 /-!
 # Declarative PRA judgements
@@ -75,8 +75,8 @@ inductive TermTyping (E : Environment) (Ξ : ParameterContext) :
       TermTyping E Ξ Γ (.app f a) k
   | letE (value : TermTyping E Ξ Γ a j) (body : TermTyping E Ξ (j :: Γ) t k) :
       TermTyping E Ξ Γ (.letE binderName a t) k
-  | primrec (base : TermTyping E Ξ Γ b 0) (step : TermTyping E Ξ Γ s 2)
-      (argument : TermTyping E Ξ Γ n 0) : TermTyping E Ξ Γ (.primrec b s n) 0
+  | primrec (base : TermTyping E Ξ Γ b 0) (step : TermTyping E Ξ Γ s 2) :
+      TermTyping E Ξ Γ (.primrec b s) 1
   | definition (lookup : E[name]? = some (.function d))
       (arguments : FunctionArguments E Ξ Γ fs d.functions) :
       TermTyping E Ξ Γ (.definition name fs) d.arity
@@ -159,19 +159,18 @@ inductive TermEq (E : Environment) (Ξ : ParameterContext) :
       (body : TermTyping E Ξ Γ (d.body.instantiate fs) d.arity) :
       TermEq E Ξ Γ (.definition name fs) (d.body.instantiate fs) d.arity
   | primrecZero (base : TermTyping E Ξ Γ b 0) (step : TermTyping E Ξ Γ s 2) :
-      TermEq E Ξ Γ (.primrec b s .zero) b 0
+      TermEq E Ξ Γ (.app (.primrec b s) .zero) b 0
   | primrecSucc (base : TermTyping E Ξ Γ b 0) (step : TermTyping E Ξ Γ s 2)
       (argument : TermTyping E Ξ Γ n 0) :
-      TermEq E Ξ Γ (.primrec b s (.app .succ n)) (.app (.app s n) (.primrec b s n)) 0
+      TermEq E Ξ Γ (.app (.primrec b s) (.app .succ n)) (.app (.app s n) (.app (.primrec b s) n)) 0
   | lam (body : TermEq E Ξ (0 :: Γ) t u k) :
       TermEq E Ξ Γ (.lam binderName t) (.lam otherBinderName u) (k + 1)
   | app (function : TermEq E Ξ Γ f g (k + 1)) (argument : TermEq E Ξ Γ a b 0) :
       TermEq E Ξ Γ (.app f a) (.app g b) k
   | letE (value : TermEq E Ξ Γ a b j) (body : TermEq E Ξ (j :: Γ) t u k) :
       TermEq E Ξ Γ (.letE binderName a t) (.letE otherBinderName b u) k
-  | primrec (base : TermEq E Ξ Γ a b 0) (step : TermEq E Ξ Γ s t 2)
-      (argument : TermEq E Ξ Γ m n 0) :
-      TermEq E Ξ Γ (.primrec a s m) (.primrec b t n) 0
+  | primrec (base : TermEq E Ξ Γ a b 0) (step : TermEq E Ξ Γ s t 2) :
+      TermEq E Ξ Γ (.primrec a s) (.primrec b t) 1
   | definition (lookup : E[name]? = some (.function d))
       (arguments : FunctionArgumentEq E Ξ Γ fs gs d.functions) :
       TermEq E Ξ Γ (.definition name fs) (.definition name gs) d.arity
@@ -250,8 +249,8 @@ inductive PredicateArgumentEq (E : Environment) (Ξ : ParameterContext) :
 end
 
 /-- Explicit PRA derivations. Only this judgement depends on proof hypotheses. Numerical binders
-shift kept hypotheses; existential elimination also shifts its externally formed target,
-so the witness cannot escape. Induction checks a unary QF motive in the surrounding context. -/
+shift kept hypotheses. Primitive proof heads check their schema predicates in the surrounding
+context and expose their full formulas; induction requires a unary QF motive. -/
 inductive ProofTyping (E : Environment) (Ξ : ParameterContext) :
     LocalContext → ProofContext → Proof → Predicate → Prop where
   | hyp (lookup : H[i]? = some A) : ProofTyping E Ξ Γ H (.hyp i) A
@@ -267,20 +266,25 @@ inductive ProofTyping (E : Environment) (Ξ : ParameterContext) :
       (argument : ProofTyping E Ξ Γ H q A) : ProofTyping E Ξ Γ H (.impElim p q) B
   | andIntro (left : ProofTyping E Ξ Γ H p A) (right : ProofTyping E Ξ Γ H q B) :
       ProofTyping E Ξ Γ H (.andIntro p q) (.and A B)
-  | andLeft (pair : ProofTyping E Ξ Γ H p (.and A B)) :
-      ProofTyping E Ξ Γ H (.andLeft p) A
-  | andRight (pair : ProofTyping E Ξ Γ H p (.and A B)) :
-      ProofTyping E Ξ Γ H (.andRight p) B
-  | orLeft (other : PredicateTyping E Ξ Γ B ⟨0, .prop⟩)
-      (proof : ProofTyping E Ξ Γ H p A) : ProofTyping E Ξ Γ H (.orLeft B p) (.or A B)
-  | orRight (other : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
-      (proof : ProofTyping E Ξ Γ H p B) : ProofTyping E Ξ Γ H (.orRight A p) (.or A B)
-  | orElim (target : PredicateTyping E Ξ Γ C ⟨0, .prop⟩)
-      (scrutinee : ProofTyping E Ξ Γ H p (.or A B))
-      (left : ProofTyping E Ξ Γ (A :: H) q C) (right : ProofTyping E Ξ Γ (B :: H) r C) :
-      ProofTyping E Ξ Γ H (.orElim leftName rightName C p q r) C
-  | falseElim (target : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
-      (proof : ProofTyping E Ξ Γ H p .false) : ProofTyping E Ξ Γ H (.falseElim A p) A
+  | andLeft (left : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
+      (right : PredicateTyping E Ξ Γ B ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.andLeft A B) (.imp (.and A B) A)
+  | andRight (left : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
+      (right : PredicateTyping E Ξ Γ B ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.andRight A B) (.imp (.and A B) B)
+  | orLeft (left : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
+      (right : PredicateTyping E Ξ Γ B ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.orLeft A B) (.imp A (.or A B))
+  | orRight (left : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
+      (right : PredicateTyping E Ξ Γ B ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.orRight A B) (.imp B (.or A B))
+  | orElim (left : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
+      (right : PredicateTyping E Ξ Γ B ⟨0, .prop⟩)
+      (target : PredicateTyping E Ξ Γ C ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.orElim A B C)
+        (.imp (.or A B) (.imp (.imp A C) (.imp (.imp B C) C)))
+  | falseElim (target : PredicateTyping E Ξ Γ A ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.falseElim A) (.imp .false A)
   | forallIntro (motive : PredicateTyping E Ξ Γ P ⟨1, .prop⟩)
       (body : ProofTyping E Ξ (0 :: Γ) (H.map Predicate.shift) p (.app P.shift (.bvar 0))) :
       ProofTyping E Ξ Γ H (.forallIntro binderName P p) (.all P)
@@ -289,10 +293,9 @@ inductive ProofTyping (E : Environment) (Ξ : ParameterContext) :
   | existsIntro (motive : PredicateTyping E Ξ Γ P ⟨1, .prop⟩)
       (witness : TermTyping E Ξ Γ a 0) (proof : ProofTyping E Ξ Γ H p (.app P a)) :
       ProofTyping E Ξ Γ H (.existsIntro P a p) (.ex P)
-  | existsElim (target : PredicateTyping E Ξ Γ C ⟨0, .prop⟩)
-      (scrutinee : ProofTyping E Ξ Γ H p (.ex P))
-      (body : ProofTyping E Ξ (0 :: Γ) (.app P.shift (.bvar 0) :: H.map Predicate.shift)
-        q C.shift) : ProofTyping E Ξ Γ H (.existsElim variableName hypothesisName C p q) C
+  | existsElim (motive : PredicateTyping E Ξ Γ P ⟨1, .prop⟩)
+      (target : PredicateTyping E Ξ Γ C ⟨0, .prop⟩) :
+      ProofTyping E Ξ Γ H (.existsElim P C) (existentialEliminationType P C)
   | letE (type : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
       (value : ProofTyping E Ξ Γ H p A) (body : ProofTyping E Ξ Γ (A :: H) q B) :
       ProofTyping E Ξ Γ H (.letE binderName A p q) B
@@ -302,23 +305,15 @@ inductive ProofTyping (E : Environment) (Ξ : ParameterContext) :
       ProofTyping E Ξ Γ H (.letPredicate binderName P p) A
   | ascribe (type : PredicateTyping E Ξ Γ A ⟨0, .prop⟩)
       (proof : ProofTyping E Ξ Γ H p A) : ProofTyping E Ξ Γ H (.ascribe A p) A
-  | eqRefl (term : TermTyping E Ξ Γ t 0) : ProofTyping E Ξ Γ H (.eqRefl t) (.equal t t)
-  | eqSubst (motive : PredicateTyping E Ξ Γ P ⟨1, .prop⟩)
-      (equality : ProofTyping E Ξ Γ H e (.equal a b))
-      (proof : ProofTyping E Ξ Γ H p (.app P a)) :
-      ProofTyping E Ξ Γ H (.eqSubst P e p) (.app P b)
-  | succNeZero (term : TermTyping E Ξ Γ t 0) :
-      ProofTyping E Ξ Γ H (.succNeZero t) (.imp (.equal (.app .succ t) .zero) .false)
-  | succInj (proof : ProofTyping E Ξ Γ H p (.equal (.app .succ a) (.app .succ b))) :
-      ProofTyping E Ξ Γ H (.succInj p) (.equal a b)
+  | eqRefl : ProofTyping E Ξ Γ H .eqRefl reflexivityType
+  | eqSubst (motive : PredicateTyping E Ξ Γ P ⟨1, .prop⟩) :
+      ProofTyping E Ξ Γ H (.eqSubst P) (substitutionType P)
+  | succNeZero : ProofTyping E Ξ Γ H .succNeZero successorNonzeroType
+  | succInj : ProofTyping E Ξ Γ H .succInj successorInjectivityType
   | lem (formula : PredicateTyping E Ξ Γ A ⟨0, .prop⟩) :
       ProofTyping E Ξ Γ H (.lem A) (.or A (.imp A .false))
-  | induction (motive : PredicateTyping E Ξ Γ P ⟨1, .qf⟩)
-      (base : ProofTyping E Ξ Γ H b (.app P .zero))
-      (step : ProofTyping E Ξ (0 :: Γ) (.app P.shift (.bvar 0) :: H.map Predicate.shift)
-        s (.app P.shift (.app .succ (.bvar 0))))
-      (argument : TermTyping E Ξ Γ n 0) :
-      ProofTyping E Ξ Γ H (.induction variableName hypothesisName P b s n) (.app P n)
+  | induction (motive : PredicateTyping E Ξ Γ P ⟨1, .qf⟩) :
+      ProofTyping E Ξ Γ H (.induction P) (inductionType P)
   | conversion (proof : ProofTyping E Ξ Γ H p A)
       (type : PredicateEq E Ξ Γ A B ⟨0, .prop⟩) : ProofTyping E Ξ Γ H p B
 

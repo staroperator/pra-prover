@@ -27,42 +27,46 @@ namespace LeanPRA.Core.Theory
       ProofTyping E Ξ Γ (A :: H) p B
   | .impElim p q, B => ∃ A, ProofTyping E Ξ Γ H p (.imp A B) ∧ ProofTyping E Ξ Γ H q A
   | .andIntro p q, C => ∃ A B, C = .and A B ∧ ProofTyping E Ξ Γ H p A ∧ ProofTyping E Ξ Γ H q B
-  | .andLeft p, A => ∃ B, ProofTyping E Ξ Γ H p (.and A B)
-  | .andRight p, B => ∃ A, ProofTyping E Ξ Γ H p (.and A B)
-  | .orLeft B p, C => ∃ A, C = .or A B ∧ PredicateTyping E Ξ Γ B ⟨0, .prop⟩ ∧
-      ProofTyping E Ξ Γ H p A
-  | .orRight A p, C => ∃ B, C = .or A B ∧ PredicateTyping E Ξ Γ A ⟨0, .prop⟩ ∧
-      ProofTyping E Ξ Γ H p B
-  | .orElim _ _ C p q r, D => D = C ∧ PredicateTyping E Ξ Γ C ⟨0, .prop⟩ ∧
-      ∃ A B, ProofTyping E Ξ Γ H p (.or A B) ∧ ProofTyping E Ξ Γ (A :: H) q C ∧
-        ProofTyping E Ξ Γ (B :: H) r C
-  | .falseElim A p, B => B = A ∧ PredicateTyping E Ξ Γ A ⟨0, .prop⟩ ∧
-      ProofTyping E Ξ Γ H p .false
+  | .andLeft a b, result => result = (.imp (.and a b) a) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩
+  | .andRight a b, result => result = (.imp (.and a b) b) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩
+  | .orLeft a b, result => result = (.imp a (.or a b)) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩
+  | .orRight a b, result => result = (.imp b (.or a b)) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩
+  | .orElim a b c, result => result = (.imp (.or a b) (.imp (.imp a c) (.imp (.imp b c) c))) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩ ∧
+      PredicateTyping E Ξ Γ c ⟨0, .prop⟩
+  | .falseElim a, result => result = (.imp .false a) ∧
+      PredicateTyping E Ξ Γ a ⟨0, .prop⟩
   | .forallIntro _ P p, A => A = .all P ∧ PredicateTyping E Ξ Γ P ⟨1, .prop⟩ ∧
       ProofTyping E Ξ (0 :: Γ) (H.map Predicate.shift) p (.app P.shift (.bvar 0))
   | .forallElim p a, A => ∃ P, A = .app P a ∧ ProofTyping E Ξ Γ H p (.all P) ∧
       TermTyping E Ξ Γ a 0
   | .existsIntro P a p, A => A = .ex P ∧ PredicateTyping E Ξ Γ P ⟨1, .prop⟩ ∧
       TermTyping E Ξ Γ a 0 ∧ ProofTyping E Ξ Γ H p (.app P a)
-  | .existsElim _ _ C p q, D => D = C ∧ PredicateTyping E Ξ Γ C ⟨0, .prop⟩ ∧
-      ∃ P, ProofTyping E Ξ Γ H p (.ex P) ∧
-        ProofTyping E Ξ (0 :: Γ) (.app P.shift (.bvar 0) :: H.map Predicate.shift) q C.shift
+  | .existsElim a b, result => result = (existentialEliminationType a b) ∧
+      PredicateTyping E Ξ Γ a ⟨1, .prop⟩ ∧
+      PredicateTyping E Ξ Γ b ⟨0, .prop⟩
   | .letE _ A p q, C => PredicateTyping E Ξ Γ A ⟨0, .prop⟩ ∧ ProofTyping E Ξ Γ H p A ∧
       ProofTyping E Ξ Γ (A :: H) q C
   | .letTerm _ a p, A => (∃ j, TermTyping E Ξ Γ a j) ∧ ProofTyping E Ξ Γ H p A
   | .letPredicate _ P p, A => (∃ σ, PredicateTyping E Ξ Γ P σ) ∧ ProofTyping E Ξ Γ H p A
   | .ascribe A p, B => B = A ∧ PredicateTyping E Ξ Γ A ⟨0, .prop⟩ ∧ ProofTyping E Ξ Γ H p A
-  | .eqRefl t, A => A = .equal t t ∧ TermTyping E Ξ Γ t 0
-  | .eqSubst P e p, A => PredicateTyping E Ξ Γ P ⟨1, .prop⟩ ∧
-      ∃ a b, A = .app P b ∧ ProofTyping E Ξ Γ H e (.equal a b) ∧ ProofTyping E Ξ Γ H p (.app P a)
-  | .succNeZero t, A => A = .imp (.equal (.app .succ t) .zero) .false ∧ TermTyping E Ξ Γ t 0
-  | .succInj p, A => ∃ a b, A = .equal a b ∧
-      ProofTyping E Ξ Γ H p (.equal (.app .succ a) (.app .succ b))
+  | .eqRefl, result => result = reflexivityType
+  | .eqSubst a, result => result = (substitutionType a) ∧
+      PredicateTyping E Ξ Γ a ⟨1, .prop⟩
+  | .succNeZero, result => result = successorNonzeroType
+  | .succInj, result => result = successorInjectivityType
   | .lem A, B => B = .or A (.imp A .false) ∧ PredicateTyping E Ξ Γ A ⟨0, .prop⟩
-  | .induction _ _ P b s n, A => A = .app P n ∧ PredicateTyping E Ξ Γ P ⟨1, .qf⟩ ∧
-      ProofTyping E Ξ Γ H b (.app P .zero) ∧
-      ProofTyping E Ξ (0 :: Γ) (.app P.shift (.bvar 0) :: H.map Predicate.shift)
-        s (.app P.shift (.app .succ (.bvar 0))) ∧ TermTyping E Ξ Γ n 0
+  | .induction a, result => result = (inductionType a) ∧
+      PredicateTyping E Ξ Γ a ⟨1, .qf⟩
 
 private theorem strip_conversion {E Ξ Γ H p A} (valid : EnvironmentWF E)
     (h : ProofTyping E Ξ Γ H p A) (formed : PredicateTyping E Ξ Γ A ⟨0, .prop⟩) :
@@ -78,31 +82,27 @@ private theorem strip_conversion {E Ξ Γ H p A} (valid : EnvironmentWF E)
       exact ⟨_, rfl, antecedent, body⟩
   | impElim f a ihf iha => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, f, a⟩
   | andIntro p q ihp ihq => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, _, rfl, p, q⟩
-  | andLeft p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, p⟩
-  | andRight p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, p⟩
-  | orLeft other p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, rfl, other, p⟩
-  | orRight other p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, rfl, other, p⟩
-  | orElim target p q r ihp ihq ihr =>
-      refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, target, _, _, p, q, r⟩
-  | falseElim target p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, target, p⟩
+  | andLeft a b => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b⟩
+  | andRight a b => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b⟩
+  | orLeft a b => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b⟩
+  | orRight a b => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b⟩
+  | orElim a b c => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b, c⟩
+  | falseElim a => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a⟩
   | forallIntro motive body ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, motive, body⟩
   | forallElim p argument ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, rfl, p, argument⟩
   | existsIntro motive witness p ih =>
       refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, motive, witness, p⟩
-  | existsElim target p q ihp ihq =>
-      refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, target, _, p, q⟩
+  | existsElim a b => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a, b⟩
   | letE type p q ihp ihq => refine ⟨_, ?_, .refl formed⟩; exact ⟨type, p, q⟩
   | letTerm value body ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨⟨_, value⟩, body⟩
   | letPredicate value body ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨⟨_, value⟩, body⟩
   | ascribe type p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, type, p⟩
-  | eqRefl term => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, term⟩
-  | eqSubst motive e p ihe ihp =>
-      refine ⟨_, ?_, .refl formed⟩; exact ⟨motive, _, _, rfl, e, p⟩
-  | succNeZero term => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, term⟩
-  | succInj p ih => refine ⟨_, ?_, .refl formed⟩; exact ⟨_, _, rfl, p⟩
+  | eqRefl => refine ⟨_, ?_, .refl formed⟩; exact rfl
+  | eqSubst a => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a⟩
+  | succNeZero => refine ⟨_, ?_, .refl formed⟩; exact rfl
+  | succInj => refine ⟨_, ?_, .refl formed⟩; exact rfl
   | lem formula => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, formula⟩
-  | induction motive base step argument ihb ihs =>
-      refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, motive, base, step, argument⟩
+  | induction a => refine ⟨_, ?_, .refl formed⟩; exact ⟨rfl, a⟩
   | conversion p type ih =>
       obtain ⟨B, premises, eq⟩ := ih (PredicateEq.regularity valid type).1
       exact ⟨B, premises, .trans eq type⟩

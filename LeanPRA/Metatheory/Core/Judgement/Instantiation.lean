@@ -34,22 +34,19 @@ namespace LeanPRA.Core
       .impIntro binderName (A.instantiate fs ps depth) (p.instantiate fs ps depth)
   | .impElim p q => .impElim (p.instantiate fs ps depth) (q.instantiate fs ps depth)
   | .andIntro p q => .andIntro (p.instantiate fs ps depth) (q.instantiate fs ps depth)
-  | .andLeft p => .andLeft (p.instantiate fs ps depth)
-  | .andRight p => .andRight (p.instantiate fs ps depth)
-  | .orLeft A p => .orLeft (A.instantiate fs ps depth) (p.instantiate fs ps depth)
-  | .orRight A p => .orRight (A.instantiate fs ps depth) (p.instantiate fs ps depth)
-  | .orElim leftName rightName A p q r =>
-      .orElim leftName rightName (A.instantiate fs ps depth) (p.instantiate fs ps depth)
-        (q.instantiate fs ps depth) (r.instantiate fs ps depth)
-  | .falseElim A p => .falseElim (A.instantiate fs ps depth) (p.instantiate fs ps depth)
+  | .andLeft a b => .andLeft (a.instantiate fs ps depth) (b.instantiate fs ps depth)
+  | .andRight a b => .andRight (a.instantiate fs ps depth) (b.instantiate fs ps depth)
+  | .orLeft a b => .orLeft (a.instantiate fs ps depth) (b.instantiate fs ps depth)
+  | .orRight a b => .orRight (a.instantiate fs ps depth) (b.instantiate fs ps depth)
+  | .orElim a b c =>
+    .orElim (a.instantiate fs ps depth) (b.instantiate fs ps depth) (c.instantiate fs ps depth)
+  | .falseElim a => .falseElim (a.instantiate fs ps depth)
   | .forallIntro binderName P p =>
       .forallIntro binderName (P.instantiate fs ps depth) (p.instantiate fs ps (depth + 1))
   | .forallElim p a => .forallElim (p.instantiate fs ps depth) (a.instantiate fs depth)
   | .existsIntro P a p =>
       .existsIntro (P.instantiate fs ps depth) (a.instantiate fs depth) (p.instantiate fs ps depth)
-  | .existsElim variableName hypothesisName A p q =>
-      .existsElim variableName hypothesisName (A.instantiate fs ps depth)
-        (p.instantiate fs ps depth) (q.instantiate fs ps (depth + 1))
+  | .existsElim a b => .existsElim (a.instantiate fs ps depth) (b.instantiate fs ps depth)
   | .letE binderName A p q =>
       .letE binderName (A.instantiate fs ps depth) (p.instantiate fs ps depth)
         (q.instantiate fs ps depth)
@@ -58,15 +55,12 @@ namespace LeanPRA.Core
   | .letPredicate binderName P p =>
       .letPredicate binderName (P.instantiate fs ps depth) (p.instantiate fs ps depth)
   | .ascribe A p => .ascribe (A.instantiate fs ps depth) (p.instantiate fs ps depth)
-  | .eqRefl t => .eqRefl (t.instantiate fs depth)
-  | .eqSubst P e p => .eqSubst (P.instantiate fs ps depth)
-      (e.instantiate fs ps depth) (p.instantiate fs ps depth)
-  | .succNeZero t => .succNeZero (t.instantiate fs depth)
-  | .succInj p => .succInj (p.instantiate fs ps depth)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst (a.instantiate fs ps depth)
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
   | .lem A => .lem (A.instantiate fs ps depth)
-  | .induction variableName hypothesisName P b s a =>
-      .induction variableName hypothesisName (P.instantiate fs ps depth)
-        (b.instantiate fs ps depth) (s.instantiate fs ps (depth + 1)) (a.instantiate fs depth)
+  | .induction a => .induction (a.instantiate fs ps depth)
 
 end LeanPRA.Core
 
@@ -122,9 +116,9 @@ private theorem instantiate_rename (t : Term) (fs : List Term) (d e : Nat) (r : 
       rw [iha _ _ _ hr, iht _ _ _ (lift_compatible hr)]
   | bvar | zero | succ => simp [Term.rename, Term.instantiate]
   | app f a ihf iha => simp only [Term.rename, Term.instantiate]; rw [ihf _ _ _ hr, iha _ _ _ hr]
-  | primrec b s n ihb ihs ihn =>
+  | primrec b s ihb ihs =>
       simp only [Term.rename, Term.instantiate]
-      rw [ihb _ _ _ hr, ihs _ _ _ hr, ihn _ _ _ hr]
+      rw [ihb _ _ _ hr, ihs _ _ _ hr]
   | definition name ts ih => simp only [Term.rename, Term.instantiate]; rw [ih _ _ _ hr]
   | nil => rfl
   | cons t ts iht ihts =>
@@ -208,11 +202,10 @@ private theorem instantiate_comp (t : Term) (fs gs : List Term) (n d : Nat)
       simp only [Term.instantiate]
       rw [instantiate_comp a fs gs n d scope.1, show d + n + 1 = d + (n + 1) by omega,
         instantiate_comp t fs gs (n + 1) d scope.2]
-  | primrec b s a =>
+  | primrec b s =>
       simp only [TermScope] at scope
       simp only [Term.instantiate]
-      rw [instantiate_comp b fs gs n d scope.1, instantiate_comp s fs gs n d scope.2.1,
-        instantiate_comp a fs gs n d scope.2.2]
+      rw [instantiate_comp b fs gs n d scope.1, instantiate_comp s fs gs n d scope.2]
   | definition name ts =>
       simp only [TermScope] at scope
       simp only [Term.instantiate, List.map_map]
@@ -320,10 +313,9 @@ private theorem instantiate_subst (t : Term) (fs : List Term) (d e : Nat) (s u :
       simp only [Term.subst, Term.instantiate]
       rw [instantiate_subst a fs d e s u hs hu,
         instantiate_subst t fs (d + 1) (e + 1) _ _ hslift hulift]
-  | primrec b step a =>
+  | primrec b step =>
       simp only [Term.subst, Term.instantiate]
-      rw [instantiate_subst b fs d e s u hs hu, instantiate_subst step fs d e s u hs hu,
-        instantiate_subst a fs d e s u hs hu]
+      rw [instantiate_subst b fs d e s u hs hu, instantiate_subst step fs d e s u hs hu]
   | definition name ts =>
       simp only [Term.subst, Term.instantiate, List.map_map]
       congr 1
@@ -451,8 +443,8 @@ private theorem term_instantiate {E Ξ L t k} (h : TermTyping E Ξ L t k)
   | lam body ih => simp only [Term.instantiate]; exact .lam (ih actuals)
   | app f a ihf iha => simp only [Term.instantiate]; exact .app (ihf actuals) (iha actuals)
   | letE a t iha iht => simp only [Term.instantiate]; exact .letE (iha actuals) (iht actuals)
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.instantiate]; exact .primrec (ihb actuals) (ihs actuals) (ihn actuals)
+  | primrec b s ihb ihs =>
+      simp only [Term.instantiate]; exact .primrec (ihb actuals) (ihs actuals)
   | definition lookup args ih => simp only [Term.instantiate]; exact .definition lookup (ih actuals)
   | nil => exact .nil
   | cons head tail ihh iht =>
@@ -558,8 +550,8 @@ private theorem term_eq_instantiate {E Ξ L t u k} (valid : EnvironmentWF E)
   | lam body ih => simp only [Term.instantiate]; exact .lam (ih actuals)
   | app f a ihf iha => simp only [Term.instantiate]; exact .app (ihf actuals) (iha actuals)
   | letE a t iha iht => simp only [Term.instantiate]; exact .letE (iha actuals) (iht actuals)
-  | primrec b s n ihb ihs ihn =>
-      simp only [Term.instantiate]; exact .primrec (ihb actuals) (ihs actuals) (ihn actuals)
+  | primrec b s ihb ihs =>
+      simp only [Term.instantiate]; exact .primrec (ihb actuals) (ihs actuals)
   | definition lookup arguments ih =>
       simp only [Term.instantiate]; exact .definition lookup (ih actuals)
   | nil => exact .nil
@@ -689,26 +681,36 @@ private theorem proof_instantiate {E Ξ L H p A} (valid : EnvironmentWF E)
   | andIntro a b iha ihb =>
       simp only [Proof.instantiate, Predicate.instantiate]
       exact .andIntro (iha actuals) (ihb actuals)
-  | andLeft pair ih =>
-      simp only [Proof.instantiate]
-      exact .andLeft (by simpa only [Predicate.instantiate] using ih actuals)
-  | andRight pair ih =>
-      simp only [Proof.instantiate]
-      exact .andRight (by simpa only [Predicate.instantiate] using ih actuals)
-  | orLeft other proof ih =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      exact .orLeft (predicate_instantiate valid other actuals) (ih actuals)
-  | orRight other proof ih =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      exact .orRight (predicate_instantiate valid other actuals) (ih actuals)
-  | orElim target scrutinee left right ihp ihl ihr =>
-      simp only [Proof.instantiate]
-      exact .orElim (predicate_instantiate valid target actuals)
-        (by simpa only [Predicate.instantiate] using ihp actuals) (ihl actuals) (ihr actuals)
-  | falseElim target proof ih =>
-      simp only [Proof.instantiate]
-      exact .falseElim (predicate_instantiate valid target actuals)
-        (by simpa only [Predicate.instantiate] using ih actuals)
+  | andLeft a b =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.andLeft (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | andRight a b =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.andRight (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | orLeft a b =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.orLeft (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | orRight a b =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.orRight (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | orElim a b c =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.orElim (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (predicate_instantiate valid c actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | falseElim a =>
+      simpa [Proof.instantiate, Predicate.instantiate] using
+        (ProofTyping.falseElim (predicate_instantiate valid a actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
   | forallIntro motive body ih =>
       simp only [Proof.instantiate, Predicate.instantiate]
       apply ProofTyping.forallIntro (predicate_instantiate valid motive actuals)
@@ -723,13 +725,12 @@ private theorem proof_instantiate {E Ξ L H p A} (valid : EnvironmentWF E)
       exact .existsIntro (predicate_instantiate valid motive actuals)
         (term_instantiate witness actuals.functions)
         (by simpa only [Predicate.instantiate] using ih actuals)
-  | existsElim target scrutinee body ihp ihb =>
-      simp only [Proof.instantiate]
-      apply ProofTyping.existsElim (predicate_instantiate valid target actuals)
-        (by simpa only [Predicate.instantiate] using ihp actuals)
-      simpa only [List.length_cons, List.cons_append, List.map_cons,
-        Predicate.instantiate, Term.instantiate,
-        predicate_instantiate_shift, hypotheses_instantiate_shift] using ihb actuals
+  | existsElim a b =>
+      simpa [Proof.instantiate, Predicate.instantiate, existentialEliminationType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.existsElim (predicate_instantiate valid a actuals)
+          (predicate_instantiate valid b actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
   | letE type value body ihv ihb =>
       simp only [Proof.instantiate]
       exact .letE (predicate_instantiate valid type actuals) (ihv actuals) (ihb actuals)
@@ -742,31 +743,31 @@ private theorem proof_instantiate {E Ξ L H p A} (valid : EnvironmentWF E)
   | ascribe type proof ih =>
       simp only [Proof.instantiate]
       exact .ascribe (predicate_instantiate valid type actuals) (ih actuals)
-  | eqRefl term =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      exact .eqRefl (term_instantiate term actuals.functions)
-  | eqSubst motive equality proof ihe ihp =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      exact .eqSubst (predicate_instantiate valid motive actuals)
-        (by simpa only [Predicate.instantiate] using ihe actuals)
-        (by simpa only [Predicate.instantiate] using ihp actuals)
-  | succNeZero term =>
-      simp only [Proof.instantiate, Predicate.instantiate, Term.instantiate]
-      exact .succNeZero (term_instantiate term actuals.functions)
-  | succInj proof ih =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      exact .succInj (by simpa only [Predicate.instantiate, Term.instantiate] using ih actuals)
+  | eqRefl =>
+      simpa [Proof.instantiate, Predicate.instantiate, reflexivityType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.eqRefl (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | eqSubst a =>
+      simpa [Proof.instantiate, Predicate.instantiate, substitutionType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.eqSubst (predicate_instantiate valid a actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | succNeZero =>
+      simpa [Proof.instantiate, Predicate.instantiate, successorNonzeroType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.succNeZero (E := E) (Ξ := Ω) (Γ := _) (H := _))
+  | succInj =>
+      simpa [Proof.instantiate, Predicate.instantiate, successorInjectivityType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.succInj (E := E) (Ξ := Ω) (Γ := _) (H := _))
   | lem formula =>
       simp only [Proof.instantiate, Predicate.instantiate]
       exact .lem (predicate_instantiate valid formula actuals)
-  | induction motive base step argument ihb ihs =>
-      simp only [Proof.instantiate, Predicate.instantiate]
-      apply ProofTyping.induction (predicate_instantiate valid motive actuals)
-      · simpa only [Predicate.instantiate, Term.instantiate] using ihb actuals
-      · simpa only [List.length_cons, List.cons_append, List.map_cons,
-          Predicate.instantiate, Term.instantiate,
-          predicate_instantiate_shift, hypotheses_instantiate_shift] using ihs actuals
-      · exact term_instantiate argument actuals.functions
+  | induction a =>
+      simpa [Proof.instantiate, Predicate.instantiate, inductionType,
+        Term.instantiate, predicate_instantiate_shift, Nat.add_assoc] using
+        (ProofTyping.induction (predicate_instantiate valid a actuals)
+          (E := E) (Ξ := Ω) (Γ := _) (H := _))
   | conversion proof type ih =>
       exact .conversion (ih actuals) (predicate_eq_instantiate valid type actuals)
 

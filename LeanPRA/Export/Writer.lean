@@ -8,8 +8,8 @@ public meta import LeanPRA.Export.Specification
 
 `run` reads a module's own elaborated Core declarations from Lean's persistent environment and
 writes its specification and object file. Specifications contain definition bodies and theorem
-statements; object files also contain theorem proofs. Builtins are exported as ordinary checked
-declarations.
+statements; object files also contain theorem proofs. Primitive constructions appear directly
+in the exported expressions.
 -/
 
 open Lean LeanPRA LeanPRA.Core LeanPRA.Surface
@@ -51,7 +51,7 @@ private def term : Core.Term → S
   | .lam n b => node "tlam" [name n, term b]
   | .app f a => node "tapp" [term f, term a]
   | .letE n v b => node "tlet" [name n, term v, term b]
-  | .primrec b s n => node "rec" [term b, term s, term n]
+  | .primrec b s => node "rec" [term b, term s]
   | .definition n fs => node "tdef" [name n, .list (fs.map term)]
 
 private def pred : Predicate → S
@@ -77,26 +77,26 @@ private def proof : Proof → S
   | .impIntro n a b => node "impIntro" [name n, pred a, proof b]
   | .impElim f a => node "impElim" [proof f, proof a]
   | .andIntro a b => node "andIntro" [proof a, proof b]
-  | .andLeft p => node "andLeft" [proof p]
-  | .andRight p => node "andRight" [proof p]
-  | .orLeft p h => node "orLeft" [pred p, proof h]
-  | .orRight p h => node "orRight" [pred p, proof h]
-  | .orElim n m t s a b => node "orElim" [name n, name m, pred t, proof s, proof a, proof b]
-  | .falseElim t p => node "falseElim" [pred t, proof p]
+  | .andLeft a b => node "andLeft" [pred a, pred b]
+  | .andRight a b => node "andRight" [pred a, pred b]
+  | .orLeft a b => node "orLeft" [pred a, pred b]
+  | .orRight a b => node "orRight" [pred a, pred b]
+  | .orElim a b c => node "orElim" [pred a, pred b, pred c]
+  | .falseElim a => node "falseElim" [pred a]
   | .forallIntro n m b => node "forallIntro" [name n, pred m, proof b]
   | .forallElim p t => node "forallElim" [proof p, term t]
   | .existsIntro m w p => node "existsIntro" [pred m, term w, proof p]
-  | .existsElim n h t s b => node "existsElim" [name n, name h, pred t, proof s, proof b]
+  | .existsElim a b => node "existsElim" [pred a, pred b]
   | .letE n t v b => node "hlet" [name n, pred t, proof v, proof b]
   | .letTerm n v b => node "hletTerm" [name n, term v, proof b]
   | .letPredicate n v b => node "hletPred" [name n, pred v, proof b]
   | .ascribe t p => node "ascribe" [pred t, proof p]
-  | .eqRefl t => node "refl" [term t]
-  | .eqSubst m e p => node "subst" [pred m, proof e, proof p]
-  | .succNeZero t => node "succNeZero" [term t]
-  | .succInj p => node "succInj" [proof p]
+  | .eqRefl => node "refl" []
+  | .eqSubst a => node "subst" [pred a]
+  | .succNeZero => node "succNeZero" []
+  | .succInj => node "succInj" []
   | .lem p => node "lem" [pred p]
-  | .induction n h m b s t => node "ind" [name n, name h, pred m, proof b, proof s, term t]
+  | .induction a => node "ind" [pred a]
 
 /-- Encode a declaration, including a theorem's proof, as an object record. -/
 private def encodeDeclaration : Core.Declaration → S
@@ -159,18 +159,15 @@ private unsafe def moduleDeclarations (owner : Name) : IO (Array Core.Declaratio
       if entry.owner == owner then declarations := declarations ++ entry.declarations
   return declarations
 
-/-- Write a module's specification and object file, or the builtin pair, and record whether a pair
-was written. Lake schedules imported modules separately, including modules reached through private
-imports. -/
+/-- Write a module's specification and object file, and record whether a pair was written.
+Lake schedules imported modules separately, including modules reached through private imports. -/
 public unsafe def run (args : List String) : IO Unit := do
   let (directory, result, owner, declarations) ← match args with
     | ["module", directory, result, name] => do
       let owner := name.toName
       pure (directory, result, owner, ← moduleDeclarations owner)
-    | ["builtins", directory, result] =>
-      pure (directory, result, `PRA.Builtins, builtinDeclarations.toArray)
     | _ => throw (IO.userError
-        "usage: export module DIRECTORY RESULT MODULE | export builtins DIRECTORY RESULT")
+        "usage: export module DIRECTORY RESULT MODULE")
   writeModule directory owner declarations
   let result := System.FilePath.mk result
   if let some parent := result.parent then IO.FS.createDirAll parent

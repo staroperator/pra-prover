@@ -26,7 +26,7 @@ namespace LeanPRA.Core
   | .app f a => .app (f.replace s p) (a.replace s p)
   | .letE binderName a t => .letE binderName (a.replace s p)
       (t.replace (Subst.lift 1 s) (fun i => (p i).shift))
-  | .primrec b f a => .primrec (b.replace s p) (f.replace s p) (a.replace s p)
+  | .primrec b f => .primrec (b.replace s p) (f.replace s p)
   | .definition name fs => .definition name (fs.map (Term.replace s p))
 
 private theorem lift_subst (s u : Subst) :
@@ -137,9 +137,9 @@ private theorem replace_instantiate {E Ξ Γ t k} (h : Theory.TermTyping E Ξ Γ
         | succ i => simp [Subst.lift, locals i j hi, Term.shift, Term.rename]
       · intro i j hi
         simp only [parameters i j hi, shift_add, List.length_cons]
-  | primrec b f a ihb ihf iha =>
+  | primrec b f ihb ihf =>
       simp only [Term.replace, Term.instantiate]
-      rw [ihb _ _ locals parameters, ihf _ _ locals parameters, iha _ _ locals parameters]
+      rw [ihb _ _ locals parameters, ihf _ _ locals parameters]
   | definition lookup args ih =>
       simp only [Term.replace, Term.instantiate]
       rw [ih _ _ locals parameters]

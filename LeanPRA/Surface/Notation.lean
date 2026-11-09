@@ -132,7 +132,7 @@ private partial def matchExpansion (rule : PraNotation) (locals : List Name)
     let expected := pattern.getId.replacePrefix `_root_ .anonymous
     if expected == `Nat || expected == `QFProp then
       return if name == expected then some values else none
-    let resolved ← resolveDeclaration? (CoreEnvironment.getState (← getEnv)) name
+    let resolved ← resolveSignature? (CoreEnvironment.getState (← getEnv)) name
     return if resolved.any (·.name == expected) then some values else none
   if let some nested := (praNotations.getState (← getEnv)).find?
       (·.kind == actual.getKind) then
@@ -193,7 +193,7 @@ private partial def prepareExpansion (variables : Array Name) (stx : Syntax) :
   if stx.isIdent then
     if (variable? variables stx).isSome then return stx
     if stx.getId == `Nat || stx.getId == `QFProp then return stx
-    let some decl ← resolveDeclaration? (CoreEnvironment.getState (← getEnv)) stx.getId
+    let some decl ← resolveSignature? (CoreEnvironment.getState (← getEnv)) stx.getId
       | throwErrorAt stx "unknown PRA declaration in notation: `{stx.getId}`"
     return mkIdentFrom stx (`_root_ ++ decl.name)
   match stx with

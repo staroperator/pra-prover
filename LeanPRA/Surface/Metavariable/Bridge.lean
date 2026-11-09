@@ -42,7 +42,7 @@ def Projection.encodeTerm (view : Projection) : Term → Core.Term
   | .lam n b => .lam n (view.encodeTerm b)
   | .app f a => .app (view.encodeTerm f) (view.encodeTerm a)
   | .letE n a b => .letE n (view.encodeTerm a) (view.encodeTerm b)
-  | .primrec b s n => .primrec (view.encodeTerm b) (view.encodeTerm s) (view.encodeTerm n)
+  | .primrec b s => .primrec (view.encodeTerm b) (view.encodeTerm s)
   | .definition n fs => .definition n (fs.map (view.encodeTerm))
 
 /-- Encode a predicate as a `Core.Predicate`, mapping `.mvar i` to
@@ -73,7 +73,7 @@ def Projection.decodeTerm (view : Projection) : Core.Term → Term
   | .lam n b => .lam n (view.decodeTerm b)
   | .app f a => .app (view.decodeTerm f) (view.decodeTerm a)
   | .letE n a b => .letE n (view.decodeTerm a) (view.decodeTerm b)
-  | .primrec b s n => .primrec (view.decodeTerm b) (view.decodeTerm s) (view.decodeTerm n)
+  | .primrec b s => .primrec (view.decodeTerm b) (view.decodeTerm s)
   | .definition n fs => .definition n (fs.map (view.decodeTerm))
 
 /-- Decode a `Core.Predicate`, mapping parameter indices at or above `view.predicates` back to
@@ -112,20 +112,13 @@ def Projection.encodeProof (view : Projection) : Proof → Except String Core.Pr
     return .impElim (← view.encodeProof function) (← view.encodeProof argument)
   | .andIntro left right => do
     return .andIntro (← view.encodeProof left) (← view.encodeProof right)
-  | .andLeft pair => do
-    return .andLeft (← view.encodeProof pair)
-  | .andRight pair => do
-    return .andRight (← view.encodeProof pair)
-  | .orLeft other proof => do
-    return .orLeft (view.encodePredicate other) (← view.encodeProof proof)
-  | .orRight other proof => do
-    return .orRight (view.encodePredicate other) (← view.encodeProof proof)
-  | .orElim leftName rightName target scrutinee left right => do
-    return .orElim leftName rightName
-        (view.encodePredicate target) (← view.encodeProof scrutinee) (← view.encodeProof left)
-        (← view.encodeProof right)
-  | .falseElim target proof => do
-    return .falseElim (view.encodePredicate target) (← view.encodeProof proof)
+  | .andLeft a b => return .andLeft (view.encodePredicate a) (view.encodePredicate b)
+  | .andRight a b => return .andRight (view.encodePredicate a) (view.encodePredicate b)
+  | .orLeft a b => return .orLeft (view.encodePredicate a) (view.encodePredicate b)
+  | .orRight a b => return .orRight (view.encodePredicate a) (view.encodePredicate b)
+  | .orElim a b c =>
+    return .orElim (view.encodePredicate a) (view.encodePredicate b) (view.encodePredicate c)
+  | .falseElim a => return .falseElim (view.encodePredicate a)
   | .forallIntro binderName motive body => do
     return .forallIntro binderName (view.encodePredicate motive)
         (← view.encodeProof body)
@@ -134,10 +127,7 @@ def Projection.encodeProof (view : Projection) : Proof → Except String Core.Pr
   | .existsIntro motive witness proof => do
     return .existsIntro (view.encodePredicate motive)
         (view.encodeTerm witness) (← view.encodeProof proof)
-  | .existsElim variableName hypothesisName target scrutinee body => do
-    return .existsElim variableName
-        hypothesisName (view.encodePredicate target) (← view.encodeProof scrutinee)
-        (← view.encodeProof body)
+  | .existsElim a b => return .existsElim (view.encodePredicate a) (view.encodePredicate b)
   | .letE binderName type value body => do
     return .letE binderName (view.encodePredicate type)
         (← view.encodeProof value) (← view.encodeProof body)
@@ -149,22 +139,13 @@ def Projection.encodeProof (view : Projection) : Proof → Except String Core.Pr
         (← view.encodeProof body)
   | .ascribe type proof => do
     return .ascribe (view.encodePredicate type) (← view.encodeProof proof)
-  | .eqRefl term => do
-    return .eqRefl (view.encodeTerm term)
-  | .eqSubst motive equality proof => do
-    return .eqSubst (view.encodePredicate motive) (← view.encodeProof equality)
-      (← view.encodeProof proof)
-  | .succNeZero term => do
-    return .succNeZero (view.encodeTerm term)
-  | .succInj proof => do
-    return .succInj (← view.encodeProof proof)
+  | .eqRefl => return .eqRefl
+  | .eqSubst a => return .eqSubst (view.encodePredicate a)
+  | .succNeZero => return .succNeZero
+  | .succInj => return .succInj
   | .lem formula => do
     return .lem (view.encodePredicate formula)
-  | .induction variableName hypothesisName motive base step argument => do
-    return .induction variableName
-        hypothesisName (view.encodePredicate motive) (← view.encodeProof base)
-        (← view.encodeProof step)
-        (view.encodeTerm argument)
+  | .induction a => return .induction (view.encodePredicate a)
 
 /-- Encode a typing context as a `Core.Context` by encoding its proof hypotheses. -/
 def Projection.encodeContext (view : Projection) (ctx : Context) : Core.Context :=
@@ -187,7 +168,7 @@ def Term.ofCore : Core.Term → Term
   | .lam n b => .lam n (Term.ofCore b)
   | .app f a => .app (Term.ofCore f) (Term.ofCore a)
   | .letE n a b => .letE n (Term.ofCore a) (Term.ofCore b)
-  | .primrec b s n => .primrec (Term.ofCore b) (Term.ofCore s) (Term.ofCore n)
+  | .primrec b s => .primrec (Term.ofCore b) (Term.ofCore s)
   | .definition n fs => .definition n (fs.map (Term.ofCore))
 
 /-- Convert a `Core.Predicate` to a Surface `Predicate`, keeping all declaration parameters as
@@ -208,7 +189,28 @@ def Predicate.ofCore : Core.Predicate → Predicate
   | .letPredicate n p q => .letPredicate n (Predicate.ofCore p) (Predicate.ofCore q)
   | .definition n fs ps => .definition n (fs.map (Term.ofCore)) (ps.map (Predicate.ofCore))
 
+/-- Specialize a primitive proof head with the supplied declaration arguments. -/
+def primitiveProof (p : Core.Proof) (fs : List Term) (ps : List Predicate) : Option Proof :=
+  let pred := fun p => (Predicate.ofCore p).instantiate fs ps
+  match p with
+  | .trueIntro => some (.trueIntro)
+  | .andLeft a b => some (.andLeft (pred a) (pred b))
+  | .andRight a b => some (.andRight (pred a) (pred b))
+  | .orLeft a b => some (.orLeft (pred a) (pred b))
+  | .orRight a b => some (.orRight (pred a) (pred b))
+  | .orElim a b c => some (.orElim (pred a) (pred b) (pred c))
+  | .falseElim a => some (.falseElim (pred a))
+  | .existsElim a b => some (.existsElim (pred a) (pred b))
+  | .eqRefl => some (.eqRefl)
+  | .eqSubst a => some (.eqSubst (pred a))
+  | .succNeZero => some (.succNeZero)
+  | .succInj => some (.succInj)
+  | .lem a => some (.lem (pred a))
+  | .induction a => some (.induction (pred a))
+  | _ => none
+
 namespace Bridge
+
 /-- Check that `t` has arity `k` in the encoded context. -/
 def checkTerm (view : Projection) (depth : Nat) (env : Environment) (ctx : Context)
     (t : Term) (k : Nat) :=
@@ -229,9 +231,9 @@ private def termHeadStep : Nat → Core.Environment → Core.Term → Core.Check
       | some (.function d) => pure (d.body.instantiate fs)
       | _ => Core.whnfTerm (depth + 1) env t
     | .app (.lam _ body) argument => pure (body.subst0 argument)
+    | .app (.primrec ..) _ => Core.whnfTerm (depth + 1) env t
     | .app f a => return .app (← termHeadStep depth env f) a
     | .letE _ value body => pure (body.subst0 value)
-    | .primrec .. => Core.whnfTerm (depth + 1) env t
     | _ => pure t
 
 /-- Unfold one head definition or reduce one head step in `t`, leaving other subterms unchanged. -/

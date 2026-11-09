@@ -33,7 +33,7 @@ inductive Term where
   | lam (binderName : Lean.Name) (body : Term)
   | app (function argument : Term)
   | letE (binderName : Lean.Name) (value body : Term)
-  | primrec (base step argument : Term)
+  | primrec (base step : Term)
   | definition (name : Lean.Name) (functions : List Term)
   deriving Repr, Inhabited, BEq
 
@@ -69,29 +69,26 @@ inductive Proof where
   | impIntro (binderName : Lean.Name) (antecedent : Predicate) (body : Proof)
   | impElim (function argument : Proof)
   | andIntro (left right : Proof)
-  | andLeft (pair : Proof)
-  | andRight (pair : Proof)
-  | orLeft (other : Predicate) (proof : Proof)
-  | orRight (other : Predicate) (proof : Proof)
-  | orElim (leftName rightName : Lean.Name) (target : Predicate)
-      (scrutinee left right : Proof)
-  | falseElim (target : Predicate) (proof : Proof)
+  | andLeft (left right : Predicate)
+  | andRight (left right : Predicate)
+  | orLeft (left right : Predicate)
+  | orRight (left right : Predicate)
+  | orElim (left right target : Predicate)
+  | falseElim (target : Predicate)
   | forallIntro (binderName : Lean.Name) (motive : Predicate) (body : Proof)
   | forallElim (proof : Proof) (argument : Term)
   | existsIntro (motive : Predicate) (witness : Term) (proof : Proof)
-  | existsElim (variableName hypothesisName : Lean.Name) (target : Predicate)
-      (scrutinee body : Proof)
+  | existsElim (motive target : Predicate)
   | letE (binderName : Lean.Name) (type : Predicate) (value body : Proof)
   | letTerm (binderName : Lean.Name) (value : Term) (body : Proof)
   | letPredicate (binderName : Lean.Name) (value : Predicate) (body : Proof)
   | ascribe (type : Predicate) (proof : Proof)
-  | eqRefl (term : Term)
-  | eqSubst (motive : Predicate) (equality proof : Proof)
-  | succNeZero (term : Term)
-  | succInj (proof : Proof)
+  | eqRefl
+  | eqSubst (motive : Predicate)
+  | succNeZero
+  | succInj
   | lem (formula : Predicate)
-  | induction (variableName hypothesisName : Lean.Name) (motive : Predicate)
-      (base step : Proof) (argument : Term)
+  | induction (motive : Predicate)
   deriving Repr, BEq, Inhabited
 
 /-- Typing context for local variables, declaration parameters, and proof hypotheses during

@@ -83,7 +83,7 @@ private partial def term (names : Names) : Core.Term → Format
     application (term names head) (args.map (term names))
   | .letE n value body => parens ("let " ++ name n ++ " := " ++ term names value ++ ";" ++
       Format.line ++ term { names with locals := n :: names.locals } body)
-  | .primrec b s n => application "primrec" ([b, s, n].map (term names))
+  | .primrec b s => application "primrec" ([b, s].map (term names))
   | .definition n fs => "@" ++ name n ++
       (if fs.isEmpty then Format.nil else actuals (fs.map (term names)))
 

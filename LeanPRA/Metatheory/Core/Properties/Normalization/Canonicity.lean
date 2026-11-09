@@ -61,7 +61,7 @@ private theorem closed_normal {k t} (h : TermNormal k t) :
       · contradiction
   case primrec b s a base step arg blocked ihb ihs iha =>
       intro E typed _
-      obtain ⟨n, eq⟩ := iha typed.inv_primrec.2.2.2 rfl
+      obtain ⟨n, eq⟩ := iha typed.inv_app.2 rfl
       cases n with
       | zero => exact False.elim (blocked.1 eq)
       | succ n => exact False.elim (blocked.2 _ eq)

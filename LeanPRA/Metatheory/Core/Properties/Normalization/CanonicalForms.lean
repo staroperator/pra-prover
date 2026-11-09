@@ -27,14 +27,18 @@ private theorem neutral_whnf {t} (h : TermNeutral t) : TermWhnf t := by
   case bvar => exact .bvar
   case parameter => exact .parameter
   case succ => exact .succ
-  case app f a ih _ => exact .app ih (by intro u n eq; cases f <;> cases eq)
+  case app f a ih _ =>
+      exact .app ih (by intro u n eq; cases f <;> cases eq)
+        (by intro b s eq; cases f <;> cases eq)
 
 private theorem normal_whnf {k t} (h : TermNormal k t) : TermWhnf t := by
   induction h using TermNormal.rec (motive_2 := fun _ _ => True) with
   | zero => exact .zero
   | bvar => exact .bvar
   | parameter => exact .parameter
-  | app f a _ _ => exact .app (neutral_whnf f) (by intro u n eq; cases f <;> cases eq)
+  | app f a _ _ =>
+      exact .app (neutral_whnf f) (by intro u n eq; cases f <;> cases eq)
+        (by intro b s eq; cases f <;> cases eq)
   | primrec b s a blocked _ _ ih => exact .primrec ih blocked
   | lam => exact .lam
   | _ => trivial
@@ -86,9 +90,11 @@ private theorem term_fixed {E} (valid : EnvironmentWF E) {k t} (normal : TermNor
           obtain ⟨w, hw, run⟩ := run
           have eq := whnfTerm_fixed (normal_whnf (.app fn arg)) hw
           subst w
-          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨g, hg, b, hb, rfl⟩ := run
-          rw [ihf typed.inv_app.1 hg, iha typed.inv_app.2 hb]
+          cases fn <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+            Except.ok.injEq] at run
+          all_goals
+            obtain ⟨g, hg, b, hb, rfl⟩ := run
+            rw [ihf typed.inv_app.1 hg, iha typed.inv_app.2 hb]
   case primrec b s a base step arg blocked ihb ihs iha =>
       intro Ξ Γ n u typed run
       cases n with
@@ -100,7 +106,8 @@ private theorem term_fixed {E} (valid : EnvironmentWF E) {k t} (normal : TermNor
           subst w
           simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
           obtain ⟨c, hc, v, hv, m, hm, rfl⟩ := run
-          obtain ⟨_, tb, ts, ta⟩ := typed.inv_primrec
+          obtain ⟨_, tb, ts⟩ := typed.inv_app.1.inv_primrec
+          have ta := typed.inv_app.2
           rw [ihb tb hc, ihs ts hv, iha ta hm]
   case app f a fn arg ihf iha =>
       intro Ξ Γ k n u typed run

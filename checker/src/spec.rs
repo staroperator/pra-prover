@@ -475,7 +475,7 @@ impl Parser<'_> {
             }
             if self.lex.eat("primrec")? {
                 let mut args = Vec::new();
-                for _ in 0..3 {
+                for _ in 0..2 {
                     args.push(self.primary(false, depth)?);
                 }
                 return Expression::build("rec", args);

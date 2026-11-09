@@ -1,6 +1,7 @@
 module
 
 public import LeanPRA.Core.DefEq
+public import LeanPRA.Core.PrimitiveTypes
 
 /-!
 # Checking PRA expressions and declarations
@@ -72,14 +73,12 @@ def inferTerm : Nat → Environment → Context → Term → CheckResult Arity
       | .letE _ value body =>
         let arity ← (inferTerm maxDepth environment context value)
         (inferTerm maxDepth environment (context.pushLocal arity) body)
-      | .primrec base step argument =>
+      | .primrec base step =>
         (do checkArity 0 (← inferTerm maxDepth environment context base))
           |>.withSite context (.term base)
         (do checkArity 2 (← inferTerm maxDepth environment context step))
           |>.withSite context (.term step)
-        (do checkArity 0 (← inferTerm maxDepth environment context argument))
-          |>.withSite context (.term argument)
-        pure 0
+        pure 1
       | .definition name functions =>
         match environment.lookup name with
         | some (.function declaration) =>
@@ -257,35 +256,23 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
       | .andIntro left right =>
         return .and (← (inferProof maxDepth environment context left))
           (← (inferProof maxDepth environment context right))
-      | .andLeft pair =>
-        match ← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context pair) with
-        | .and left _ => pure left
-        | actual => fail (.expectedForm .conjunction (.predicate actual))
-      | .andRight pair =>
-        match ← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context pair) with
-        | .and _ right => pure right
-        | actual => fail (.expectedForm .conjunction (.predicate actual))
-      | .orLeft other proof =>
-        let _ ← inferFormula maxDepth environment context other
-        return .or (← inferProof maxDepth environment context proof) other
-      | .orRight other proof =>
-        let _ ← inferFormula maxDepth environment context other
-        return .or other (← inferProof maxDepth environment context proof)
-      | .orElim _ _ target scrutinee left right =>
+      | .andLeft left right | .andRight left right
+      | .orLeft left right | .orRight left right =>
+        let _ ← inferFormula maxDepth environment context left
+        let _ ← inferFormula maxDepth environment context right
+        match expression with
+        | .andLeft .. => pure (.imp (.and left right) left)
+        | .andRight .. => pure (.imp (.and left right) right)
+        | .orLeft .. => pure (.imp left (.or left right))
+        | _ => pure (.imp right (.or left right))
+      | .orElim left right target =>
+        let _ ← inferFormula maxDepth environment context left
+        let _ ← inferFormula maxDepth environment context right
         let _ ← inferFormula maxDepth environment context target
-        match ← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context scrutinee) with
-        | .or a b =>
-          (checkProof maxDepth environment (context.pushProof a) left target)
-          (checkProof maxDepth environment (context.pushProof b) right target)
-          pure target
-        | actual => fail (.expectedForm .disjunction (.predicate actual))
-      | .falseElim target proof =>
+        pure (.imp (.or left right) (.imp (.imp left target) (.imp (.imp right target) target)))
+      | .falseElim target =>
         let _ ← inferFormula maxDepth environment context target
-        checkProof maxDepth environment context proof .false
-        pure target
+        pure (.imp .false target)
       | .forallIntro _ motive body =>
         checkMotive maxDepth environment context motive
         let extended := context.pushLocal 0
@@ -302,15 +289,10 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         checkTerm maxDepth environment context witness 0
         (checkProof maxDepth environment context proof (.app motive witness))
         pure (.ex motive)
-      | .existsElim _ _ target scrutinee body =>
+      | .existsElim motive target =>
+        checkMotive maxDepth environment context motive
         let _ ← inferFormula maxDepth environment context target
-        match ← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context scrutinee) with
-        | .ex motive =>
-          let extended := (context.pushLocal 0).pushProof (.app motive.shift (.bvar 0))
-          (checkProof maxDepth environment extended body target.shift)
-          pure target
-        | actual => fail (.expectedForm .existential (.predicate actual))
+        pure (existentialEliminationType motive target)
       | .letE _ type value body =>
         let _ ← inferFormula maxDepth environment context type
         (checkProof maxDepth environment context value type)
@@ -325,38 +307,18 @@ def inferProof : Nat → Environment → Context → Proof → CheckResult Predi
         let _ ← inferFormula maxDepth environment context type
         checkProof maxDepth environment context proof type
         pure type
-      | .eqRefl term =>
-        checkTerm maxDepth environment context term 0
-        pure (.equal term term)
-      | .eqSubst motive equality proof =>
+      | .eqRefl => pure reflexivityType
+      | .eqSubst motive =>
         checkMotive maxDepth environment context motive
-        let (left, right) ← equalitySides (← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context equality))
-        checkProof maxDepth environment context proof (.app motive left)
-        pure (.app motive right)
-      | .succNeZero term =>
-        checkTerm maxDepth environment context term 0
-        pure (.imp (.equal (.app .succ term) .zero) .false)
-      | .succInj proof =>
-        let (left, right) ← equalitySides (← whnfPredicate maxDepth environment
-          (← inferProof maxDepth environment context proof))
-        let left ← whnfTerm maxDepth environment left
-        let right ← whnfTerm maxDepth environment right
-        match left, right with
-        | .app .succ a, .app .succ b => pure (.equal a b)
-        | _, _ => fail (.expectedForm .successors (.predicate (.equal left right)))
+        pure (substitutionType motive)
+      | .succNeZero => pure successorNonzeroType
+      | .succInj => pure successorInjectivityType
       | .lem formula =>
         let _ ← inferFormula maxDepth environment context formula
         pure (.or formula (.imp formula .false))
-      | .induction _ _ motive base step argument =>
-        (checkMotive maxDepth environment context motive .qf)
-        checkTerm maxDepth environment context argument 0
-        (checkProof maxDepth environment context base (.app motive .zero))
-        let hypothesis : Predicate := .app motive.shift (.bvar 0)
-        let successor : Predicate := .app motive.shift (.app .succ (.bvar 0))
-        let extended := (context.pushLocal 0).pushProof hypothesis
-        (checkProof maxDepth environment extended step successor)
-        pure (.app motive argument)
+      | .induction motive =>
+        checkMotive maxDepth environment context motive .qf
+        pure (inductionType motive)
     ).withSite context (.proof expression)
 
 /-- Check that `proof` proves a formula definitionally equal to the well-formed `expected`. -/

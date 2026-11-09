@@ -29,43 +29,55 @@ public theorem exposeTerm_sound {n changed E Ξ Γ t u k}
       cases u with
       | none => exact .refl typed
       | some u => exact (TermEq.zeta hv hb).trans eq
-    | primrec b s a =>
-      cases a with
-      | zero =>
-        obtain ⟨rfl, hb, hs, _⟩ := typed.inv_primrec
-        have eq := ih hb run
-        cases u with
-        | none => exact .refl typed
-        | some u => exact (TermEq.primrecZero hb hs).trans eq
-      | _ =>
-        simp only [exposeTerm, pure, Except.pure, Except.ok.injEq] at run
-        split at run <;> subst u <;> exact .refl typed
     | app f a =>
-      obtain ⟨hf, ha⟩ := typed.inv_app
-      simp only [exposeTerm, CheckResult.bind_eq_ok] at run
-      obtain ⟨g, hg, run⟩ := run
-      have eqf := ih hf hg
-      cases h : g.getD f with
-      | lam name body =>
-        rw [h] at eqf
-        obtain ⟨j, hj, hb⟩ := eqf.regularity.2.inv_lam
-        have : k = j := Nat.succ.inj hj
-        subst j
-        simp only [h] at run
-        have eq := ih (hb.subst0 ha) run
-        cases u with
-        | none => exact .refl typed
-        | some u => exact (TermEq.app eqf (.refl ha)).trans ((TermEq.beta hb ha).trans eq)
-      | _ =>
-        simp only [h] at run
-        cases g with
-        | none =>
-          simp only [pure, Except.pure, Except.ok.injEq] at run
-          split at run <;> subst u <;> exact .refl typed
-        | some g =>
-          simp only [pure, Except.pure, Except.ok.injEq] at run
-          subst u
-          exact .app eqf (.refl ha)
+      have application {f a : Term} {u : Option Term} (typed : TermTyping E Ξ Γ (.app f a) k)
+          (run : (do
+            let computed ← exposeTerm n false f
+            match computed.getD f with
+            | .lam _ body => exposeTerm n true (body.subst0 a)
+            | _ =>
+              match computed with
+              | some g => pure (some (.app g a))
+              | none => pure (if changed then some (.app f a) else none)) = .ok u) :
+          TermEq E Ξ Γ (.app f a) (u.getD (.app f a)) k := by
+        obtain ⟨hf, ha⟩ := typed.inv_app
+        simp only [CheckResult.bind_eq_ok] at run
+        obtain ⟨g, hg, run⟩ := run
+        have eqf := ih hf hg
+        cases h : g.getD f with
+        | lam name body =>
+          rw [h] at eqf
+          obtain ⟨j, hj, hb⟩ := eqf.regularity.2.inv_lam
+          have : k = j := Nat.succ.inj hj
+          subst j
+          simp only [h] at run
+          have eq := ih (hb.subst0 ha) run
+          cases u with
+          | none => exact .refl typed
+          | some u => exact (TermEq.app eqf (.refl ha)).trans ((TermEq.beta hb ha).trans eq)
+        | _ =>
+          simp only [h] at run
+          cases g with
+          | none =>
+            simp only [pure, Except.pure, Except.ok.injEq] at run
+            split at run <;> subst u <;> exact .refl typed
+          | some g =>
+            simp only [pure, Except.pure, Except.ok.injEq] at run
+            subst u
+            exact .app eqf (.refl ha)
+      cases f with
+      | primrec b s =>
+        cases a with
+        | zero =>
+          obtain ⟨arity, hb, hs⟩ := typed.inv_app.1.inv_primrec
+          have hk : k = 0 := Nat.add_right_cancel arity
+          subst k
+          have eq := ih hb run
+          cases u with
+          | none => exact .refl typed
+          | some u => exact (TermEq.primrecZero hb hs).trans eq
+        | _ => exact application typed run
+      | _ => exact application typed run
     | _ =>
       simp only [exposeTerm, pure, Except.pure, Except.ok.injEq] at run
       split at run <;> subst u <;> exact .refl typed
@@ -176,30 +188,36 @@ public theorem exposeRecursor_sound {n E Ξ Γ t u k} (valid : EnvironmentWF E)
   | none => exact .refl typed
   | some u =>
     cases t with
-    | primrec b s a =>
-      obtain ⟨rfl, hb, hs, ha⟩ := typed.inv_primrec
-      simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
-      obtain ⟨m, hm, run⟩ := run
-      have eq := whnfTerm_sound valid ha hm
-      have congr := TermEq.primrec (.refl hb) (.refl hs) eq
-      cases m with
-      | zero => exact congr.trans ((TermEq.primrecZero hb hs).trans (exposeTerm_sound hb run))
-      | app f p =>
-        cases f with
-        | succ =>
-          have hp := eq.regularity.2.inv_app.2
-          exact congr.trans ((TermEq.primrecSucc hb hs hp).trans
-            (exposeTerm_sound (.app (.app hs hp) (.primrec hb hs hp)) run))
+    | app f a =>
+      cases f
+      case primrec b s =>
+        have ha := typed.inv_app.2
+        obtain ⟨arity, hb, hs⟩ := typed.inv_app.1.inv_primrec
+        have hk : k = 0 := Nat.add_right_cancel arity
+        subst k
+        simp only [exposeRecursor, CheckResult.bind_eq_ok] at run
+        obtain ⟨m, hm, run⟩ := run
+        have eq := whnfTerm_sound valid ha hm
+        have congr := TermEq.app (.primrec (.refl hb) (.refl hs)) eq
+        cases m with
+        | zero => exact congr.trans ((TermEq.primrecZero hb hs).trans (exposeTerm_sound hb run))
+        | app f p =>
+          cases f with
+          | succ =>
+            have hp := eq.regularity.2.inv_app.2
+            exact congr.trans ((TermEq.primrecSucc hb hs hp).trans
+              (exposeTerm_sound (.app (.app hs hp) (.app (.primrec hb hs) hp)) run))
+          | _ =>
+            simp only [pure, Except.pure, Except.ok.injEq] at run
+            split at run
+            next => contradiction
+            next => cases run; exact congr
         | _ =>
           simp only [pure, Except.pure, Except.ok.injEq] at run
           split at run
           next => contradiction
           next => cases run; exact congr
-      | _ =>
-        simp only [pure, Except.pure, Except.ok.injEq] at run
-        split at run
-        next => contradiction
-        next => cases run; exact congr
+      all_goals simp [exposeRecursor, pure, Except.pure] at run
     | _ => simp [exposeRecursor, pure, Except.pure] at run
 
 end LeanPRA.Core

@@ -8,7 +8,6 @@ open Lake DSL
 - The module facet `pra` writes a module's specification and object file after its imports are
   built.
 - The library facet `pra` collects exports in dependency order and writes `modules.txt`.
-- The package facet `praBuiltins` exports the builtin declarations once per build directory.
 
 The default `LeanPRA` build runs its `pra` facet and builds all Library source modules.
 -/
@@ -53,16 +52,11 @@ private def exportAfter (pkg : Package) (owner : Lean.Name) (deps : Job Unit) :
     buildFileUnlessUpToDate' marker do
       let plugins := (path.deps ++ path.runtimeOnlyDeps ++ #[path]).map fun lib =>
         s!"--{if lib.plugin then "plugin" else "load-dynlib"}={lib.path}"
-      let args := if owner == `PRA.Builtins then
-          #["builtins", out.toString, marker.toString]
-        else #["module", out.toString, marker.toString, owner.toString]
+      let args := #["module", out.toString, marker.toString, owner.toString]
       proc { cmd := (← getLean).toString
              env := ← getAugmentedEnv
              args := plugins ++ #[s!"--root={writer.pkg.dir}", "--run", driver.toString] ++ args }
     return marker
-
-package_facet praBuiltins (pkg) : System.FilePath :=
-  exportAfter pkg `PRA.Builtins Job.nil
 
 module_facet pra (mod) : Option System.FilePath := do
   let pkg ← getRootPackage
@@ -77,8 +71,7 @@ module_facet pra (mod) : Option System.FilePath := do
       if ← marker.pathExists then IO.FS.removeFile marker
       return none
   let dependencies ← (← (← mod.imports.fetch).await).mapM fun imp => fetch <| imp.facet `pra
-  let builtins ← fetch <| pkg.facet `praBuiltins
-  let deps := ((Job.mixArray dependencies).mix arts).mix builtins
+  let deps := (Job.mixArray dependencies).mix arts
   return (← exportAfter pkg mod.name deps).map (some ·)
 
 private def exportModules (lib : LeanLib) : FetchM (Array Module) := do
@@ -107,9 +100,7 @@ library_facet pra (lib) : System.FilePath := do
   let pkg ← getRootPackage
   let modules ← exportModules lib
   let jobs ← modules.mapM fun mod => fetch <| mod.facet `pra
-  let builtins ← fetch <| pkg.facet `praBuiltins
-  let markers := (Job.collectArray jobs).zipWith
-    (fun files builtin => #[builtin] ++ files.filterMap id) builtins
+  let markers := (Job.collectArray jobs).map (·.filterMap id)
   let some writer ← findModule? `LeanPRA.Export.Writer | error "exporter module missing"
   let config ← inputTextFile (writer.pkg.dir / "lakefile.lean")
   let markers := markers.zipWith (fun files _ => files) config

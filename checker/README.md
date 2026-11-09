@@ -45,8 +45,7 @@ closures. Modules without PRA declarations produce no files. For an exported mod
 - `modules.txt`: the module names in the order the checker reads them.
 
 File paths follow the module hierarchy, matching Lean's build directories. `modules.txt` lists
-dotted module names such as `LeanPRA.Library.Nat.Defs`; builtin declarations use `PRA.Builtins`,
-stored at `PRA/Builtins.pra` and `PRA/Builtins.prao`.
+dotted module names such as `LeanPRA.Library.Nat.Defs`.
 
 ## What the checker verifies
 

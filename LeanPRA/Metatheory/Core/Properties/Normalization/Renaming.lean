@@ -35,19 +35,19 @@ private theorem whnf_term {n E t u} (valid : EnvironmentWF E)
         refine ⟨g.rename r, ih hg r, ?_⟩
         cases g with
         | lam body => simpa only [Term.rename, Term.rename_subst0] using ih run r
-        | _ =>
-            simp only [pure, Except.pure, Except.ok.injEq] at run
-            subst u
-            simp only [Term.rename, pure, Except.pure]
-      case primrec b s a =>
-        simp only [CheckResult.bind_eq_ok] at run ⊢
-        obtain ⟨m, hm, run⟩ := run
-        refine ⟨m.rename r, ih hm r, ?_⟩
-        cases m with
-        | zero => simpa only [Term.rename] using ih run r
-        | app f p =>
-            cases f with
-            | succ => simpa only [Term.rename] using ih run r
+        | primrec b s =>
+            simp only [Term.rename, CheckResult.bind_eq_ok] at run ⊢
+            obtain ⟨m, hm, run⟩ := run
+            refine ⟨m.rename r, ih hm r, ?_⟩
+            cases m with
+            | zero => simpa only [Term.rename] using ih run r
+            | app f p =>
+                cases f with
+                | succ => simpa only [Term.rename] using ih run r
+                | _ =>
+                    simp only [pure, Except.pure, Except.ok.injEq] at run
+                    subst u
+                    simp only [Term.rename, pure, Except.pure]
             | _ =>
                 simp only [pure, Except.pure, Except.ok.injEq] at run
                 subst u
@@ -84,17 +84,21 @@ private theorem term_rename (n : Nat) (E : Environment) (valid : EnvironmentWF E
             simp only [reduceTerm, CheckResult.bind_eq_ok] at run ⊢
             obtain ⟨w, hw, run⟩ := run
             refine ⟨w.rename r, whnf_term valid hw r, ?_⟩
-            cases w <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+            cases w <;> simp only [pure, Except.pure,
               Except.ok.injEq, fail] at run <;> try contradiction
             case app f a =>
-              obtain ⟨g, hg, b, hb, rfl⟩ := run
-              simp only [Term.rename, CheckResult.bind_eq_ok]
-              exact ⟨g.rename r, ih.2 hg r, b.rename r, ih.1 hb r, rfl⟩
-            case primrec b s a =>
-              obtain ⟨c, hc, v, hv, m, hm, rfl⟩ := run
-              simp only [Term.rename, CheckResult.bind_eq_ok]
-              exact ⟨c.rename r, ih.1 hc r, v.rename r, ih.1 hv r,
-                m.rename r, ih.1 hm r, rfl⟩
+              cases f <;> simp only [CheckResult.bind_eq_ok,
+                Except.ok.injEq] at run
+              case primrec base step =>
+                obtain ⟨b, hb, s, hs, a', ha, rfl⟩ := run
+                simp only [Term.rename, CheckResult.bind_eq_ok]
+                exact ⟨b.rename r, ih.1 hb r, s.rename r, ih.1 hs r,
+                  a'.rename r, ih.1 ha r, rfl⟩
+              all_goals
+                obtain ⟨g, hg, b, hb, rfl⟩ := run
+                simp only [Term.rename, CheckResult.bind_eq_ok]
+                exact ⟨g.rename r, by simpa only [Term.rename] using ih.2 hg r,
+                  b.rename r, ih.1 hb r, rfl⟩
             all_goals subst u; simp only [Term.rename, pure, Except.pure]
       · intro t u run r
         simp only [reduceTermNeutral, CheckResult.bind_eq_ok] at run ⊢

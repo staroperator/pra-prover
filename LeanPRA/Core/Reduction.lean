@@ -42,15 +42,15 @@ def whnfTerm : Nat → Environment → Term → CheckResult Term
       let function ← whnfTerm maxDepth environment function
       match function with
       | .lam _ body => whnfTerm maxDepth environment (body.subst0 argument)
+      | .primrec base step =>
+        let argument ← whnfTerm maxDepth environment argument
+        match argument with
+        | .zero => whnfTerm maxDepth environment base
+        | .app .succ predecessor =>
+          whnfTerm maxDepth environment
+            (.app (.app step predecessor) (.app (.primrec base step) predecessor))
+        | _ => pure (.app (.primrec base step) argument)
       | _ => pure (.app function argument)
-    | .primrec base step argument =>
-      let argument ← whnfTerm maxDepth environment argument
-      match argument with
-      | .zero => whnfTerm maxDepth environment base
-      | .app .succ predecessor =>
-        whnfTerm maxDepth environment
-          (.app (.app step predecessor) (.primrec base step predecessor))
-      | _ => pure (.primrec base step argument)
     | _ => pure expression
 
 /-- Normalize a checked term at `arity` by eta-expanding and beta-reducing. -/
@@ -67,15 +67,15 @@ def reduceTerm : Nat → Environment → Arity → Term → CheckResult Term
       | .zero => pure .zero
       | .bvar i => pure (.bvar i)
       | .parameter i => pure (.parameter i)
+      | .app (.primrec base step) argument =>
+        let base ← reduceTerm maxDepth environment 0 base
+        let step ← reduceTerm maxDepth environment 2 step
+        let argument ← reduceTerm maxDepth environment 0 argument
+        pure (.app (.primrec base step) argument)
       | .app function argument =>
         let function ← reduceTermNeutral maxDepth environment function
         let argument ← reduceTerm maxDepth environment 0 argument
         pure (.app function argument)
-      | .primrec base step argument =>
-        let base ← reduceTerm maxDepth environment 0 base
-        let step ← reduceTerm maxDepth environment 2 step
-        let argument ← reduceTerm maxDepth environment 0 argument
-        pure (.primrec base step argument)
       | _ => fail (.expectedForm .number (.term expression))
 
 /-- Normalize the arguments of a neutral application spine without eta-expanding its head. -/
@@ -180,7 +180,7 @@ def betaReduceTerm : Nat → Term → Term
     | .lam n body => .lam n (betaReduceTerm k body)
     | .letE n a body =>
       .letE n (betaReduceTerm k a) (betaReduceTerm k body)
-    | .primrec b s n => .primrec (betaReduceTerm k b) (betaReduceTerm k s) (betaReduceTerm k n)
+    | .primrec b s => .primrec (betaReduceTerm k b) (betaReduceTerm k s)
     | .definition n fs => .definition n (fs.map (betaReduceTerm k))
     | _ => t
 

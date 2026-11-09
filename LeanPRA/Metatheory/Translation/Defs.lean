@@ -92,12 +92,11 @@ inductive TermTranslation (E : Environment) (Ξ : ParameterContext)
       (body : TermTranslation E Ξ ρ n (u.subst0 t) k f) :
       TermTranslation E Ξ ρ n (.letE name t u) k f
   | primrec (base : TermTranslation E Ξ ρ n b 0 f)
-      (step : TermTranslation E Ξ ρ n s 2 g)
-      (argument : TermTranslation E Ξ ρ n t 0 a) :
-      TermTranslation E Ξ ρ n (.primrec b s t) 0
-        (.comp (.prec f (Primrec.reindex g
+      (step : TermTranslation E Ξ ρ n s 2 g) :
+      TermTranslation E Ξ ρ n (.primrec b s) 1
+        (Primrec.reindex (.prec f (Primrec.reindex g
           (fun i => Fin.cases 0 (fun j => (Fin.succAdd j).succ) (Fin.succAdd i))))
-          (Fin.cases a Primrec.proj))
+          (Fin.cases (Fin.embedLeft 0) (Fin.addCases Fin.elim0 (Fin.natAdd 1))))
   | definition {n : Nat} {d : FunctionDefinition} {f : Primrec (d.arity + n)}
       (lookup : E[name]? = some (.function d))
       (arguments : FunctionArgumentsTranslation E Ξ ρ n fs d.functions)

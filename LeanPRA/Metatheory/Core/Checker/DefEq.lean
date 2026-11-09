@@ -50,10 +50,8 @@ private def termTrial (term applications : Arity → Term → Term → CheckResu
   match a, b with
   | .app f a, .app g b =>
     if ← applications (k + 1) f g then term 0 a b else pure false
-  | .primrec a s n, .primrec b t m =>
-    if ← term 0 a b then
-      if ← term 2 s t then term 0 n m else pure false
-    else pure false
+  | .primrec a s, .primrec b t =>
+    if ← term 0 a b then term 2 s t else pure false
   | .definition f as, .definition g bs =>
     if f != g then return false
     match E.lookup f with
@@ -75,11 +73,10 @@ private theorem term_trial_sound {E Ξ}
   case app.app f a g b =>
     exact .app (applicationsSound left.inv_app.1 right.inv_app.1 run.1)
       (termSound left.inv_app.2 right.inv_app.2 run.2)
-  case primrec.primrec a s n b t m =>
-    obtain ⟨rfl, ha, hs, hn⟩ := left.inv_primrec
-    obtain ⟨_, hb, ht, hm⟩ := right.inv_primrec
-    exact .primrec (termSound ha hb run.1) (termSound hs ht run.2.1)
-      (termSound hn hm run.2.2)
+  case primrec.primrec a s b t =>
+    obtain ⟨rfl, ha, hs⟩ := left.inv_primrec
+    obtain ⟨_, hb, ht⟩ := right.inv_primrec
+    exact .primrec (termSound ha hb run.1) (termSound hs ht run.2)
   case definition.definition f as g bs =>
     by_cases h : f = g
     · subst g
@@ -107,17 +104,17 @@ private def termFallback (n : Nat) (E : Environment) (k : Arity) (a b : Term)
     if x.isSome || y.isSome then
       return ← defEqTerm n E 0 (x.getD a) (y.getD b)
     match a, b with
-    | .primrec .., .primrec .. =>
+    | .app (.primrec ..) _, .app (.primrec ..) _ =>
       let x ← exposeRecursor (n + 1) E a
       let y ← exposeRecursor (n + 1) E b
       match x, y with
       | none, none => trial
       | _, _ => defEqTerm n E 0 (x.getD a) (y.getD b)
-    | .primrec .., _ =>
+    | .app (.primrec ..) _, _ =>
       let v ← whnfTerm (n + 1) E a
       if v == a then return ← trial
       defEqTerm n E 0 v b
-    | _, .primrec .. =>
+    | _, .app (.primrec ..) _ =>
       let v ← whnfTerm (n + 1) E b
       if v == b then return ← trial
       defEqTerm n E 0 a v
@@ -213,8 +210,10 @@ private theorem term_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
           subst l
           exact .lam (ih.1 ha hb run)
         next a s b t =>
-          obtain ⟨rfl, ha, hs, _⟩ := left.inv_primrec
-          obtain ⟨_, hb, ht, _⟩ := right.inv_primrec
+          obtain ⟨arity, ha, hs⟩ := left.inv_app.1.inv_primrec
+          obtain ⟨_, hb, ht⟩ := right.inv_app.1.inv_primrec
+          have hk : k = 0 := Nat.add_right_cancel arity
+          subst k
           exact (TermEq.primrecZero ha hs).trans ((ih.1 ha hb run).trans
             (TermEq.primrecZero hb ht).symm)
         next =>
@@ -232,6 +231,7 @@ private theorem term_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
         next =>
           have eq := eq_of_beq (Except.ok.inj run)
           cases eq; exact .refl left
+        next => exact term_trial_sound ih.1 ih.2 left right run
         next => exact term_trial_sound ih.1 ih.2 left right run
         next => exact term_trial_sound ih.1 ih.2 left right run
         next => cases (show false = true from Except.ok.inj run)
@@ -503,17 +503,17 @@ private theorem term_unfoldings_complete {E Ξ Γ a b x y} (valid : EnvironmentW
 private def termCompute (n : Nat) (E : Environment) (a b : Term)
     (trial : CheckResult Bool) : CheckResult Bool := do
   match a, b with
-  | .primrec .., .primrec .. =>
+  | .app (.primrec ..) _, .app (.primrec ..) _ =>
     let x ← exposeRecursor (n + 1) E a
     let y ← exposeRecursor (n + 1) E b
     match x, y with
     | none, none => trial
     | _, _ => defEqTerm n E 0 (x.getD a) (y.getD b)
-  | .primrec .., _ =>
+  | .app (.primrec ..) _, _ =>
     let v ← whnfTerm (n + 1) E a
     if v == a then return ← trial
     defEqTerm n E 0 v b
-  | _, .primrec .. =>
+  | _, .app (.primrec ..) _ =>
     let v ← whnfTerm (n + 1) E b
     if v == b then return ← trial
     defEqTerm n E 0 a v
@@ -521,17 +521,17 @@ private def termCompute (n : Nat) (E : Environment) (a b : Term)
 
 private theorem term_compute_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
     (left : TermTyping E Ξ Γ a 0) (right : TermTyping E Ξ Γ b 0)
-    (readyA : (∀ c s t, a ≠ .primrec c s t) → termStep E a = .ok none)
-    (readyB : (∀ c s t, b ≠ .primrec c s t) → termStep E b = .ok none)
+    (readyA : (∀ c s t, a ≠ .app (.primrec c s) t) → termStep E a = .ok none)
+    (readyB : (∀ c s t, b ≠ .app (.primrec c s) t) → termStep E b = .ok none)
     (moving : ¬(termStep E a = .ok none ∧ termStep E b = .ok none))
     (next : ∀ {i j u v}, HeadSteps (termStep E) i a u → HeadSteps (termStep E) j b v →
       0 < i + j → TermTyping E Ξ Γ u 0 → TermTyping E Ξ Γ v 0 →
       Eventually (fun n => defEqTerm n E 0 u v = .ok true))
     (trial : Nat → CheckResult Bool) :
     Eventually (fun n => termCompute n E a b (trial n) = .ok true) := by
-  by_cases ra : ∃ c s t, a = .primrec c s t
+  by_cases ra : ∃ c s t, a = .app (.primrec c s) t
   · obtain ⟨c, s, t, rfl⟩ := ra
-    by_cases rb : ∃ d r u, b = .primrec d r u
+    by_cases rb : ∃ d r u, b = .app (.primrec d r) u
     · obtain ⟨d, r, u, rfl⟩ := rb
       obtain ⟨i, A, hA⟩ := whnfTerm_terminates valid left
       obtain ⟨j, B, hB⟩ := whnfTerm_terminates valid right
@@ -556,9 +556,9 @@ private theorem term_compute_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
       intro n h
       simp only [termCompute, h.1, h.2.1, bind, Except.bind]
       cases x <;> cases y <;> first | exact h.2.2 | simp at moves
-    · have notRec : ∀ d r u, b ≠ .primrec d r u := fun d r u h => rb ⟨d, r, u, h⟩
+    · have notRec : ∀ d r u, b ≠ .app (.primrec d r) u := fun d r u h => rb ⟨d, r, u, h⟩
       obtain ⟨i, v, hv⟩ := whnfTerm_terminates valid left
-      have ne : v ≠ .primrec c s t := by
+      have ne : v ≠ .app (.primrec c s) t := by
         intro eq
         apply moving
         exact ⟨eq ▸ term_stationary (whnfTerm_normal (hv i (by omega))), readyB notRec⟩
@@ -568,15 +568,16 @@ private theorem term_compute_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
         (whnfTerm_sound valid left (hv i (by omega))).regularity.2 right
       refine eventually_mono ?_ (eventually_and (eventually_succ ⟨i, hv⟩) tail)
       intro n h
-      cases b <;> simp only [termCompute, h.1, bind, Except.bind]
+      cases b <;> try {rename_i f a; cases f}
+      all_goals simp only [termCompute, h.1, bind, Except.bind]
       all_goals first
         | exact False.elim (notRec _ _ _ rfl)
         | simpa only [beq_eq_false_iff_ne.mpr ne, Bool.false_eq_true, ↓reduceIte] using h.2
-  · have notRecA : ∀ c s t, a ≠ .primrec c s t := fun c s t h => ra ⟨c, s, t, h⟩
-    by_cases rb : ∃ d r u, b = .primrec d r u
+  · have notRecA : ∀ c s t, a ≠ .app (.primrec c s) t := fun c s t h => ra ⟨c, s, t, h⟩
+    by_cases rb : ∃ d r u, b = .app (.primrec d r) u
     · obtain ⟨d, r, u, rfl⟩ := rb
       obtain ⟨i, v, hv⟩ := whnfTerm_terminates valid right
-      have ne : v ≠ .primrec d r u := by
+      have ne : v ≠ .app (.primrec d r) u := by
         intro eq
         apply moving
         exact ⟨readyA notRecA, eq ▸ term_stationary (whnfTerm_normal (hv i (by omega)))⟩
@@ -586,7 +587,8 @@ private theorem term_compute_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
         (whnfTerm_sound valid right (hv i (by omega))).regularity.2
       refine eventually_mono ?_ (eventually_and (eventually_succ ⟨i, hv⟩) tail)
       intro n h
-      cases a <;> simp only [termCompute, h.1, bind, Except.bind]
+      cases a <;> try {rename_i f a; cases f}
+      all_goals simp only [termCompute, h.1, bind, Except.bind]
       all_goals first
         | exact False.elim (notRecA _ _ _ rfl)
         | simpa only [beq_eq_false_iff_ne.mpr ne, Bool.false_eq_true, ↓reduceIte] using h.2
@@ -663,10 +665,10 @@ private theorem term_trace_complete {E Ξ Γ a b A B} (valid : EnvironmentWF E)
     exact tail
   · have fallback := term_fallback_complete valid left right stopped next
       (fun n => termTrial (defEqTerm n E) (compareTermApplications n E) E 0 a b)
-    by_cases zeros : ∃ c s d r, a = .primrec c s .zero ∧ b = .primrec d r .zero
+    by_cases zeros : ∃ c s d r, a = .app (.primrec c s) .zero ∧ b = .app (.primrec d r) .zero
     · obtain ⟨c, s, d, r, rfl, rfl⟩ := zeros
       have rest := next (.next rfl .refl) (.next rfl .refl) (by omega)
-        left.inv_primrec.2.1 right.inv_primrec.2.1
+        left.inv_app.1.inv_primrec.2.1 right.inv_app.1.inv_primrec.2.1
       refine eventually_next ?_ (rest)
       intro n h
       simp only [defEqTerm]
@@ -728,9 +730,15 @@ private theorem term_origin_normal (n : Nat) :
           subst N; rfl
         | succ => simp [fail] at run
         | app hf =>
-          simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
-          obtain ⟨g, hg, b, hb, rfl⟩ := run
-          simpa only [termOrigin] using ih.2 hf hg
+          have finish {f a : Term} (hf : TermApplications f)
+              (run : (do
+                let g ← reduceTermNeutral n E f
+                let b ← reduceTerm n E 0 a
+                pure (Term.app g b)) = .ok N) : termOrigin N = termOrigin (.app f a) := by
+            simp only [CheckResult.bind_eq_ok, pure, Except.pure, Except.ok.injEq] at run
+            obtain ⟨g, hg, b, hb, rfl⟩ := run
+            simpa only [termOrigin] using ih.2 hf hg
+          cases hf <;> exact finish (by constructor <;> assumption) run
     · intro E a N head run
       simp only [reduceTermNeutral, CheckResult.bind_eq_ok] at run
       obtain ⟨w, hw, run⟩ := run
@@ -794,27 +802,54 @@ private theorem term_applications_app {n E k f a g b}
   next => simpa only [pure, Except.pure, and_ok] using run
 
 private theorem term_app_whnf {f a} (h : TermWhnf (.app f a)) : TermWhnf f := by
-  cases h with | app hf _ => exact hf
+  cases h with
+  | app hf _ _ => exact hf
+  | primrec => exact .recursor
 
 private theorem term_app_complete {n E k f a g b}
+    (head : TermWhnf (.app f a))
     (run : compareTermApplications n E (k + 1) f g = .ok true ∧
       defEqTerm n E 0 a b = .ok true) :
     defEqTerm (n + 1) E k (.app f a) (.app g b) = .ok true := by
+  have notZero : ∀ c s, f ≠ .primrec c s ∨ a ≠ .zero := by
+    intro c s
+    cases head with
+    | app _ _ notRec => exact .inl (notRec c s)
+    | primrec _ blocked => exact .inr blocked.1
+  have start : (match (.app f a : Term), (.app g b : Term) with
+      | .bvar i, .bvar j | .parameter i, .parameter j => pure (i == j)
+      | .lam _ c, .lam _ d =>
+        match k with
+        | j + 1 => defEqTerm n E j c d
+        | 0 => pure false
+      | .app (.primrec c _) .zero, .app (.primrec d _) .zero => defEqTerm n E 0 c d
+      | _, _ => termFallback n E k (.app f a) (.app g b)
+          (termTrial (defEqTerm n E) (compareTermApplications n E) E k (.app f a) (.app g b)))
+      = .ok true := by
+    cases f <;> cases a
+    all_goals first
+      | exact False.elim ((notZero _ _).elim (fun h => h rfl) (fun h => h rfl))
+      | change termFallback n E k _ _ _ = .ok true
+        simp only [termTrial, run.1, run.2, bind, Except.bind, ↓reduceIte, termFallback]
+        rfl
   simp only [defEqTerm]
   split
   next => rfl
-  next => simp only [run.1, run.2, bind, Except.bind, ↓reduceIte]; rfl
+  next => exact start
 
-private theorem term_rec_complete {n E a s t b r u}
-    (run : defEqTerm n E 0 a b = .ok true ∧ defEqTerm n E 2 s r = .ok true ∧
-      defEqTerm n E 0 t u = .ok true) :
-    defEqTerm (n + 1) E 0 (.primrec a s t) (.primrec b r u) = .ok true := by
-  simp only [defEqTerm]
+private theorem term_rec_complete {n E a s b r}
+    (run : defEqTerm n E 0 a b = .ok true ∧ defEqTerm n E 2 s r = .ok true) :
+    compareTermApplications (n + 1) E 1 (.primrec a s) (.primrec b r) = .ok true := by
+  simp only [compareTermApplications]
   split
   next => rfl
-  next =>
-    split <;> simp_all [pure, Except.pure, bind, Except.bind]
+  next => simpa only [pure, Except.pure, and_ok] using run
 
+private theorem neutral_not_rec {n E t b s}
+    (h : reduceTermNeutral n E t = .ok (.primrec b s)) : False := by
+  cases reduceTermNeutral_normal h
+
+set_option maxHeartbeats 2000000 in
 private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
     (∀ {Ξ Γ k a b n m}, TermTyping E Ξ Γ a k → TermTyping E Ξ Γ b k →
       reduceTerm n E k a = .ok N → reduceTerm m E k b = .ok N →
@@ -882,7 +917,7 @@ private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
                   cases Term.parameter.inj eq
                   simp [pure, Except.pure]
                 next => exact False.elim (lams ⟨_, _, _, _, rfl, rfl⟩)
-                next => exact Nat.noConfusion left.inv_primrec.1
+                next => exact Nat.noConfusion (Nat.add_right_cancel left.inv_app.1.inv_primrec.1)
                 next =>
                   change termFallback d E (k + 1) _ _ _ = .ok true
                   simp only [termFallback]
@@ -898,36 +933,41 @@ private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
             have ty := (whnfTerm_sound valid right hy).regularity.2
             have wx := whnfTerm_normal hx
             have wy := whnfTerm_normal hy
-            cases x <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+            cases x
+            case' app f a => cases f
+            all_goals simp only [CheckResult.bind_eq_ok, pure, Except.pure,
               Except.ok.injEq, fail] at ha <;> try contradiction
             all_goals
               repeat first | obtain ⟨_, _, ha⟩ := ha
               try subst N
-              cases y <;> simp only [CheckResult.bind_eq_ok, pure, Except.pure,
+              cases y
+              case' app f a => cases f
+              all_goals simp only [CheckResult.bind_eq_ok, pure, Except.pure,
                 Except.ok.injEq, fail, reduceCtorEq] at hb <;> try contradiction
             all_goals
               repeat first | obtain ⟨_, _, hb⟩ := hb | obtain ⟨rfl, hb⟩ := hb
             all_goals first
+              | exact False.elim (neutral_not_rec (by assumption))
               | exact term_refl
-              | apply eventually_next (fun _ => term_app_complete)
+              | apply eventually_next (fun _ => term_app_complete wx)
                 apply eventually_and
                 · refine (ih _ ?_).2 tx.inv_app.1 ty.inv_app.1
                     (term_app_whnf wx) (term_app_whnf wy) (by assumption) (by assumption)
                   simp +arith
                 · refine (ih _ ?_).1 tx.inv_app.2 ty.inv_app.2 (by assumption) (by assumption)
                   simp +arith
-              | apply eventually_next (fun _ => term_rec_complete)
+              | apply eventually_next (fun _ => term_app_complete wx)
                 apply eventually_and
-                · refine (ih _ ?_).1 tx.inv_primrec.2.1 ty.inv_primrec.2.1
-                    (by assumption) (by assumption)
+                · apply eventually_next (fun _ => term_rec_complete)
+                  apply eventually_and
+                  · refine (ih _ ?_).1 tx.inv_app.1.inv_primrec.2.1
+                      ty.inv_app.1.inv_primrec.2.1 (by assumption) (by assumption)
+                    simp +arith
+                  · refine (ih _ ?_).1 tx.inv_app.1.inv_primrec.2.2
+                      ty.inv_app.1.inv_primrec.2.2 (by assumption) (by assumption)
+                    simp +arith
+                · refine (ih _ ?_).1 tx.inv_app.2 ty.inv_app.2 (by assumption) (by assumption)
                   simp +arith
-                · apply eventually_and
-                  · refine (ih _ ?_).1 tx.inv_primrec.2.2.1 ty.inv_primrec.2.2.1
-                      (by assumption) (by assumption)
-                    simp +arith
-                  · refine (ih _ ?_).1 tx.inv_primrec.2.2.2 ty.inv_primrec.2.2.2
-                      (by assumption) (by assumption)
-                    simp +arith
     · intro Ξ Γ k a b n m left right wa wb ha hb
       cases n with
       | zero => simp [reduceTermNeutral, exhausted, fail] at ha

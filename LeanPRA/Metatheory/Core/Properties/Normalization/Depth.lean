@@ -29,15 +29,15 @@ private theorem whnf_term_step {n E t u} (run : whnfTerm n E t = .ok u) :
         simp only [CheckResult.bind_eq_ok] at run ⊢
         obtain ⟨g, hg, run⟩ := run
         refine ⟨g, ih hg, ?_⟩
-        cases g <;> first | exact ih run | exact run
-      case primrec b s a =>
-        simp only [CheckResult.bind_eq_ok] at run ⊢
-        obtain ⟨m, hm, run⟩ := run
-        refine ⟨m, ih hm, ?_⟩
-        cases m with
-        | zero => exact ih run
-        | app f p => cases f <;> first | exact ih run | exact run
-        | _ => exact run
+        cases g <;> try first | exact ih run | exact run
+        case primrec b s =>
+          simp only [CheckResult.bind_eq_ok] at run ⊢
+          obtain ⟨m, hm, run⟩ := run
+          refine ⟨m, ih hm, ?_⟩
+          cases m with
+          | zero => exact ih run
+          | app f p => cases f <;> first | exact ih run | exact run
+          | _ => exact run
       all_goals exact run
 
 private theorem term_step (n : Nat) :
@@ -61,14 +61,16 @@ private theorem term_step (n : Nat) :
             simp only [CheckResult.bind_eq_ok] at run ⊢
             obtain ⟨m, hm, run⟩ := run
             refine ⟨m, whnf_term_step hm, ?_⟩
-            cases m <;> simp only [CheckResult.bind_eq_ok, fail] at run ⊢ <;>
+            cases m <;> simp only [fail] at run ⊢ <;>
               try contradiction
             case app f a =>
-              obtain ⟨g, hg, b, hb, hu⟩ := run
-              exact ⟨g, ih.2 hg, b, ih.1 hb, hu⟩
-            case primrec b s a =>
-              obtain ⟨c, hc, v, hv, m, hm, hu⟩ := run
-              exact ⟨c, ih.1 hc, v, ih.1 hv, m, ih.1 hm, hu⟩
+              cases f <;> simp only [CheckResult.bind_eq_ok] at run ⊢
+              case primrec b s =>
+                obtain ⟨c, hc, v, hv, m, hm, hu⟩ := run
+                exact ⟨c, ih.1 hc, v, ih.1 hv, m, ih.1 hm, hu⟩
+              all_goals
+                obtain ⟨g, hg, b, hb, hu⟩ := run
+                exact ⟨g, ih.2 hg, b, ih.1 hb, hu⟩
             all_goals exact run
       · intro E t u run
         rw [reduceTermNeutral.eq_def] at run ⊢

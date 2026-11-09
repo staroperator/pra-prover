@@ -31,19 +31,22 @@ private theorem term_shape {n E t u} (run : whnfTerm n E t = .ok u) : TermWhnf u
         have ng := ih hg
         cases g with
         | lam body => exact ih run
-        | _ =>
-            simp only [pure, Except.pure, Except.ok.injEq] at run
-            subst u
-            exact .app ng (by intro body name h; cases h)
-      case primrec b s a =>
-        simp only [CheckResult.bind_eq_ok] at run
-        obtain ⟨m, hm, run⟩ := run
-        have nm := ih hm
-        cases m with
-        | zero => exact ih run
-        | app f p =>
-            cases f with
-            | succ => exact ih run
+        | primrec b s =>
+            simp only [CheckResult.bind_eq_ok] at run
+            obtain ⟨m, hm, run⟩ := run
+            have nm := ih hm
+            cases m with
+            | zero => exact ih run
+            | app f p =>
+                cases f with
+                | succ => exact ih run
+                | _ =>
+                    simp only [pure, Except.pure, Except.ok.injEq] at run
+                    subst u
+                    exact .primrec nm (by
+                      constructor
+                      · intro h; cases h
+                      · intro p h; cases h)
             | _ =>
                 simp only [pure, Except.pure, Except.ok.injEq] at run
                 subst u
@@ -54,10 +57,7 @@ private theorem term_shape {n E t u} (run : whnfTerm n E t = .ok u) : TermWhnf u
         | _ =>
             simp only [pure, Except.pure, Except.ok.injEq] at run
             subst u
-            exact .primrec nm (by
-              constructor
-              · intro h; cases h
-              · intro p h; cases h)
+            exact .app ng (by intro body name h; cases h) (by intro b s h; cases h)
       all_goals
         simp only [pure, Except.pure, Except.ok.injEq] at run
         subst u
@@ -66,7 +66,7 @@ private theorem term_shape {n E t u} (run : whnfTerm n E t = .ok u) : TermWhnf u
 private theorem term_fixed {n E t u} (normal : TermWhnf t)
     (run : whnfTerm n E t = .ok u) : u = t := by
   induction normal generalizing n u with
-  | app function notLam ih =>
+  | app function notLam notRec ih =>
       cases n with
       | zero => simp [whnfTerm, exhausted, fail] at run
       | succ n =>
@@ -76,24 +76,33 @@ private theorem term_fixed {n E t u} (normal : TermWhnf t)
           subst g
           split at run
           next => exact False.elim (notLam _ _ rfl)
+          next => exact False.elim (notRec _ _ rfl)
           next => simpa only [pure, Except.pure, Except.ok.injEq] using run.symm
-  | primrec argument blocked ih =>
+  | @primrec a b s argument blocked ih =>
       cases n with
       | zero => simp [whnfTerm, exhausted, fail] at run
       | succ n =>
-          simp only [whnfTerm, CheckResult.bind_eq_ok] at run
-          obtain ⟨a, ha, run⟩ := run
-          have := ih ha
-          subst a
-          split at run
-          next => exact False.elim (blocked.1 rfl)
-          next => exact False.elim (blocked.2 _ rfl)
-          next => simpa only [pure, Except.pure, Except.ok.injEq] using run.symm
+          rw [whnfTerm.eq_def] at run
+          cases n with
+          | zero => simp [whnfTerm, exhausted, fail] at run
+          | succ n =>
+              simp only [Nat.add_one] at run
+              rw [show whnfTerm (n + 1) E (.primrec b s) = .ok (.primrec b s) from rfl] at run
+              simp only [CheckResult.bind_eq_ok, Except.ok.injEq] at run
+              obtain ⟨_, rfl, run⟩ := run
+              simp only [CheckResult.bind_eq_ok] at run
+              obtain ⟨a', ha, run⟩ := run
+              have := ih ha
+              subst a'
+              split at run
+              next => exact False.elim (blocked.1 rfl)
+              next => exact False.elim (blocked.2 _ rfl)
+              next => simpa only [pure, Except.pure, Except.ok.injEq] using run.symm
   | _ => cases n <;> simp_all [whnfTerm, exhausted, fail, pure, Except.pure]
 
 private theorem term_exists {E t} (normal : TermWhnf t) : ∃ n, whnfTerm n E t = .ok t := by
   induction normal with
-  | app function notLam ih =>
+  | app function notLam notRec ih =>
       obtain ⟨n, hn⟩ := ih
       refine ⟨n + 1, ?_⟩
       rw [whnfTerm.eq_def]
@@ -102,12 +111,17 @@ private theorem term_exists {E t} (normal : TermWhnf t) : ∃ n, whnfTerm n E t 
       | rfl
       | split
         next => exact False.elim (notLam _ _ rfl)
+        next => exact False.elim (notRec _ _ rfl)
         next => rfl
-  | primrec argument blocked ih =>
+  | @primrec a b s argument blocked ih =>
       obtain ⟨n, hn⟩ := ih
-      refine ⟨n + 1, ?_⟩
+      refine ⟨n + 2, ?_⟩
       rw [whnfTerm.eq_def]
-      simp only [hn, bind, Except.bind]
+      simp only [Nat.add_succ, Nat.add_zero]
+      rw [show whnfTerm (n + 1) E (.primrec b s) = .ok (.primrec b s) from rfl]
+      simp only [bind, Except.bind]
+      rw [whnfTerm_mono (m := n + 1) (Nat.le_succ n) hn]
+      simp only
       split
       next => exact False.elim (blocked.1 rfl)
       next => exact False.elim (blocked.2 _ rfl)

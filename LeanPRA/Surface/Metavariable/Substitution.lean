@@ -37,8 +37,8 @@ def Term.transform (onLocal parameter : Nat → Nat → Term) (depth : Nat := 0)
   | .app f a => .app (f.transform onLocal parameter depth) (a.transform onLocal parameter depth)
   | .letE n a b => .letE n (a.transform onLocal parameter depth)
       (b.transform onLocal parameter (depth + 1))
-  | .primrec b s n => .primrec (b.transform onLocal parameter depth)
-      (s.transform onLocal parameter depth) (n.transform onLocal parameter depth)
+  | .primrec b s => .primrec (b.transform onLocal parameter depth)
+      (s.transform onLocal parameter depth)
   | .definition n fs => .definition n (fs.map (Term.transform onLocal parameter depth))
 
 /-- Add `count` to free variable indices at or above `cutoff`. -/
@@ -118,17 +118,12 @@ def Proof.transform (onLocal : Nat → Nat → Term) (onHyp : Nat → Nat → Na
     | .andIntro p q =>
       .andIntro (Proof.transform onLocal onHyp localDepth proofDepth p)
         (Proof.transform onLocal onHyp localDepth proofDepth q)
-    | .andLeft p => .andLeft (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .andRight p => .andRight (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .orLeft a p => .orLeft (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .orRight a p =>
-      .orRight (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .orElim l r a p q s =>
-      .orElim l r (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-        (Proof.transform onLocal onHyp localDepth (proofDepth + 1) q)
-        (Proof.transform onLocal onHyp localDepth (proofDepth + 1) s)
-    | .falseElim a p =>
-      .falseElim (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
+    | .andLeft a b => .andLeft (pred a) (pred b)
+    | .andRight a b => .andRight (pred a) (pred b)
+    | .orLeft a b => .orLeft (pred a) (pred b)
+    | .orRight a b => .orRight (pred a) (pred b)
+    | .orElim a b c => .orElim (pred a) (pred b) (pred c)
+    | .falseElim a => .falseElim (pred a)
     | .forallIntro n a p =>
       .forallIntro n (pred a) (Proof.transform onLocal onHyp (localDepth + 1) proofDepth p)
     | .forallElim p a =>
@@ -136,9 +131,7 @@ def Proof.transform (onLocal : Nat → Nat → Term) (onHyp : Nat → Nat → Na
     | .existsIntro a t p =>
       .existsIntro (pred a) (term t)
         (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .existsElim n h a p q =>
-      .existsElim n h (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-        (Proof.transform onLocal onHyp (localDepth + 1) (proofDepth + 1) q)
+    | .existsElim a b => .existsElim (pred a) (pred b)
     | .letE n a p q =>
       .letE n (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
         (Proof.transform onLocal onHyp localDepth (proofDepth + 1) q)
@@ -148,16 +141,12 @@ def Proof.transform (onLocal : Nat → Nat → Term) (onHyp : Nat → Nat → Na
       .letPredicate n (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
     | .ascribe a p =>
       .ascribe (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-    | .eqRefl t => .eqRefl (term t)
-    | .eqSubst a p q =>
-      .eqSubst (pred a) (Proof.transform onLocal onHyp localDepth proofDepth p)
-        (Proof.transform onLocal onHyp localDepth proofDepth q)
-    | .succNeZero t => .succNeZero (term t)
-    | .succInj p => .succInj (Proof.transform onLocal onHyp localDepth proofDepth p)
+    | .eqRefl => .eqRefl
+    | .eqSubst a => .eqSubst (pred a)
+    | .succNeZero => .succNeZero
+    | .succInj => .succInj
     | .lem a => .lem (pred a)
-    | .induction n h a b s t =>
-      .induction n h (pred a) (Proof.transform onLocal onHyp localDepth proofDepth b)
-        (Proof.transform onLocal onHyp (localDepth + 1) (proofDepth + 1) s) (term t)
+    | .induction a => .induction (pred a)
     | .hyp i => onHyp localDepth proofDepth i
     | .mvar id ts ps => .mvar id (ts.map term)
       (ps.map (Proof.transform onLocal onHyp localDepth proofDepth))
@@ -188,7 +177,7 @@ def termMetas : Term → List Nat
   | .mvar i => [i]
   | .lam _ b => termMetas b
   | .app f a | .letE _ f a => termMetas f ++ termMetas a
-  | .primrec b s n => termMetas b ++ termMetas s ++ termMetas n
+  | .primrec b s => termMetas b ++ termMetas s
   | .definition _ fs => fs.flatMap termMetas
   | _ => []
 
@@ -219,25 +208,18 @@ def Predicate.isComplete (t : Predicate) : Bool :=
 /-- Whether a proof and all of its embedded arguments contain no metavariables. -/
 def Proof.isComplete : Proof → Bool
   | .mvar .. => false
-  | .hyp _ | .trueIntro => true
-  | .theoremE _ fs ps => fs.all (Term.isComplete) && ps.all (Predicate.isComplete)
-  | .impIntro _ a p | .orLeft a p | .orRight a p | .falseElim a p
-  | .forallIntro _ a p | .letPredicate _ a p | .ascribe a p =>
+  | .hyp _ | .trueIntro | .eqRefl | .succNeZero | .succInj => true
+  | .theoremE _ fs ps => fs.all Term.isComplete && ps.all Predicate.isComplete
+  | .impIntro _ a p | .forallIntro _ a p | .letPredicate _ a p | .ascribe a p =>
     Predicate.isComplete a && Proof.isComplete p
   | .impElim p q | .andIntro p q => Proof.isComplete p && Proof.isComplete q
-  | .andLeft p | .andRight p | .succInj p => Proof.isComplete p
-  | .orElim _ _ a p q r =>
-    Predicate.isComplete a && Proof.isComplete p &&
-      Proof.isComplete q && Proof.isComplete r
+  | .andLeft a b | .andRight a b | .orLeft a b | .orRight a b | .existsElim a b =>
+    Predicate.isComplete a && Predicate.isComplete b
+  | .orElim a b c => Predicate.isComplete a && Predicate.isComplete b && Predicate.isComplete c
   | .forallElim p t | .letTerm _ t p => Proof.isComplete p && Term.isComplete t
   | .existsIntro a t p =>
     Predicate.isComplete a && Term.isComplete t && Proof.isComplete p
-  | .existsElim _ _ a p q | .letE _ a p q | .eqSubst a p q =>
-    Predicate.isComplete a && Proof.isComplete p && Proof.isComplete q
-  | .eqRefl t | .succNeZero t => Term.isComplete t
-  | .lem a => Predicate.isComplete a
-  | .induction _ _ a p q t =>
-    Predicate.isComplete a && Proof.isComplete p &&
-      Proof.isComplete q && Term.isComplete t
+  | .letE _ a p q => Predicate.isComplete a && Proof.isComplete p && Proof.isComplete q
+  | .falseElim a | .eqSubst a | .lem a | .induction a => Predicate.isComplete a
 
 end LeanPRA.Surface.Metavariable

@@ -25,32 +25,27 @@ namespace LeanPRA.Core
       (p.renameHypotheses (Renaming.lift 1 r))
   | .impElim p q => .impElim (p.renameHypotheses r) (q.renameHypotheses r)
   | .andIntro p q => .andIntro (p.renameHypotheses r) (q.renameHypotheses r)
-  | .andLeft p => .andLeft (p.renameHypotheses r)
-  | .andRight p => .andRight (p.renameHypotheses r)
-  | .orLeft A p => .orLeft A (p.renameHypotheses r)
-  | .orRight A p => .orRight A (p.renameHypotheses r)
-  | .orElim leftName rightName A p q s => .orElim leftName rightName A (p.renameHypotheses r)
-      (q.renameHypotheses (Renaming.lift 1 r)) (s.renameHypotheses (Renaming.lift 1 r))
-  | .falseElim A p => .falseElim A (p.renameHypotheses r)
+  | .andLeft a b => .andLeft a b
+  | .andRight a b => .andRight a b
+  | .orLeft a b => .orLeft a b
+  | .orRight a b => .orRight a b
+  | .orElim a b c => .orElim a b c
+  | .falseElim a => .falseElim a
   | .forallIntro binderName P p => .forallIntro binderName P (p.renameHypotheses r)
   | .forallElim p a => .forallElim (p.renameHypotheses r) a
   | .existsIntro P a p => .existsIntro P a (p.renameHypotheses r)
-  | .existsElim variableName hypothesisName A p q =>
-      .existsElim variableName hypothesisName A
-        (p.renameHypotheses r) (q.renameHypotheses (Renaming.lift 1 r))
+  | .existsElim a b => .existsElim a b
   | .letE binderName A p q => .letE binderName A
       (p.renameHypotheses r) (q.renameHypotheses (Renaming.lift 1 r))
   | .letTerm binderName a p => .letTerm binderName a (p.renameHypotheses r)
   | .letPredicate binderName P p => .letPredicate binderName P (p.renameHypotheses r)
   | .ascribe A p => .ascribe A (p.renameHypotheses r)
-  | .eqRefl t => .eqRefl t
-  | .eqSubst P e p => .eqSubst P (e.renameHypotheses r) (p.renameHypotheses r)
-  | .succNeZero t => .succNeZero t
-  | .succInj p => .succInj (p.renameHypotheses r)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst a
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
   | .lem A => .lem A
-  | .induction variableName hypothesisName P b s a =>
-      .induction variableName hypothesisName P
-        (b.renameHypotheses r) (s.renameHypotheses (Renaming.lift 1 r)) a
+  | .induction a => .induction a
 
 /-- Extend a proof substitution under a new proof hypothesis. -/
 @[expose] public def Proof.liftHypotheses (s : Nat → Proof) : Nat → Proof
@@ -67,35 +62,28 @@ kept actual; proof binders weaken the kept proof-hypothesis indices. -/
       (p.substHypotheses (Proof.liftHypotheses s))
   | .impElim p q => .impElim (p.substHypotheses s) (q.substHypotheses s)
   | .andIntro p q => .andIntro (p.substHypotheses s) (q.substHypotheses s)
-  | .andLeft p => .andLeft (p.substHypotheses s)
-  | .andRight p => .andRight (p.substHypotheses s)
-  | .orLeft A p => .orLeft A (p.substHypotheses s)
-  | .orRight A p => .orRight A (p.substHypotheses s)
-  | .orElim leftName rightName A p q r => .orElim leftName rightName A (p.substHypotheses s)
-      (q.substHypotheses (Proof.liftHypotheses s)) (r.substHypotheses (Proof.liftHypotheses s))
-  | .falseElim A p => .falseElim A (p.substHypotheses s)
+  | .andLeft a b => .andLeft a b
+  | .andRight a b => .andRight a b
+  | .orLeft a b => .orLeft a b
+  | .orRight a b => .orRight a b
+  | .orElim a b c => .orElim a b c
+  | .falseElim a => .falseElim a
   | .forallIntro binderName P p => .forallIntro binderName P
       (p.substHypotheses (fun i => (s i).rename (fun j => j + 1)))
   | .forallElim p a => .forallElim (p.substHypotheses s) a
   | .existsIntro P a p => .existsIntro P a (p.substHypotheses s)
-  | .existsElim variableName hypothesisName A p q =>
-      .existsElim variableName hypothesisName A
-        (p.substHypotheses s)
-        (q.substHypotheses (Proof.liftHypotheses (fun i => (s i).rename (fun j => j + 1))))
+  | .existsElim a b => .existsElim a b
   | .letE binderName A p q => .letE binderName A
       (p.substHypotheses s) (q.substHypotheses (Proof.liftHypotheses s))
   | .letTerm binderName a p => .letTerm binderName a (p.substHypotheses s)
   | .letPredicate binderName P p => .letPredicate binderName P (p.substHypotheses s)
   | .ascribe A p => .ascribe A (p.substHypotheses s)
-  | .eqRefl t => .eqRefl t
-  | .eqSubst P e p => .eqSubst P (e.substHypotheses s) (p.substHypotheses s)
-  | .succNeZero t => .succNeZero t
-  | .succInj p => .succInj (p.substHypotheses s)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst a
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
   | .lem A => .lem A
-  | .induction variableName hypothesisName P b step a =>
-      .induction variableName hypothesisName P
-        (b.substHypotheses s)
-        (step.substHypotheses (Proof.liftHypotheses (fun i => (s i).rename (fun j => j + 1)))) a
+  | .induction a => .induction a
 
 end LeanPRA.Core
 
@@ -141,37 +129,30 @@ private theorem proof_rename {E Ξ Γ H p A} (h : ProofTyping E Ξ Γ H p A)
   | impElim p q ihp ihq => simp only [Proof.renameHypotheses]; exact .impElim (ihp _ hr) (ihq _ hr)
   | andIntro p q ihp ihq =>
       simp only [Proof.renameHypotheses]; exact .andIntro (ihp _ hr) (ihq _ hr)
-  | andLeft p ih => simp only [Proof.renameHypotheses]; exact .andLeft (ih _ hr)
-  | andRight p ih => simp only [Proof.renameHypotheses]; exact .andRight (ih _ hr)
-  | orLeft type p ih => simp only [Proof.renameHypotheses]; exact .orLeft type (ih _ hr)
-  | orRight type p ih => simp only [Proof.renameHypotheses]; exact .orRight type (ih _ hr)
-  | orElim target p q s ihp ihq ihs =>
-      simp only [Proof.renameHypotheses]
-      exact .orElim target (ihp _ hr) (ihq _ (renaming_cons hr _)) (ihs _ (renaming_cons hr _))
-  | falseElim type p ih => simp only [Proof.renameHypotheses]; exact .falseElim type (ih _ hr)
+  | andLeft a b => exact .andLeft a b
+  | andRight a b => exact .andRight a b
+  | orLeft a b => exact .orLeft a b
+  | orRight a b => exact .orRight a b
+  | orElim a b c => exact .orElim a b c
+  | falseElim a => exact .falseElim a
   | forallIntro motive body ih =>
       simp only [Proof.renameHypotheses]; exact .forallIntro motive (ih _ (renaming_shift hr))
   | forallElim p a ih => simp only [Proof.renameHypotheses]; exact .forallElim (ih _ hr) a
   | existsIntro motive witness p ih =>
       simp only [Proof.renameHypotheses]; exact .existsIntro motive witness (ih _ hr)
-  | existsElim target p q ihp ihq =>
-      simp only [Proof.renameHypotheses]
-      exact .existsElim target (ihp _ hr) (ihq _ (renaming_cons (renaming_shift hr) _))
+  | existsElim a b => exact .existsElim a b
   | letE type p q ihp ihq =>
       simp only [Proof.renameHypotheses]; exact .letE type (ihp _ hr) (ihq _ (renaming_cons hr _))
   | letTerm value body ih => simp only [Proof.renameHypotheses]; exact .letTerm value (ih _ hr)
   | letPredicate value body ih =>
       simp only [Proof.renameHypotheses]; exact .letPredicate value (ih _ hr)
   | ascribe type p ih => simp only [Proof.renameHypotheses]; exact .ascribe type (ih _ hr)
-  | eqRefl term => simp only [Proof.renameHypotheses]; exact .eqRefl term
-  | eqSubst motive e p ihe ihp =>
-      simp only [Proof.renameHypotheses]; exact .eqSubst motive (ihe _ hr) (ihp _ hr)
-  | succNeZero term => simp only [Proof.renameHypotheses]; exact .succNeZero term
-  | succInj p ih => simp only [Proof.renameHypotheses]; exact .succInj (ih _ hr)
+  | eqRefl => exact .eqRefl
+  | eqSubst a => exact .eqSubst a
+  | succNeZero => exact .succNeZero
+  | succInj => exact .succInj
   | lem formula => simp only [Proof.renameHypotheses]; exact .lem formula
-  | induction motive base step argument ihb ihs =>
-      simp only [Proof.renameHypotheses]
-      exact .induction motive (ihb _ hr) (ihs _ (renaming_cons (renaming_shift hr) _)) argument
+  | induction a => exact .induction a
   | conversion p type ih => exact .conversion (ih _ hr) type
 
 private theorem substitution_cons {E Ξ Γ H K s}
@@ -211,25 +192,19 @@ private theorem proof_subst {E Ξ Γ H p A} (valid : EnvironmentWF E)
       simp only [Proof.substHypotheses]; exact .impIntro type (ih _ (substitution_cons hs _))
   | impElim p q ihp ihq => simp only [Proof.substHypotheses]; exact .impElim (ihp _ hs) (ihq _ hs)
   | andIntro p q ihp ihq => simp only [Proof.substHypotheses]; exact .andIntro (ihp _ hs) (ihq _ hs)
-  | andLeft p ih => simp only [Proof.substHypotheses]; exact .andLeft (ih _ hs)
-  | andRight p ih => simp only [Proof.substHypotheses]; exact .andRight (ih _ hs)
-  | orLeft type p ih => simp only [Proof.substHypotheses]; exact .orLeft type (ih _ hs)
-  | orRight type p ih => simp only [Proof.substHypotheses]; exact .orRight type (ih _ hs)
-  | orElim target p q r ihp ihq ihr =>
-      simp only [Proof.substHypotheses]
-      exact .orElim target (ihp _ hs) (ihq _ (substitution_cons hs _))
-        (ihr _ (substitution_cons hs _))
-  | falseElim type p ih => simp only [Proof.substHypotheses]; exact .falseElim type (ih _ hs)
+  | andLeft a b => exact .andLeft a b
+  | andRight a b => exact .andRight a b
+  | orLeft a b => exact .orLeft a b
+  | orRight a b => exact .orRight a b
+  | orElim a b c => exact .orElim a b c
+  | falseElim a => exact .falseElim a
   | forallIntro motive body ih =>
       simp only [Proof.substHypotheses]
       exact .forallIntro motive (ih _ (substitution_shift valid hs))
   | forallElim p a ih => simp only [Proof.substHypotheses]; exact .forallElim (ih _ hs) a
   | existsIntro motive witness p ih =>
       simp only [Proof.substHypotheses]; exact .existsIntro motive witness (ih _ hs)
-  | existsElim target p q ihp ihq =>
-      simp only [Proof.substHypotheses]
-      exact .existsElim target (ihp _ hs)
-        (ihq _ (substitution_cons (substitution_shift valid hs) _))
+  | existsElim a b => exact .existsElim a b
   | letE type p q ihp ihq =>
       simp only [Proof.substHypotheses]
       exact .letE type (ihp _ hs) (ihq _ (substitution_cons hs _))
@@ -237,16 +212,12 @@ private theorem proof_subst {E Ξ Γ H p A} (valid : EnvironmentWF E)
   | letPredicate value body ih =>
       simp only [Proof.substHypotheses]; exact .letPredicate value (ih _ hs)
   | ascribe type p ih => simp only [Proof.substHypotheses]; exact .ascribe type (ih _ hs)
-  | eqRefl term => simp only [Proof.substHypotheses]; exact .eqRefl term
-  | eqSubst motive e p ihe ihp =>
-      simp only [Proof.substHypotheses]; exact .eqSubst motive (ihe _ hs) (ihp _ hs)
-  | succNeZero term => simp only [Proof.substHypotheses]; exact .succNeZero term
-  | succInj p ih => simp only [Proof.substHypotheses]; exact .succInj (ih _ hs)
+  | eqRefl => exact .eqRefl
+  | eqSubst a => exact .eqSubst a
+  | succNeZero => exact .succNeZero
+  | succInj => exact .succInj
   | lem formula => simp only [Proof.substHypotheses]; exact .lem formula
-  | induction motive base step argument ihb ihs =>
-      simp only [Proof.substHypotheses]
-      exact .induction motive (ihb _ hs)
-        (ihs _ (substitution_cons (substitution_shift valid hs) _)) argument
+  | induction a => exact .induction a
   | conversion p type ih => exact .conversion (ih _ hs) type
 
 /-- Renaming assumptions preserves a proof when every renamed index has the same formula. -/

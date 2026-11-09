@@ -35,15 +35,15 @@ private theorem term_regular {E Ξ Γ t u k} (h : TermEq E Ξ Γ t u k) :
   | eta function => exact ⟨.lam (.app (TermTyping.shift function 0) (.bvar rfl)), function⟩
   | zeta value body => exact ⟨.letE value body, TermTyping.subst0 body value⟩
   | delta lookup args body => exact ⟨.definition lookup args, body⟩
-  | primrecZero base step => exact ⟨.primrec base step .zero, base⟩
+  | primrecZero base step => exact ⟨.app (.primrec base step) .zero, base⟩
   | primrecSucc base step argument =>
-      exact ⟨.primrec base step (.app .succ argument),
-        .app (.app step argument) (.primrec base step argument)⟩
+      exact ⟨.app (.primrec base step) (.app .succ argument),
+        .app (.app step argument) (.app (.primrec base step) argument)⟩
   | lam body ih => exact ⟨.lam ih.1, .lam ih.2⟩
   | app f a ihf iha => exact ⟨.app ihf.1 iha.1, .app ihf.2 iha.2⟩
   | letE a body iha ihb => exact ⟨.letE iha.1 ihb.1, .letE iha.2 ihb.2⟩
-  | primrec b s n ihb ihs ihn =>
-      exact ⟨.primrec ihb.1 ihs.1 ihn.1, .primrec ihb.2 ihs.2 ihn.2⟩
+  | primrec b s ihb ihs =>
+      exact ⟨.primrec ihb.1 ihs.1, .primrec ihb.2 ihs.2⟩
   | definition lookup args ih => exact ⟨.definition lookup ih.1, .definition lookup ih.2⟩
   | nil => exact ⟨.nil, .nil⟩
   | cons head tail ihh iht => exact ⟨.cons ihh.1 iht.1, .cons ihh.2 iht.2⟩
@@ -153,30 +153,26 @@ private theorem proof_context_conversion {E Ξ Γ H p A} (valid : EnvironmentWF 
   | impIntro antecedent body ih => exact .impIntro antecedent (ih (hypotheses_cons hc _))
   | impElim f a ihf iha => exact .impElim (ihf hc) (iha hc)
   | andIntro a b iha ihb => exact .andIntro (iha hc) (ihb hc)
-  | andLeft pair ih => exact .andLeft (ih hc)
-  | andRight pair ih => exact .andRight (ih hc)
-  | orLeft other proof ih => exact .orLeft other (ih hc)
-  | orRight other proof ih => exact .orRight other (ih hc)
-  | orElim target scrutinee left right ihp ihl ihr =>
-      exact .orElim target (ihp hc) (ihl (hypotheses_cons hc _)) (ihr (hypotheses_cons hc _))
-  | falseElim target proof ih => exact .falseElim target (ih hc)
+  | andLeft a b => exact .andLeft a b
+  | andRight a b => exact .andRight a b
+  | orLeft a b => exact .orLeft a b
+  | orRight a b => exact .orRight a b
+  | orElim a b c => exact .orElim a b c
+  | falseElim a => exact .falseElim a
   | forallIntro motive body ih => exact .forallIntro motive (ih (hypotheses_shift valid hc))
   | forallElim proof argument ih => exact .forallElim (ih hc) argument
   | existsIntro motive witness proof ih => exact .existsIntro motive witness (ih hc)
-  | existsElim target scrutinee body ihp ihb =>
-      exact .existsElim target (ihp hc) (ihb (hypotheses_cons (hypotheses_shift valid hc) _))
+  | existsElim a b => exact .existsElim a b
   | letE type value body ihv ihb => exact .letE type (ihv hc) (ihb (hypotheses_cons hc _))
   | letTerm value body ih => exact .letTerm value (ih hc)
   | letPredicate value body ih => exact .letPredicate value (ih hc)
   | ascribe type proof ih => exact .ascribe type (ih hc)
-  | eqRefl term => exact .eqRefl term
-  | eqSubst motive equality proof ihe ihp => exact .eqSubst motive (ihe hc) (ihp hc)
-  | succNeZero term => exact .succNeZero term
-  | succInj proof ih => exact .succInj (ih hc)
+  | eqRefl => exact .eqRefl
+  | eqSubst a => exact .eqSubst a
+  | succNeZero => exact .succNeZero
+  | succInj => exact .succInj
   | lem formula => exact .lem formula
-  | induction motive base step argument ihb ihs =>
-      exact .induction motive (ihb hc)
-        (ihs (hypotheses_cons (hypotheses_shift valid hc) _)) argument
+  | induction a => exact .induction a
   | conversion proof type ih => exact .conversion (ih hc) type
 
 /-- Typed computational equality forms both endpoints. -/

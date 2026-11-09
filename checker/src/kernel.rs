@@ -22,6 +22,14 @@ fn var(i: u64) -> R {
     n1("tvar", num(i))
 }
 
+fn all(body: R) -> R {
+    n1("all", n2("plam", n2("binder", n0("name"), num(0)), body))
+}
+
+fn is_rec_app(x: &R) -> bool {
+    op(x) == "tapp" && op(&fields(x)[0]) == "rec"
+}
+
 fn ensure(b: bool, msg: &str) -> Res<()> {
     if b {
         Ok(())
@@ -112,7 +120,7 @@ fn shape_visit(
         "tlam" => ("term", &["name", "term"]),
         "tapp" => ("term", &["term", "term"]),
         "tlet" => ("term", &["name", "term", "term"]),
-        "rec" => ("term", &["term", "term", "term"]),
+        "rec" => ("term", &["term", "term"]),
         "tdef" => ("term", &["name", "terms"]),
         "false" | "true" => ("pred", &[]),
         "eq" => ("pred", &["term", "term"]),
@@ -129,23 +137,21 @@ fn shape_visit(
         "thm" => ("proof", &["name", "terms", "preds"]),
         "impIntro" => ("proof", &["name", "pred", "proof"]),
         "impElim" | "andIntro" => ("proof", &["proof", "proof"]),
-        "andLeft" | "andRight" | "succInj" => ("proof", &["proof"]),
-        "orLeft" | "orRight" | "falseElim" | "ascribe" => ("proof", &["pred", "proof"]),
-        "orElim" => (
-            "proof",
-            &["name", "name", "pred", "proof", "proof", "proof"],
-        ),
+        "andLeft" | "andRight" | "orLeft" | "orRight" => ("proof", &["pred", "pred"]),
+        "falseElim" => ("proof", &["pred"]),
+        "ascribe" => ("proof", &["pred", "proof"]),
+        "orElim" => ("proof", &["pred", "pred", "pred"]),
         "forallIntro" => ("proof", &["name", "pred", "proof"]),
         "forallElim" => ("proof", &["proof", "term"]),
         "existsIntro" => ("proof", &["pred", "term", "proof"]),
-        "existsElim" => ("proof", &["name", "name", "pred", "proof", "proof"]),
+        "existsElim" => ("proof", &["pred", "pred"]),
         "hlet" => ("proof", &["name", "pred", "proof", "proof"]),
         "hletTerm" => ("proof", &["name", "term", "proof"]),
         "hletPred" => ("proof", &["name", "pred", "proof"]),
-        "refl" | "succNeZero" => ("proof", &["term"]),
-        "subst" => ("proof", &["pred", "proof", "proof"]),
+        "refl" | "succNeZero" | "succInj" => ("proof", &[]),
+        "subst" => ("proof", &["pred"]),
         "lem" => ("proof", &["pred"]),
-        "ind" => ("proof", &["name", "name", "pred", "proof", "proof", "term"]),
+        "ind" => ("proof", &["pred"]),
         "function" => ("decl", &["name", "params", "nat", "term"]),
         "predicate" => ("decl", &["name", "params", "sig", "pred"]),
         "theorem" if category == "spec" => ("spec", &["name", "params", "pred"]),
@@ -375,8 +381,7 @@ impl Kernel {
             "rec" => {
                 self.tc(c, &a[0], 0, d)?;
                 self.tc(c, &a[1], 2, d)?;
-                self.tc(c, &a[2], 0, d)?;
-                Ok(0)
+                Ok(1)
             }
             "tdef" => {
                 let e = self.get(&a[0], "function")?;
@@ -490,24 +495,24 @@ impl Kernel {
                 let f = self.wh(&a[0], pred, d)?;
                 if matches!(op(&f), "tlam" | "plam") {
                     self.wh(&subst(&fields(&f)[1], &a[1]), pred, d)
+                } else if !pred && op(&f) == "rec" {
+                    let rec = fields(&f);
+                    let n = self.wh(&a[1], false, d)?;
+                    if op(&n) == "zero" {
+                        self.wh(&rec[0], false, d)
+                    } else if op(&n) == "tapp" && op(&fields(&n)[0]) == "succ" {
+                        let m = fields(&n)[1].clone();
+                        let r = n2("tapp", f.clone(), m.clone());
+                        self.wh(&n2("tapp", n2("tapp", rec[1].clone(), m), r), false, d)
+                    } else if Rc::ptr_eq(&f, &a[0]) && Rc::ptr_eq(&n, &a[1]) {
+                        Ok(x.clone())
+                    } else {
+                        Ok(n2("tapp", f, n))
+                    }
                 } else if Rc::ptr_eq(&f, &a[0]) {
                     Ok(x.clone())
                 } else {
                     Ok(n2(op(x), f, a[1].clone()))
-                }
-            }
-            "rec" => {
-                let n = self.wh(&a[2], false, d)?;
-                if op(&n) == "zero" {
-                    self.wh(&a[0], false, d)
-                } else if op(&n) == "tapp" && op(&fields(&n)[0]) == "succ" {
-                    let m = fields(&n)[1].clone();
-                    let r = node("rec", vec![a[0].clone(), a[1].clone(), m.clone()]);
-                    self.wh(&n2("tapp", n2("tapp", a[1].clone(), m), r), false, d)
-                } else if Rc::ptr_eq(&n, &a[2]) {
-                    Ok(x.clone())
-                } else {
-                    Ok(node("rec", vec![a[0].clone(), a[1].clone(), n]))
                 }
             }
             _ => Ok(x.clone()),
@@ -520,7 +525,9 @@ impl Kernel {
         match op(x) {
             "tlet" => self.expose(&subst(&a[2], &a[1]), p, d),
             "pletTerm" | "pletPred" => self.expose(&a[2], p, d),
-            "rec" if op(&a[2]) == "zero" => self.expose(&a[0], p, d),
+            "tapp" if op(&a[0]) == "rec" && op(&a[1]) == "zero" => {
+                self.expose(&fields(&a[0])[0], p, d)
+            }
             "tapp" | "papp" => {
                 let f = self.expose(&a[0], p, d)?;
                 if matches!(op(&f), "tlam" | "plam") {
@@ -591,6 +598,7 @@ impl Kernel {
             "tapp" | "papp" => {
                 Ok(self.spine(&a[0], &b[0], p, k + 1, d)? && self.eq(&a[1], &b[1], false, 0, d)?)
             }
+            "rec" => Ok(self.eq(&a[0], &b[0], false, 0, d)? && self.eq(&a[1], &b[1], false, 2, d)?),
             "tdef" if a[0] == b[0] => self.eqargs(
                 self.get(&a[0], "function")?,
                 list(&a[1]),
@@ -613,18 +621,19 @@ impl Kernel {
 
     fn recstep(&self, x: &R, d: usize) -> Res<R> {
         let a = fields(x);
-        let n = self.wh(&a[2], false, d)?;
+        let rec = fields(&a[0]);
+        let n = self.wh(&a[1], false, d)?;
         if op(&n) == "zero" {
-            return self.expose(&a[0], false, d);
+            return self.expose(&rec[0], false, d);
         }
         if op(&n) == "tapp" && op(&fields(&n)[0]) == "succ" {
             let m = fields(&n)[1].clone();
-            let r = node("rec", vec![a[0].clone(), a[1].clone(), m.clone()]);
-            self.expose(&n2("tapp", n2("tapp", a[1].clone(), m), r), false, d)
-        } else if Rc::ptr_eq(&n, &a[2]) {
+            let r = n2("tapp", a[0].clone(), m.clone());
+            self.expose(&n2("tapp", n2("tapp", rec[1].clone(), m), r), false, d)
+        } else if Rc::ptr_eq(&n, &a[1]) {
             Ok(x.clone())
         } else {
-            Ok(node("rec", vec![a[0].clone(), a[1].clone(), n]))
+            Ok(n2("tapp", a[0].clone(), n))
         }
     }
 
@@ -656,21 +665,18 @@ impl Kernel {
                     )
                 }
                 "all" | "ex" => return self.eq(&a[0], &b[0], true, 1, d),
-                "rec" if op(&a[2]) == "zero" && op(&b[2]) == "zero" => {
-                    return self.eq(&a[0], &b[0], false, 0, d)
+                "tapp"
+                    if is_rec_app(x)
+                        && is_rec_app(y)
+                        && op(&a[1]) == "zero"
+                        && op(&b[1]) == "zero" =>
+                {
+                    return self.eq(&fields(&a[0])[0], &fields(&b[0])[0], false, 0, d)
                 }
                 _ => {}
             }
         }
-        let structural = (|| {
-            if tag == "rec" && op(y) == "rec" {
-                Ok(self.eq(&a[0], &b[0], false, 0, d)?
-                    && self.eq(&a[1], &b[1], false, 2, d)?
-                    && self.eq(&a[2], &b[2], false, 0, d)?)
-            } else {
-                self.spine(x, y, p, k, d)
-            }
-        })();
+        let structural = self.spine(x, y, p, k, d);
         if matches!(structural, Ok(true)) {
             return Ok(true);
         }
@@ -694,11 +700,11 @@ impl Kernel {
         if l != *x || r != *y {
             return self.eq(&l, &r, p, 0, d);
         }
-        let (l, r) = if tag == "rec" && op(y) == "rec" {
+        let (l, r) = if is_rec_app(x) && is_rec_app(y) {
             (self.recstep(x, d + 1)?, self.recstep(y, d + 1)?)
-        } else if tag == "rec" {
+        } else if is_rec_app(x) {
             (self.wh(x, false, d + 1)?, y.clone())
-        } else if op(y) == "rec" {
+        } else if is_rec_app(y) {
             (x.clone(), self.wh(y, false, d + 1)?)
         } else {
             return structural;
@@ -749,29 +755,40 @@ impl Kernel {
             }
             "andIntro" => Ok(n2("and", self.hi(c, &a[0], d)?, self.hi(c, &a[1], d)?)),
             "andLeft" | "andRight" => {
-                let p = self.head(c, &a[0], "and", d)?;
-                Ok(fields(&p)[usize::from(op(h) == "andRight")].clone())
+                self.form(c, &a[0], d)?;
+                self.form(c, &a[1], d)?;
+                Ok(n2(
+                    "imp",
+                    n2("and", a[0].clone(), a[1].clone()),
+                    a[usize::from(op(h) == "andRight")].clone(),
+                ))
             }
             "orLeft" | "orRight" => {
                 self.form(c, &a[0], d)?;
-                let p = self.hi(c, &a[1], d)?;
-                Ok(if op(h) == "orLeft" {
-                    n2("or", p, a[0].clone())
-                } else {
-                    n2("or", a[0].clone(), p)
-                })
+                self.form(c, &a[1], d)?;
+                Ok(n2(
+                    "imp",
+                    a[usize::from(op(h) == "orRight")].clone(),
+                    n2("or", a[0].clone(), a[1].clone()),
+                ))
             }
             "orElim" => {
-                self.form(c, &a[2], d)?;
-                let p = self.head(c, &a[3], "or", d)?;
-                self.check(&c.hyp(fields(&p)[0].clone()), &a[4], &a[2], d)?;
-                self.check(&c.hyp(fields(&p)[1].clone()), &a[5], &a[2], d)?;
-                Ok(a[2].clone())
+                for p in a {
+                    self.form(c, p, d)?;
+                }
+                Ok(n2(
+                    "imp",
+                    n2("or", a[0].clone(), a[1].clone()),
+                    n2(
+                        "imp",
+                        n2("imp", a[0].clone(), a[2].clone()),
+                        n2("imp", n2("imp", a[1].clone(), a[2].clone()), a[2].clone()),
+                    ),
+                ))
             }
             "falseElim" => {
                 self.form(c, &a[0], d)?;
-                self.check(c, &a[1], &n0("false"), d)?;
-                Ok(a[0].clone())
+                Ok(n2("imp", n0("false"), a[0].clone()))
             }
             "forallIntro" => {
                 self.pc(c, &a[1], (1, true), d)?;
@@ -790,11 +807,17 @@ impl Kernel {
                 Ok(n1("ex", a[0].clone()))
             }
             "existsElim" => {
-                self.form(c, &a[2], d)?;
-                let p = self.head(c, &a[3], "ex", d)?;
-                let cc = c.local(0).hyp(n2("papp", shift(&fields(&p)[0]), var(0)));
-                self.check(&cc, &a[4], &shift(&a[2]), d)?;
-                Ok(a[2].clone())
+                self.pc(c, &a[0], (1, true), d)?;
+                self.form(c, &a[1], d)?;
+                Ok(n2(
+                    "imp",
+                    n1("ex", a[0].clone()),
+                    n2(
+                        "imp",
+                        all(n2("imp", n2("papp", shift(&a[0]), var(0)), shift(&a[1]))),
+                        a[1].clone(),
+                    ),
+                ))
             }
             "hlet" => {
                 self.form(c, &a[1], d)?;
@@ -814,59 +837,54 @@ impl Kernel {
                 self.check(c, &a[1], &a[0], d)?;
                 Ok(a[0].clone())
             }
-            "refl" => {
-                self.tc(c, &a[0], 0, d)?;
-                Ok(n2("eq", a[0].clone(), a[0].clone()))
-            }
+            "refl" => Ok(all(n2("eq", var(0), var(0)))),
             "subst" => {
                 self.pc(c, &a[0], (1, true), d)?;
-                let e = self.head(c, &a[1], "eq", d)?;
-                self.check(
-                    c,
-                    &a[2],
-                    &n2("papp", a[0].clone(), fields(&e)[0].clone()),
-                    d,
-                )?;
-                Ok(n2("papp", a[0].clone(), fields(&e)[1].clone()))
-            }
-            "succNeZero" => {
-                self.tc(c, &a[0], 0, d)?;
-                Ok(n2(
+                let motive = shift(&shift(&a[0]));
+                Ok(all(all(n2(
                     "imp",
-                    n2("eq", n2("tapp", n0("succ"), a[0].clone()), n0("zero")),
-                    n0("false"),
-                ))
+                    n2("eq", var(1), var(0)),
+                    n2(
+                        "imp",
+                        n2("papp", motive.clone(), var(1)),
+                        n2("papp", motive, var(0)),
+                    ),
+                ))))
             }
-            "succInj" => {
-                let e = self.head(c, &a[0], "eq", d)?;
-                let l = self.wh(&fields(&e)[0], false, d)?;
-                let r = self.wh(&fields(&e)[1], false, d)?;
-                ensure(
-                    op(&l) == "tapp"
-                        && op(&r) == "tapp"
-                        && op(&fields(&l)[0]) == "succ"
-                        && op(&fields(&r)[0]) == "succ",
-                    "expected successors",
-                )?;
-                Ok(n2("eq", fields(&l)[1].clone(), fields(&r)[1].clone()))
-            }
+            "succNeZero" => Ok(all(n2(
+                "imp",
+                n2("eq", n2("tapp", n0("succ"), var(0)), n0("zero")),
+                n0("false"),
+            ))),
+            "succInj" => Ok(all(all(n2(
+                "imp",
+                n2(
+                    "eq",
+                    n2("tapp", n0("succ"), var(1)),
+                    n2("tapp", n0("succ"), var(0)),
+                ),
+                n2("eq", var(1), var(0)),
+            )))),
             "lem" => {
                 self.form(c, &a[0], d)?;
                 Ok(n2("or", a[0].clone(), n2("imp", a[0].clone(), n0("false"))))
             }
             "ind" => {
-                self.pc(c, &a[2], (1, false), d)?;
-                self.tc(c, &a[5], 0, d)?;
-                self.check(c, &a[3], &n2("papp", a[2].clone(), n0("zero")), d)?;
-                let m = shift(&a[2]);
-                let cc = c.local(0).hyp(n2("papp", m.clone(), var(0)));
-                self.check(
-                    &cc,
-                    &a[4],
-                    &n2("papp", m, n2("tapp", n0("succ"), var(0))),
-                    d,
-                )?;
-                Ok(n2("papp", a[2].clone(), a[5].clone()))
+                self.pc(c, &a[0], (1, false), d)?;
+                let motive = shift(&a[0]);
+                Ok(n2(
+                    "imp",
+                    n2("papp", a[0].clone(), n0("zero")),
+                    n2(
+                        "imp",
+                        all(n2(
+                            "imp",
+                            n2("papp", motive.clone(), var(0)),
+                            n2("papp", motive, n2("tapp", n0("succ"), var(0))),
+                        )),
+                        n1("all", a[0].clone()),
+                    ),
+                ))
             }
             _ => Err("proof constructor".into()),
         }

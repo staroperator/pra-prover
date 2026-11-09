@@ -2,6 +2,7 @@ module
 
 public import LeanPRA.Core.Checker
 public import LeanPRA.Core.DefEq
+public import LeanPRA.Core.PrimitiveTypes
 public import LeanPRA.Core.Reduction
 public import LeanPRA.Core.Substitution
 public import LeanPRA.Core.Syntax
@@ -72,7 +73,8 @@ public import LeanPRA.Metatheory.PRA.Witness
 public import LeanPRA.Metatheory.Translation.Consistency
 public import LeanPRA.Metatheory.Translation.Correctness
 public import LeanPRA.Metatheory.Translation.Defs
-public import LeanPRA.Surface.Builtins
+public import LeanPRA.Metatheory.Translation.Derivation
+public import LeanPRA.Surface.Primitive
 public import LeanPRA.Surface.Command
 public import LeanPRA.Surface.Delab
 public import LeanPRA.Surface.Display

@@ -42,7 +42,7 @@ def Term.rename (rename : Renaming) : Term → Term
   | .letE hint a t =>
     .letE hint (a.rename rename)
       (t.rename (Renaming.lift 1 rename))
-  | .primrec b s n => .primrec (b.rename rename) (s.rename rename) (n.rename rename)
+  | .primrec b s => .primrec (b.rename rename) (s.rename rename)
   | .definition name fs => .definition name (fs.map (Term.rename rename))
 
 /-- Add `count` to variable indices at or above `cutoff`. -/
@@ -66,7 +66,7 @@ def Term.subst (subst : Subst) : Term → Term
   | .letE hint a t =>
     .letE hint (a.subst subst)
       (t.subst (Subst.lift 1 subst))
-  | .primrec b s n => .primrec (b.subst subst) (s.subst subst) (n.subst subst)
+  | .primrec b s => .primrec (b.subst subst) (s.subst subst)
   | .definition name fs => .definition name (fs.map (Term.subst subst))
 
 /-- Substitute `argument` for variable `0` and decrement remaining free variable indices. -/
@@ -87,8 +87,7 @@ def Term.instantiate (actuals : List Term) (depth : Nat := 0) : Term → Term
   | .letE hint a t =>
     .letE hint (a.instantiate actuals depth) (t.instantiate actuals (depth +
         1))
-  | .primrec b s n => .primrec (b.instantiate actuals depth)
-      (s.instantiate actuals depth) (n.instantiate actuals depth)
+  | .primrec b s => .primrec (b.instantiate actuals depth) (s.instantiate actuals depth)
   | .definition name fs =>
     .definition name (fs.map (Term.instantiate actuals depth))
 
