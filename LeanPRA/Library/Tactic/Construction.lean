@@ -11,6 +11,7 @@ Helpers for Library metaprograms that build explicit PRA terms and proofs:
 - `numeral` and `numeralValue?` construct and read successor numerals.
 - `applyDefinition`, `getAppFnArgs`, and `applyTheorem` assemble and decompose applications.
 - `mkEqSymm`, `mkEqTrans`, and `mkEqCongr` apply the equality theorems from `Library.Logic`.
+- `mapProof` and `shiftProof` transform explicit proofs beneath their binders.
 - `proveArithmeticLe` builds numerical inequality proofs from arithmetic and pairing lemmas.
 - `sequenceCode` and `tupleCode` construct expressions for the Library's numerical encodings.
 - `publishChecked` checks generated declarations and records their source locations.
@@ -66,6 +67,44 @@ def mkEqTrans (a b c : Term) (left right : Proof) : Proof :=
 /-- Apply `eq_congr` with unary function `f` to a proof of `a = b`. -/
 def mkEqCongr (f a b : Term) (proof : Proof) : Proof :=
   applyTheorem `eq_congr [a, b] [f] [proof]
+
+/-- Transform a proof while tracking its numerical and proof binder depths. The callbacks map
+terms, predicates, and hypothesis references in their respective binder contexts. -/
+def mapProof (tm : Nat → Core.Term → Core.Term)
+    (pm : Nat → Core.Predicate → Core.Predicate) (hm : Nat → Nat → Nat → Core.Proof)
+    (nd hd : Nat) : Core.Proof → Core.Proof
+  | .hyp i => hm nd hd i
+  | .theoremE n fs ps => .theoremE n (fs.map (tm nd)) (ps.map (pm nd))
+  | .impIntro n a p => .impIntro n (pm nd a) (mapProof tm pm hm nd (hd + 1) p)
+  | .impElim p q => .impElim (mapProof tm pm hm nd hd p) (mapProof tm pm hm nd hd q)
+  | .andIntro p q => .andIntro (mapProof tm pm hm nd hd p) (mapProof tm pm hm nd hd q)
+  | .andLeft a b => .andLeft (pm nd a) (pm nd b)
+  | .andRight a b => .andRight (pm nd a) (pm nd b)
+  | .orLeft a b => .orLeft (pm nd a) (pm nd b)
+  | .orRight a b => .orRight (pm nd a) (pm nd b)
+  | .orElim a b c => .orElim (pm nd a) (pm nd b) (pm nd c)
+  | .falseElim a => .falseElim (pm nd a)
+  | .forallIntro n a p => .forallIntro n (pm nd a) (mapProof tm pm hm (nd + 1) hd p)
+  | .forallElim p t => .forallElim (mapProof tm pm hm nd hd p) (tm nd t)
+  | .existsIntro a t p => .existsIntro (pm nd a) (tm nd t) (mapProof tm pm hm nd hd p)
+  | .existsElim a b => .existsElim (pm nd a) (pm nd b)
+  | .letE n a p q => .letE n (pm nd a) (mapProof tm pm hm nd hd p)
+      (mapProof tm pm hm nd (hd + 1) q)
+  | .letTerm n t p => .letTerm n (tm nd t) (mapProof tm pm hm nd hd p)
+  | .letPredicate n a p => .letPredicate n (pm nd a) (mapProof tm pm hm nd hd p)
+  | .ascribe a p => .ascribe (pm nd a) (mapProof tm pm hm nd hd p)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst (pm nd a)
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
+  | .lem a => .lem (pm nd a)
+  | .induction a => .induction (pm nd a)
+  | p => p
+
+/-- Raise free numerical variables and free proof hypotheses by the supplied amounts. -/
+def shiftProof (p : Core.Proof) (nd hd : Nat) : Core.Proof :=
+  mapProof (fun d t => t.shift nd d) (fun d a => a.shift nd d)
+    (fun _ d i => .hyp (if i < d then i else i + hd)) 0 0 p
 
 /--
 Build a PRA proof of `a ≤ b` using numerals, reflexivity, and monotonicity of addition,
@@ -140,6 +179,8 @@ def publishChecked (decl : Core.Declaration) (source : Syntax) : CommandElabM Un
     withRef source do
   let env := Surface.CoreEnvironment.getState (← getEnv)
   let depth := pra.maxDepth.get (← getOptions)
+  -- Generated declarations can contain many copies of the same syntax.
+  let decl := ShareCommon.shareCommon' decl
   match Core.checkDeclaration depth env decl with
   | .error e => throwError "PRA declaration `{decl.name}`: {e.message}"
   | .ok checked =>

@@ -173,12 +173,46 @@ def renamePredicate (source target : List Nat) (depth : Nat) :
   | p => pure p
 end
 
+private def checkTermContext (locals : Nat) : Term → Except Failure Unit
+  | .bvar i =>
+    unless i < locals do throw (.invalid "invalid local variable in implicit argument")
+  | .lam _ t => checkTermContext (locals + 1) t
+  | .app f a | .primrec f a => do
+    checkTermContext locals f
+    checkTermContext locals a
+  | .letE _ a b => do
+    checkTermContext locals a
+    checkTermContext (locals + 1) b
+  | .definition _ fs => do
+    let _ ← fs.mapM (checkTermContext locals)
+    pure ()
+  | _ => pure ()
+
+private def checkPredicateContext (locals : Nat) : Predicate → Except Failure Unit
+  | .equal a b => do
+    checkTermContext locals a
+    checkTermContext locals b
+  | .imp a b | .and a b | .or a b | .letPredicate _ a b => do
+    checkPredicateContext locals a
+    checkPredicateContext locals b
+  | .all p | .ex p => checkPredicateContext locals p
+  | .lam _ p => checkPredicateContext (locals + 1) p
+  | .app p a => do
+    checkPredicateContext locals p
+    checkTermContext locals a
+  | .letTerm _ a p => do
+    checkTermContext locals a
+    checkPredicateContext locals p
+  | .definition _ fs ps => do
+    let _ ← fs.mapM (checkTermContext locals)
+    let _ ← ps.mapM (checkPredicateContext locals)
+    pure ()
+  | _ => pure ()
+
 private def checkProofContext (state : State) (locals : List Nat) (hypotheses : Nat) (p : Proof) :
     Except Failure Unit := do
-  let term (t : Term) : Except Failure Unit := do
-    let _ ← renameTerm locals locals 0 t
-  let pred (p : Predicate) : Except Failure Unit := do
-    let _ ← renamePredicate locals locals 0 p
+  let term := checkTermContext locals.length
+  let pred := checkPredicateContext locals.length
   match p with
   | .mvar id ts ps =>
     let some entry := state.proofs[id]? | throw (.invalid "unknown proof metavariable")
@@ -235,17 +269,21 @@ The result uses indices in that context. -/
 def resolveProof (state : State) (locals : List Nat) (hypotheses : Nat) (depth : Nat)
     (value : Proof) : Except Failure Proof := do
   checkProofContext state locals hypotheses value
-  go [] locals hypotheses depth value
+  -- Substitution preserves bounds when stored contexts have their advertised sizes.
+  let compactScopes := state.proofs.all fun entry =>
+    entry.locals.length == entry.context.locals.length
+  go (!hasUnassigned state) compactScopes [] locals hypotheses depth value
 where
-  go (visiting : List Nat) (locals : List Nat) (hypotheses : Nat) :
+  go (completeArguments compactScopes : Bool) (visiting locals : List Nat)
+      (hypotheses : Nat) :
       Nat → Proof → Except Failure Proof
     | 0, _ => throw (.exhausted "proof substitution depth")
     | fuel + 1, p => do
       let term := resolveTerm state locals fuel
       let pred := resolvePredicate state locals fuel
-      let proof := go visiting locals hypotheses fuel
-      let hypothesis := go visiting locals (hypotheses + 1) fuel
-      let numerical := go visiting (0 :: locals) hypotheses fuel
+      let proof := go completeArguments compactScopes visiting locals hypotheses fuel
+      let hypothesis := go completeArguments compactScopes visiting locals (hypotheses + 1) fuel
+      let numerical := go completeArguments compactScopes visiting (0 :: locals) hypotheses fuel
       match p with
       | .mvar id ts ps =>
         if visiting.contains id then throw (.invalid "cyclic proof metavariable assignment")
@@ -253,15 +291,28 @@ where
         unless ts.length == entry.context.locals.length &&
             ps.length == entry.context.proofs.length do
           throw (.invalid "proof metavariable context argument count mismatch")
-        let some value := entry.value | throw (.incomplete s!"unresolved proof metavariable ?p{id}")
+        let some assigned := entry.value
+          | throw (.incomplete s!"unresolved proof metavariable ?p{id}")
         let ts ← ts.mapM term
         let ps ← ps.mapM proof
-        let value ← go (id :: visiting) entry.locals entry.context.proofs.length fuel value
-        unless value.isComplete && ts.all Term.isComplete && ps.all Proof.isComplete do
+        let value ← go completeArguments compactScopes (id :: visiting) entry.locals
+          entry.context.proofs.length fuel assigned
+        -- Filled numerical and predicate entries make successfully resolved arguments complete.
+        unless completeArguments ||
+            (value.isComplete && ts.all Term.isComplete && ps.all Proof.isComplete) do
           return .mvar id ts ps
-        checkProofContext state entry.locals entry.context.proofs.length value
+        -- Recursive calls check dependencies; argument checks validate their replacements.
+        checkProofContext state entry.locals entry.context.proofs.length
+          (if compactScopes then assigned else value)
         for t in ts do
           let _ ← renameTerm locals locals 0 t
+        let sameTerms := ts.zipIdx.all fun (t, i) => match t with
+          | .bvar j => i == j
+          | _ => false
+        let sameProofs := ps.zipIdx.all fun (p, i) => match p with
+          | .hyp j => i == j
+          | _ => false
+        if sameTerms && sameProofs then return value
         return value.subst (fun i => ts[i]?.getD (.bvar i)) (fun i => ps[i]?.getD (.hyp i))
       | .theoremE n fs ps => return .theoremE n (← fs.mapM term) (← ps.mapM pred)
       | .impIntro n a p => return .impIntro n (← pred a) (← hypothesis p)

@@ -195,14 +195,16 @@ private def runSolver (action : Metavariable.Frontend.M α) : ObjectElabM α := 
   | .error message => throwError "{message}"
 
 private def resolvedTerm (t : Metavariable.Term) : ObjectElabM Metavariable.Term := do
-  if Metavariable.Frontend.isEmpty (← get).unification then return t
+  let state := (← get).unification
+  if state.terms.isEmpty && state.predicates.isEmpty then return t
   let depth := pra.maxDepth.get (← getOptions)
   match Metavariable.Frontend.resolveTerm (← get).unification (← read).localIds depth t with
   | .ok t => return t
   | .error message => throwError "{message}"
 
 private def resolvedPredicate (p : Predicate) : ObjectElabM Predicate := do
-  if Metavariable.Frontend.isEmpty (← get).unification then return p
+  let state := (← get).unification
+  if state.terms.isEmpty && state.predicates.isEmpty then return p
   let depth := pra.maxDepth.get (← getOptions)
   match Metavariable.Frontend.resolvePredicate (← get).unification (← read).localIds depth p with
   | .ok p => return p
@@ -318,7 +320,8 @@ private def remember (stx : Syntax) (subject : Metavariable.Subject) : ObjectEla
   let id := if stx.isIdent then stx else stx[0]
   let target := if id.isIdent then
     ((s.references.find? (·.1 == objectName id)).map (·.2)).getD .missing else .missing
-  let context ← currentContext
+  -- Share the hypotheses here and resolve them when reporting an error or editor information.
+  let context := Metavariable.Frontend.context (← get).unification s.context
   -- Reserve a slot in the info tree to fill once metavariables are resolved.
   let hasUnknowns := !Metavariable.Frontend.isEmpty (← get).unification
   let infoHole ← if hasUnknowns && collectInfo then do
@@ -416,8 +419,17 @@ private def checked (stx : Syntax) (result : Core.CheckResult α) : ObjectElabM 
   | .error error =>
     let origins := (← get).origins
     let view ← projection
+    let state := (← get).unification
+    let depth ← getMaxDepth
     let origin := error.site.bind fun site =>
-      origins.findRev? (fun origin => (origin.site.project view).toOption == some site)
+      origins.findRev? fun origin =>
+        let proofs := origin.site.context.proofs.mapM
+          (Metavariable.Frontend.resolvePredicate state origin.localIds depth)
+        match proofs with
+        | .error _ => false
+        | .ok proofs =>
+          let draft := { origin.site with context := { origin.site.context with proofs } }
+          (draft.project view).toOption == some site
     let ref := (origin.map (·.ref)).getD stx
     match error.reason with
     | .proofTypeMismatch expected actual .. =>
@@ -1892,6 +1904,8 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
         let type ← complete (Metavariable.Frontend.completePredicate (← resolvedPredicate type))
         let body ← complete (Metavariable.Frontend.completeProof (← resolvedProof body))
         pure (Core.Declaration.theoremE ⟨name, parameters, type, body⟩)
+    -- Share repeated syntax before checking and storing the declaration.
+    let declaration := ShareCommon.shareCommon' declaration
     checked stx (Core.checkDeclaration (← getMaxDepth) environment declaration)
   -- Reject missing syntax only after elaboration so goal info is still recorded at the cursor.
   if stx.hasMissing then
