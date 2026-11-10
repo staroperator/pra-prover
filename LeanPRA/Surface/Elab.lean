@@ -147,6 +147,11 @@ private structure ObjectState where
 
 private abbrev ObjectElabM := ReaderT Scope (StateRefT ObjectState CommandElabM)
 
+/-- Include checked declarations published by tactics while keeping the saved local bindings. -/
+private def currentScope : ObjectElabM Scope := do
+  let scope ← read
+  return { scope with environment := CoreEnvironment.getState (← getEnv) }
+
 private def projection : ObjectElabM Metavariable.Projection :=
   return (← get).unification.projection
 
@@ -229,7 +234,7 @@ private def displayNames : ObjectElabM Names := do
   return { (← read).names with unknownFunctions := functions, unknownPredicates := predicates }
 
 private def constrainFormulas (a b : Predicate) (ref : Syntax := .missing) : ObjectElabM Unit := do
-  let scope ← read
+  let scope ← currentScope
   let ref := if ref.isMissing then scope.parentExpression else ref
   let id ← runSolver (Metavariable.Frontend.submit (pra.maxDepth.get (← getOptions))
     scope.environment
@@ -316,7 +321,7 @@ private def binding (n : Name) : ObjectElabM (Option VariableKind) := do
 private def remember (stx : Syntax) (subject : Metavariable.Subject) : ObjectElabM Unit := do
   if stx.isMissing then return
   let collectInfo ← editorInfoEnabled
-  let s ← read
+  let s ← currentScope
   let id := if stx.isIdent then stx else stx[0]
   let target := if id.isIdent then
     ((s.references.find? (·.1 == objectName id)).map (·.2)).getD .missing else .missing
@@ -370,8 +375,8 @@ private def withGoal (stx : Syntax) (expected : Option DraftGoalTarget)
     let result ← withReader (fun s => { s with parentExpression := ref }) action
     if expected.isNone then
       let target :=
-        (infer (← projection) (← getMaxDepth) result { scope with context := ← currentContext
-            }).toOption
+        (infer (← projection) (← getMaxDepth) result
+          { (← currentScope) with context := ← currentContext }).toOption
       modify fun s => { s with goals := s.goals.modify id (fun g => { g with target }) }
     return result) fun children => do
       modify fun s => { s with goals := s.goals.modify id (fun g => { g with children }) }
@@ -454,13 +459,13 @@ private def checked (stx : Syntax) (result : Core.CheckResult α) : ObjectElabM 
     | _ => throwErrorAt ref "{error.message}"
 
 private def inferTerm (stx : Syntax) (t : Metavariable.Term) : ObjectElabM Nat := do
-  let s ← read
+  let s ← currentScope
   checked stx (Bridge.termType (← projection) (← getMaxDepth) s.environment (← currentContext)
     (← resolvedTerm t))
 
 private def inferPredicate (stx : Syntax) (p : Predicate) :
     ObjectElabM Core.PredicateSignature := do
-  let s ← read
+  let s ← currentScope
   checked stx (Bridge.predicateType (← projection) (← getMaxDepth) s.environment (← currentContext)
     (← resolvedPredicate p))
 
@@ -476,7 +481,7 @@ private def closeProof (action : ObjectElabM ProofResult) : ObjectElabM ProofRes
   return { result with value }
 
 private def readyProof (stx : Syntax) (p : Proof) : ObjectElabM ProofResult := do
-  let s ← read
+  let s ← currentScope
   let result := Bridge.proofType (← projection) (← getMaxDepth) s.environment (← currentContext) p
   let type ← match result with
     | .ok result => checked stx result
@@ -501,20 +506,22 @@ private def existentialResult (stx : Syntax) (outer : Scope) (type : Predicate) 
   unless target.shift == type do
     let view ← projection
     let equal ← checked stx
-      ((Core.defEqPredicate (← getMaxDepth) outer.environment 0 (view.encodePredicate type)
+      ((Core.defEqPredicate (← getMaxDepth) (CoreEnvironment.getState (← getEnv)) 0
+        (view.encodePredicate type)
         (view.encodePredicate target.shift)).withSite (view.encodeContext (← currentContext))
           (.predicate (view.encodePredicate type)))
     unless equal do
       blockOn type "the existential result is waiting for its witness dependency to be resolved"
       throwErrorAt stx "an existential witness escapes the result type"
   withReader (fun _ => outer) do
-    let _ ← checked stx (Bridge.formulaSort (← projection) (← getMaxDepth) outer.environment
+    let _ ← checked stx (Bridge.formulaSort (← projection) (← getMaxDepth)
+      (CoreEnvironment.getState (← getEnv))
       (← currentContext) target)
     pure target
 
 -- Reduce to WHNF so the outer connective is visible without normalizing subformulas.
 private def exposeFormula (stx : Syntax) (p : Predicate) : ObjectElabM Predicate := do
-  let s ← read
+  let s ← currentScope
   let depth ← getMaxDepth
   let _ ← checked stx
     (Bridge.formulaSort (← projection) depth s.environment (← currentContext) (← resolvedPredicate
@@ -564,7 +571,7 @@ private partial def predicateSignature? (stx : Syntax) : Option Core.PredicateSi
 
 private def lookup (stx : Syntax) : ObjectElabM DeclarationSignature := do
   let n := objectName stx
-  match ← resolveSignature? (← read).environment n with
+  match ← resolveSignature? (← currentScope).environment n with
   | some d => addDeclarationInfo stx d; return d
   | none =>
     addUnresolvedInfo stx
@@ -705,7 +712,7 @@ private partial def expressionKind (stx : Syntax) : ObjectElabM Core.Declaration
       | some .predicateParameter => return .predicate
       | some .proof => return .theoremE
       | none =>
-        if let some d ← resolveSignature? (← read).environment n then
+        if let some d ← resolveSignature? (← currentScope).environment n then
           return d.kind
     return .theoremE
 
@@ -744,7 +751,7 @@ private partial def termBody (stx : Syntax) (expected : Option Nat) : ObjectElab
   | `(praExpr| let $id:ident : $type:praExpr := $value:praExpr; $body:praExpr) =>
     let some arity := numericalArity? type | throwErrorAt type "expected a numerical type"
     let value ← term value arity
-    let s ← read
+    let s ← currentScope
     checked stx (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (← currentContext)
         value arity)
     return .letE (objectName id) value (← withLocal id (objectName id) arity (term
@@ -752,7 +759,7 @@ private partial def termBody (stx : Syntax) (expected : Option Nat) : ObjectElab
   | `(praExpr| ($value:praExpr : $type:praExpr)) =>
     let some arity := numericalArity? type | throwErrorAt type "expected a numerical type"
     let value ← term value arity
-    let s ← read
+    let s ← currentScope
     checked stx (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (← currentContext)
         value arity)
     return value
@@ -769,7 +776,7 @@ private partial def termBody (stx : Syntax) (expected : Option Nat) : ObjectElab
       if args.isEmpty then throwErrorAt head "expected a numerical expression"
       return ← args.foldlM (fun f a => return .app f (← term a (some 0))) (← term head)
     let n := objectName id
-    let s ← read
+    let s ← currentScope
     let (value, rest) ← match ← binding n with
       | some .local =>
         let value := ((s.aliases.find? (·.1 == n)).map (·.2)).getD
@@ -817,7 +824,7 @@ private partial def predicate (stx : Syntax) (expected : Option Core.PredicateSi
 /-- Elaborate `stx` and check that it is a formula (arity `0`). -/
 private partial def formula (stx : Syntax) : ObjectElabM Predicate := do
   let p ← predicate stx
-  let s ← read
+  let s ← currentScope
   let _ ← checked stx (Bridge.formulaSort (← projection) (← getMaxDepth) s.environment (←
       currentContext) p)
   return p
@@ -829,7 +836,7 @@ private partial def predicateBody (stx : Syntax)
   | `(praExpr| ($value:praExpr : $type:praExpr)) =>
     let some sig := predicateSignature? type | throwErrorAt type "expected a predicate type"
     let value ← predicate value sig
-    let s ← read
+    let s ← currentScope
     checked stx (Bridge.checkPredicate (← projection) (← getMaxDepth) s.environment (←
         currentContext) value sig)
     return value
@@ -874,7 +881,7 @@ private partial def predicateBody (stx : Syntax)
       if args.isEmpty then throwErrorAt head "expected a predicate expression"
       return ← args.foldlM (fun p a => return .app p (← term a (some 0))) (← predicate head)
     let n := objectName id
-    let s ← read
+    let s ← currentScope
     let (value, rest) ← match ← binding n with
       | some .predicateParameter =>
         let value := ((s.predicateAliases.find? (·.1 == n)).map (·.2)).getD
@@ -910,7 +917,7 @@ private partial def predicateLet (stx id : Syntax) (annotation : Option Syntax)
     let value ← term value (annotation.bind numericalArity?)
     if let some type := annotation then
       let some arity := numericalArity? type | throwErrorAt type "expected a numerical type"
-      let s ← read
+      let s ← currentScope
       checked stx (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (←
           currentContext) value arity)
     else
@@ -922,7 +929,7 @@ private partial def predicateLet (stx id : Syntax) (annotation : Option Syntax)
     let value ← predicate value (annotation.bind predicateSignature?)
     if let some type := annotation then
       let some sig := predicateSignature? type | throwErrorAt type "expected a predicate type"
-      let s ← read
+      let s ← currentScope
       checked stx (Bridge.checkPredicate (← projection) (← getMaxDepth) s.environment (←
           currentContext) value sig)
     else
@@ -947,7 +954,7 @@ private partial def declarationArguments (stx : Syntax) (name : Name)
       named := named ++ [(n, value.raw)]
     else positional := positional ++ [arg]
   if named.isEmpty && !flags.any id && positional.length < parameters.length then
-    match (← read).environment.lookup name with
+    match (← currentScope).environment.lookup name with
     | some (.function _) =>
       throwErrorAt stx "`{name}` requires {parameters.length} explicit function parameters"
     | _ => throwErrorAt stx "`{name}` requires {parameters.length} explicit parameters"
@@ -968,7 +975,7 @@ private partial def declarationArguments (stx : Syntax) (name : Name)
       fs := fs ++ [← match arg with
         | some a => do
           let value ← term a arity
-          checked a (Bridge.checkTerm (← projection) (← getMaxDepth) (← read).environment
+          checked a (Bridge.checkTerm (← projection) (← getMaxDepth) (← currentScope).environment
             (← currentContext) value arity)
           pure value
         | none => unknownTerm stx arity n]
@@ -976,7 +983,8 @@ private partial def declarationArguments (stx : Syntax) (name : Name)
       ps := ps ++ [← match arg with
         | some a => do
           let value ← predicate a sig
-          checked a (Bridge.checkPredicate (← projection) (← getMaxDepth) (← read).environment
+          checked a (Bridge.checkPredicate (← projection) (← getMaxDepth)
+            (← currentScope).environment
             (← currentContext) value sig)
           pure value
         | none =>
@@ -1161,7 +1169,7 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
       budget := budget - 1
       drainTasks
       let revision := (← get).unification.revision
-      runSolver (Metavariable.Frontend.settle (← getMaxDepth) (← read).environment)
+      runSolver (Metavariable.Frontend.settle (← getMaxDepth) (← currentScope).environment)
       if revision == (← get).unification.revision then break
     for task in (← get).tasks do
       if let .failed error := task.status then throw error
@@ -1170,11 +1178,16 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
   let ctx : Tactic.Context := {
     inspect := fun id => do
       run (← goalScope id) do
+        let view ← projection
+        let aliases ← (← read).aliases.mapM fun (name, value) => do
+          return (name, view.encodeTerm (← resolvedTerm value))
+        let predicateAliases ← (← read).predicateAliases.mapM fun (name, value) => do
+          return (name, view.encodePredicate (← resolvedPredicate value))
         return {
           target := (← goalType id)
           context := (← currentContext)
-          names := (← displayNames)
-          environment := (← read).environment
+          names := { (← displayNames) with termAliases := aliases, predicateAliases }
+          environment := (← currentScope).environment
           projection := (← projection)
           maxDepth := (← getMaxDepth) }
     refine := fun id stx => do
@@ -1214,6 +1227,16 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
           constrainFormulas p.type (← formula (← expandPraSyntax expected)) stx
         checkProgress
         resolvedPredicate p.type
+    term := fun id stx arity => do
+      run (← goalScope id) do
+        let value ← term (← expandPraSyntax stx) arity
+        checkProgress
+        resolvedTerm value
+    proof := fun id stx => do
+      run (← goalScope id) do
+        let result ← proofNow (← expandPraSyntax stx) none
+        checkProgress
+        return (← resolvedProof result.value, ← resolvedPredicate result.type)
     save := do
       let saved ← stateRef.get
       let commandState ← get
@@ -1227,7 +1250,7 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
         run (← goalScope id) do
           let type ← goalType id
           let view ← projection
-          let scope ← read
+          let scope ← currentScope
           return { environment := scope.environment
                    context := view.encodeContext (← currentContext)
                    names := (← displayNames)
@@ -1293,7 +1316,7 @@ private partial def proofTuple (stx : Syntax) (entries : List Syntax)
         return ProofResult.map₂ .andIntro (.and a b) left right
       | .ex motive =>
         let n ← term first (some 0)
-        let s ← read
+        let s ← currentScope
         checked first (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (←
             currentContext) n 0)
         return (← proofTuple stx rest (Predicate.app motive n)).map
@@ -1317,7 +1340,7 @@ private partial def proofLet (stx id : Syntax) (annotation : Option Syntax)
     let value ← predicate value (annotation.bind predicateSignature?)
     if let some type := annotation then
       let some sig := predicateSignature? type | throwErrorAt type "expected a predicate type"
-      let s ← read
+      let s ← currentScope
       checked stx (Bridge.checkPredicate (← projection) (← getMaxDepth) s.environment (←
           currentContext) value sig)
     else
@@ -1329,7 +1352,7 @@ private partial def proofLet (stx id : Syntax) (annotation : Option Syntax)
     let value ← term value (annotation.bind numericalArity?)
     if let some type := annotation then
       let some arity := numericalArity? type | throwErrorAt type "expected a numerical type"
-      let s ← read
+      let s ← currentScope
       checked stx (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (←
           currentContext) value arity)
     else
@@ -1474,7 +1497,7 @@ private partial def applyInferred (stx : Syntax) (head : ProofResult) (type : Pr
     withReader (fun s => { s with reason := "the expected result of this application" })
       (constrainFormulas type target stx)
   let resultType ← resolvedPredicate type
-  if Metavariable.Frontend.hasImplicitBinders (← getMaxDepth) (← read).environment ((←
+  if Metavariable.Frontend.hasImplicitBinders (← getMaxDepth) (← currentScope).environment ((←
       projection).encodePredicate resultType) then
     return result.map (.ascribe resultType) resultType
   return { result with type := resultType }
@@ -1526,7 +1549,7 @@ private partial def applicationTarget (args : List Syntax) (expected : Option Pr
     match ← expressionKind arg with
     | .function =>
       let argument ← term arg (some 0)
-      let s ← read
+      let s ← currentScope
       checked arg (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (←
           currentContext) argument 0)
       let view ← projection
@@ -1568,7 +1591,7 @@ private partial def constantProof (stx : Syntax) (d : ProofSignature)
 private partial def inferInductionMotive (stx step argument : Syntax)
     (expected : Option Predicate) (resultArgs : List Syntax) : ObjectElabM Predicate := do
   let argument ← term argument (some 0)
-  let s ← read
+  let s ← currentScope
   checked stx (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment (← currentContext)
       argument 0)
   let branch ← match unparen step with
@@ -1683,7 +1706,8 @@ private def completeGoalInfo : ObjectElabM Unit := do
       let status := if conflict then GoalStatus.conflicting
         else if waiting || constraintFailure then .blocked else .openGoal
       withInfoHole goal.infoHole do
-        pushInfoTree (.node (← goalInfo goal.ref goal.scope.environment (← currentContext)
+        pushInfoTree (.node (← goalInfo goal.ref (CoreEnvironment.getState (← getEnv))
+          (← currentContext)
           (← displayNames) bindings target status) goal.children)
   for task in state.tasks do
     if let .done := task.status then continue
@@ -1693,7 +1717,7 @@ private def completeGoalInfo : ObjectElabM Unit := do
     withReader (fun _ => task.scope) do
       withInfoHole hole do
         let status := if conflict then GoalStatus.conflicting else .blocked
-        pushInfoLeaf (← goalInfo task.ref task.scope.environment (← currentContext)
+        pushInfoLeaf (← goalInfo task.ref (CoreEnvironment.getState (← getEnv)) (← currentContext)
           (← displayNames) task.scope.bindings.reverse
           (some (.proof (← resolvedPredicate goal.type)))
           status)
@@ -1748,7 +1772,7 @@ private def reportConflicts : ObjectElabM Unit := do
 private def completeExpressionInfo : ObjectElabM Unit := do
   unless ← editorInfoEnabled do return
   let state ← get
-  let environment := (← read).environment
+  let environment := (← currentScope).environment
   let depth ← getMaxDepth
   for origin in state.origins do
     let some hole := origin.infoHole | continue
@@ -1784,7 +1808,7 @@ private def completeExpressionInfo : ObjectElabM Unit := do
     { info with trees := info.trees.map (·.substitute info.assignment) }
 
 private def finishPendingChecks : ObjectElabM Unit := do
-  let scope ← read
+  let scope ← currentScope
   let depth ← getMaxDepth
   let mut budget := depth
   repeat
@@ -1792,7 +1816,7 @@ private def finishPendingChecks : ObjectElabM Unit := do
     budget := budget - 1
     drainTasks
     let revision := (← get).unification.revision
-    runSolver (Metavariable.Frontend.settle depth scope.environment)
+    runSolver (Metavariable.Frontend.settle depth (← currentScope).environment)
     if (← get).unification.revision == revision then break
   for task in (← get).tasks do
     if let .failed error := task.status then throw error
@@ -1816,10 +1840,12 @@ private def finishPendingChecks : ObjectElabM Unit := do
     let context ← currentContext
     let (kind, type) ← match subject with
       | .term t =>
-        let arity ← checked ref (Bridge.termType (← projection) depth scope.environment context t)
+        let arity ← checked ref (Bridge.termType (← projection) depth
+          (← currentScope).environment context t)
         pure ("numerical", ← delabArity arity)
       | .predicate p =>
-        let sig ← checked ref (Bridge.predicateType (← projection) depth scope.environment context
+        let sig ← checked ref (Bridge.predicateType (← projection) depth
+          (← currentScope).environment context
             p)
         pure ("predicate", ← delabPredicateType sig)
       | .proof _ => throwErrorAt ref "unexpected proof argument during inference"
@@ -1830,7 +1856,7 @@ private def finishPendingChecks : ObjectElabM Unit := do
     else s!"supply `({name} := ...)`, or use `@` to pass implicit arguments explicitly"
     throwErrorAt ref "cannot infer {kind} argument ?{id}{binder} : {← formatSyntax `praExpr type}\n\
       could not determine its value from the surrounding types\n{hint}"
-  runSolver (Metavariable.Frontend.finish depth scope.environment)
+  runSolver (Metavariable.Frontend.finish depth (← currentScope).environment)
 
 private def runObject (s : Scope) (action : ObjectElabM α) : CommandElabM α :=
   (do
@@ -1906,7 +1932,8 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
         pure (Core.Declaration.theoremE ⟨name, parameters, type, body⟩)
     -- Share repeated syntax before checking and storing the declaration.
     let declaration := ShareCommon.shareCommon' declaration
-    checked stx (Core.checkDeclaration (← getMaxDepth) environment declaration)
+    checked stx (Core.checkDeclaration (← getMaxDepth)
+      (CoreEnvironment.getState (← getEnv)) declaration)
   -- Reject missing syntax only after elaboration so goal info is still recorded at the cursor.
   if stx.hasMissing then
     throwErrorAt stx "incomplete PRA declaration"

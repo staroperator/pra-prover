@@ -24,6 +24,13 @@ theorem primrec_zero (step : Nat → Nat → Nat) : ∀ base, primrec base step 
 theorem primrec_succ (step : Nat → Nat → Nat) : ∀ base n,
     primrec base step (S n) = step n (primrec base step n) := fun base n => rfl
 
+theorem primrec_congr (step step' : Nat → Nat → Nat) : ∀ base n,
+    (∀ i y, step i y = step' i y) → primrec base step n = primrec base step' n := by
+  intro base n h
+  induction n with i ih
+  · rfl
+  · rw [primrec_succ step, primrec_succ step', ih, h i (primrec base step' i)]
+
 /-- Addition. -/
 def add : Nat → Nat → Nat :=
   fun x y => primrec x (fun _ z => S z) y

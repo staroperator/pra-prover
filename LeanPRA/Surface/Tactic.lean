@@ -66,6 +66,8 @@ structure Context where
   refine : GoalId → Syntax → CommandElabM (List GoalId)
   close : GoalId → Metavariable.Proof → CommandElabM Unit
   infer : GoalId → Syntax → Option Syntax → CommandElabM Metavariable.Predicate
+  term : GoalId → Syntax → Nat → CommandElabM Metavariable.Term
+  proof : GoalId → Syntax → CommandElabM (Metavariable.Proof × Metavariable.Predicate)
   save : CommandElabM (CommandElabM Unit)
   snapshot : List GoalId → Syntax → CommandElabM Info
 
@@ -106,6 +108,15 @@ constraints for its arguments; the result is the inferred type with those argume
 def infer (proof : TSyntax `praExpr) (expected : Option (TSyntax `praExpr) := none) :
     TacticM Metavariable.Predicate := do
   (← read).infer (← mainGoal) proof (expected.map (·.raw))
+
+/-- Elaborate a numerical expression in the current goal's context. -/
+def elaborateTerm (value : TSyntax `praExpr) (arity : Nat := 0) : TacticM Metavariable.Term := do
+  (← read).term (← mainGoal) value arity
+
+/-- Elaborate a proof together with its type in the current goal's context. -/
+def elaborateProof (value : TSyntax `praExpr) :
+    TacticM (Metavariable.Proof × Metavariable.Predicate) := do
+  (← read).proof (← mainGoal) value
 
 /-- Save the complete elaboration session and the current goal list for backtracking. -/
 def saveState : TacticM (TacticM Unit) := do

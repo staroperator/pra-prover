@@ -147,6 +147,57 @@ def Projection.encodeProof (view : Projection) : Proof → Except String Core.Pr
     return .lem (view.encodePredicate formula)
   | .induction a => return .induction (view.encodePredicate a)
 
+/-- Read explicit Core proof data in the current metavariable projection. -/
+def Projection.decodeProof (view : Projection) : Core.Proof → Proof
+  | .hyp index =>
+    .hyp index
+  | .trueIntro =>
+    .trueIntro
+  | .theoremE name functions predicates =>
+    .theoremE name (functions.map view.decodeTerm)
+        (predicates.map view.decodePredicate)
+  | .impIntro binderName antecedent body =>
+    .impIntro binderName (view.decodePredicate antecedent)
+        (view.decodeProof body)
+  | .impElim function argument =>
+    .impElim (view.decodeProof function) (view.decodeProof argument)
+  | .andIntro left right =>
+    .andIntro (view.decodeProof left) (view.decodeProof right)
+  | .andLeft a b => .andLeft (view.decodePredicate a) (view.decodePredicate b)
+  | .andRight a b => .andRight (view.decodePredicate a) (view.decodePredicate b)
+  | .orLeft a b => .orLeft (view.decodePredicate a) (view.decodePredicate b)
+  | .orRight a b => .orRight (view.decodePredicate a) (view.decodePredicate b)
+  | .orElim a b c =>
+    .orElim (view.decodePredicate a) (view.decodePredicate b) (view.decodePredicate c)
+  | .falseElim a => .falseElim (view.decodePredicate a)
+  | .forallIntro binderName motive body =>
+    .forallIntro binderName (view.decodePredicate motive)
+        (view.decodeProof body)
+  | .forallElim proof argument =>
+    .forallElim (view.decodeProof proof) (view.decodeTerm argument)
+  | .existsIntro motive witness proof =>
+    .existsIntro (view.decodePredicate motive)
+        (view.decodeTerm witness) (view.decodeProof proof)
+  | .existsElim a b => .existsElim (view.decodePredicate a) (view.decodePredicate b)
+  | .letE binderName type value body =>
+    .letE binderName (view.decodePredicate type)
+        (view.decodeProof value) (view.decodeProof body)
+  | .letTerm binderName value body =>
+    .letTerm binderName (view.decodeTerm value)
+        (view.decodeProof body)
+  | .letPredicate binderName value body =>
+    .letPredicate binderName (view.decodePredicate value)
+        (view.decodeProof body)
+  | .ascribe type proof =>
+    .ascribe (view.decodePredicate type) (view.decodeProof proof)
+  | .eqRefl => .eqRefl
+  | .eqSubst a => .eqSubst (view.decodePredicate a)
+  | .succNeZero => .succNeZero
+  | .succInj => .succInj
+  | .lem formula =>
+    .lem (view.decodePredicate formula)
+  | .induction a => .induction (view.decodePredicate a)
+
 /-- Encode a typing context as a `Core.Context` by encoding its proof hypotheses. -/
 def Projection.encodeContext (view : Projection) (ctx : Context) : Core.Context :=
   { locals := ctx.locals, functions := ctx.functions, predicates := ctx.predicates,

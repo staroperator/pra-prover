@@ -27,6 +27,9 @@ namespace LeanPRA.Library.Tactic
 open Lean Elab LeanPRA.Surface LeanPRA.Surface.Tactic
 
 syntax (name := inductionTac) "induction " praExpr " with " ident ident : praTactic
+syntax (name := structuredInductionTac) "induction " ident " with"
+  ppLine "| " &"zero" "=>" ppIndent(colGt praTacticSeq)
+  ppLine "| " &"succ" ident ident " =>" ppIndent(colGt praTacticSeq) : praTactic
 syntax (name := byCasesTac) "by_cases " ident " : " praExpr : praTactic
 syntax (name := haveTypedTac) "have " ident " : " praExpr " := " praExpr : praTactic
 syntax (name := haveTac) "have " ident " := " praExpr : praTactic
@@ -66,5 +69,20 @@ def evalInduction : Tactic := fun stx => do
   | `(praTactic| change $p:praExpr) =>
     Tactic.refine (← `(praExpr| (?_ : $p)))
   | _ => throwUnsupportedSyntax
+
+/-- Elaborate named branches through the existing quantifier-free induction rule. -/
+@[pra_tactic structuredInductionTac]
+def evalStructuredInduction : Tactic := fun stx => do
+  let `(praTactic| induction $n:ident with
+    | zero => $base:praTacticSeq
+    | succ $k:ident $ih:ident => $step:praTacticSeq) := stx | throwUnsupportedSyntax
+  let rest := (← get).drop 1
+  Tactic.refine (← `(praExpr| induction ?_ (fun $k:ident $ih:ident => ?_) $n:ident))
+  let goals := (← get).take 2
+  for (goal, branch) in goals.zip [base, step] do
+    set [goal]
+    Tactic.evalTacticSeq branch
+    unless (← get).isEmpty do throwErrorAt branch "unfinished PRA induction branch"
+  set rest
 
 end LeanPRA.Library.Tactic
