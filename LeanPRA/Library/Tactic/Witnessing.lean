@@ -13,6 +13,13 @@ The compiler follows constructive introductions, applications, and equality tran
 subproofs become checked numerical definitions. The resulting specification passes through the
 ordinary PRA checker before it can be used by another declaration. Generated functions capture
 only the local variables used by their bodies; their certificates include the proof premises.
+
+A theorem used inside a compiled proof is compiled once and then reused when each premise is
+quantifier-free or an existence statement with a quantifier-free body. An existence premise
+`∃ u, Q u` is opened: the program receives `u` as a further argument, and its specification
+assumes `Q u`. For example, `(∃ u, Q u) → ∃ v, R v` gives a program `f` and the specification
+`∀ u, Q u → R (f u)`. At each use, the number is first computed from the proof supplied for that
+premise. Theorems with other premises are replaced by their proofs at each use.
 -/
 
 public meta section
@@ -52,6 +59,8 @@ private def formulaHead (a : Core.Predicate) : CommandElabM Core.Predicate := do
 private structure WitnessInfo where
   source : Name
   code : Name
+  /-- Whether the existence premises of `source` are arguments of `code`. -/
+  opened : Bool := false
   deriving Inhabited
 
 private initialize witnesses : SimplePersistentEnvExtension WitnessInfo (Array WitnessInfo) ←
@@ -60,15 +69,29 @@ private initialize witnesses : SimplePersistentEnvExtension WitnessInfo (Array W
     addImportedFn := fun entries => entries.foldl (· ++ ·) #[]
   }
 
-private partial def reconstruct (type : Core.Predicate) (code : Core.Term)
+private def eliminateExists (motive target : Core.Predicate) (value body : Core.Proof) :
+    Core.Proof :=
+  let premise := Core.Predicate.app motive.shift (.bvar 0)
+  .impElim (.impElim (.existsElim motive target) value)
+    (.forallIntro `w (.lam `w (.imp premise target.shift)) (.impIntro `h premise body))
+
+/-- Prove a theorem of `type` from its compiled program `code` and checked specification `proof`.
+With `opened`, each existence premise supplies its number to `code` and to `proof`. -/
+private partial def reconstruct (opened : Bool) (type : Core.Predicate) (code : Core.Term)
     (proof : Core.Proof) : CommandElabM Core.Proof := do
   match ← formulaHead type with
   | .all motive =>
-    let body ← reconstruct (.app motive.shift (.bvar 0)) (.app code.shift (.bvar 0))
+    let body ← reconstruct opened (.app motive.shift (.bvar 0)) (.app code.shift (.bvar 0))
       (.forallElim (shiftProof proof 1 0) (.bvar 0))
     return .forallIntro `x motive body
   | .imp a b =>
-    let body ← reconstruct b code (.impElim (shiftProof proof 0 1) (.hyp 0))
+    if opened then
+      if let .ex motive ← formulaHead a then
+        -- Inside the branch, `w` is the premise's number and hypothesis `0` its property.
+        let body ← reconstruct opened b.shift (.app code.shift (.bvar 0))
+          (.impElim (.forallElim (shiftProof proof 1 2) (.bvar 0)) (.hyp 0))
+        return .impIntro `h a (eliminateExists motive b (.hyp 0) body)
+    let body ← reconstruct opened b code (.impElim (shiftProof proof 0 1) (.hyp 0))
     return .impIntro `h a body
   | .ex motive => return .existsIntro motive code proof
   | _ => throwError "invalid extracted witness specification"
@@ -234,6 +257,8 @@ private def shareWitness (name : Name) (value : Extracted) (motive target : Core
     proof := .impElim (.forallElim (.forallIntro name type
       (.impIntro `hw premise body.proof)) value.witness) value.proof }
 
+/-- Whether a theorem of `type` can be compiled once: it concludes with an existence statement,
+and each premise is quantifier-free or an existence statement with a quantifier-free body. -/
 private partial def hasExistentialResult (context : Core.Context) (type : Core.Predicate) :
     CommandElabM Bool := do
   match ← formulaHead type with
@@ -242,15 +267,15 @@ private partial def hasExistentialResult (context : Core.Context) (type : Core.P
   | .imp premise result =>
     match Core.inferFormula 1024 (← environment) context premise with
     | .ok .qf => hasExistentialResult (context.pushProof premise) result
-    | _ => return false
+    | _ =>
+      let .ex motive ← formulaHead premise | return false
+      let opened := context.pushLocal 0
+      let body := Core.Predicate.app motive.shift (.bvar 0)
+      match Core.inferFormula 1024 (← environment) opened body with
+      | .ok .qf => hasExistentialResult (opened.pushProof body) result.shift
+      | _ => return false
   | .ex _ => return true
   | _ => return false
-
-private def eliminateExists (motive target : Core.Predicate) (value body : Core.Proof) :
-    Core.Proof :=
-  let premise := Core.Predicate.app motive.shift (.bvar 0)
-  .impElim (.impElim (.existsElim motive target) value)
-    (.forallIntro `w (.lam `w (.imp premise target.shift)) (.impIntro `h premise body))
 
 private def openExistentialBranch : Core.Proof → Core.Proof
   | .forallIntro _ _ (.impIntro _ _ body) => body
@@ -263,12 +288,12 @@ private partial def proofHead (p : Core.Proof) : CommandElabM Core.Proof := do
   | .theoremE n fs ps =>
     let some (.theoremE d) := (← environment).lookup n | throwError "unknown theorem `{n}`"
     if let some info := (witnesses.getState (← getEnv)).find? (·.source == n) then
-      return ← reconstruct (d.type.instantiate fs ps) (applyDefinition info.code [] fs)
-        (.theoremE (info.code ++ `checked) fs ps)
+      return ← reconstruct info.opened (d.type.instantiate fs ps)
+        (applyDefinition info.code [] fs) (.theoremE (info.code ++ `checked) fs ps)
     if ← hasExistentialResult { functions := d.functions, predicates := d.predicates } d.type then
       let code := (← getEnv).mainModule ++ `Witnesses ++ n
-      compileWitnessCore n code (← getRef)
-      return ← reconstruct (d.type.instantiate fs ps) (applyDefinition code [] fs)
+      compileWitnessCore true n code (← getRef)
+      return ← reconstruct true (d.type.instantiate fs ps) (applyDefinition code [] fs)
         (.theoremE (code ++ `checked) fs ps)
     proofHead (instantiate fs ps d.body)
   | .ascribe _ q | .letTerm _ _ q | .letPredicate _ _ q => proofHead q
@@ -348,35 +373,46 @@ private partial def extract (root : Name) (context : Core.Context) (target : Cor
     | _ => throwError "recursive proof branches must provide a constructive numerical witness"
   nameWitness root context target result
 
-private partial def extractArguments (root : Name) (context : Core.Context) (type : Core.Predicate)
-    (proof : Core.Proof) : CommandElabM (Nat × Extracted) := do
+private partial def extractArguments (root : Name) (opened : Bool) (context : Core.Context)
+    (type : Core.Predicate) (proof : Core.Proof) : CommandElabM (Nat × Extracted) := do
   match ← formulaHead type with
   | .all motive =>
     let body := Core.Proof.forallElim (shiftProof proof 1 0) (.bvar 0)
-    let (arity, result) ← extractArguments root (context.pushLocal 0)
+    let (arity, result) ← extractArguments root opened (context.pushLocal 0)
       (.app motive.shift (.bvar 0)) body
     return (arity + 1, ⟨.lam `x result.witness, .all (.lam `x result.property),
       .forallIntro `x (.lam `x result.property) result.proof⟩)
   | .imp a b =>
+    if opened then
+      if let .ex motive ← formulaHead a then
+        -- The number of an existence premise becomes an argument, and its property a premise.
+        let premise := Core.Predicate.app motive.shift (.bvar 0)
+        let body := Core.Proof.impElim (shiftProof proof 1 1)
+          (.existsIntro motive.shift (.bvar 0) (.hyp 0))
+        let (arity, result) ← extractArguments root opened
+          ((context.pushLocal 0).pushProof premise) b.shift body
+        let property := Core.Predicate.lam `w (.imp premise result.property)
+        return (arity + 1, ⟨.lam `w result.witness, .all property,
+          .forallIntro `w property (.impIntro `h premise result.proof)⟩)
     let body := Core.Proof.impElim (shiftProof proof 0 1) (.hyp 0)
-    let (arity, result) ← extractArguments root (context.pushProof a) b body
+    let (arity, result) ← extractArguments root opened (context.pushProof a) b body
     return (arity, ⟨result.witness, .imp a result.property, .impIntro `h a result.proof⟩)
   | .ex motive => return (0, ← extract root context motive proof)
   | _ => throwError "the theorem must conclude with an existential formula"
 
-private partial def compileWitnessCore (source target : Name) (stx : Syntax) :
+private partial def compileWitnessCore (opened : Bool) (source target : Name) (stx : Syntax) :
     CommandElabM Unit := do
   let env ← environment
   let some (.theoremE d) ← LeanPRA.Surface.resolveDeclaration? env source |
     throwError "expected a PRA theorem"
   let context : Core.Context := { functions := d.functions, predicates := d.predicates }
-  let (arity, result) ← extractArguments target context d.type d.body
+  let (arity, result) ← extractArguments target opened context d.type d.body
   let parameters := d.parameters.filterMap fun
     | .function n k => some (Core.FunctionParameter.mk k n)
     | _ => none
   publishChecked (.function ⟨target, parameters, arity, result.witness⟩) stx
   publishChecked (.theoremE ⟨target ++ `checked, d.parameters, result.property, result.proof⟩) stx
-  modifyEnv (witnesses.addEntry · ⟨d.name, target⟩)
+  modifyEnv (witnesses.addEntry · ⟨d.name, target, opened⟩)
 
 end
 
@@ -386,11 +422,12 @@ The source proof and all shared declarations pass through the PRA checker. -/
 def compileProof (root : Name) (context : Core.Context) (type : Core.Predicate)
     (proof : Core.Proof) : CommandElabM (Core.Term × Core.Predicate × Core.Proof) := do
   let _ ← checked (Core.checkProof 1024 (← environment) context proof type)
-  let (_, result) ← extractArguments root context type proof
+  let (_, result) ← extractArguments root false context type proof
   return (result.witness, result.property, result.proof)
 
-/-- Compile a checked theorem into a numerical function and a checked specification theorem. -/
+/-- Compile a checked theorem into a numerical function and a checked specification theorem.
+The premises of the theorem remain in the specification as they are stated. -/
 def compileWitness (source target : Name) (stx : Syntax) : CommandElabM Unit :=
-  compileWitnessCore source target stx
+  compileWitnessCore false source target stx
 
 end LeanPRA.Library.Tactic.Witnessing
