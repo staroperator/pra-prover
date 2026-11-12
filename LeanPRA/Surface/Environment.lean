@@ -12,6 +12,7 @@ Environment extensions for PRA declarations across Lean modules:
 - `importModuleExports` loads cached declarations and checks module metadata.
 - `checkModuleExports` rechecks all imported declarations over the empty Core environment.
 - `CoreEnvironment.getState` reads the Core declaration map.
+- `CoreEnvironment.isLocal` checks whether the current module introduced a declaration.
 - `publishDeclaration` records an accepted declaration in the environment extension.
 - `registerNamespaceParents` registers PRA namespaces in Lean's scope table.
 
@@ -161,6 +162,10 @@ def getModuleEntries (env : Lean.Environment) (index : Lean.ModuleIdx) : Array M
 /-- Number of imported declarations rechecked via `pra.recheckImports`. -/
 def checkedDeclarations (env : Lean.Environment) : Nat :=
   (moduleEnvironment.getState env).checkedDeclarations
+
+/-- Whether the current module introduced the PRA declaration `name`. -/
+def isLocal (env : Lean.Environment) (name : Lean.Name) : Bool :=
+  (moduleEnvironment.getState env).localNames.contains name
 
 /-- Whether any local or imported PRA declaration resides under namespace `ns`. -/
 def hasNamespace (env : Lean.Environment) (ns : Lean.Name) : Bool :=
