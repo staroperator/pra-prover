@@ -427,7 +427,7 @@ private def checked (stx : Syntax) (result : Core.CheckResult α) : ObjectElabM 
     let state := (← get).unification
     let depth ← getMaxDepth
     let origin := error.site.bind fun site =>
-      origins.findRev? fun origin =>
+      let exact := origins.findRev? fun origin =>
         let proofs := origin.site.context.proofs.mapM
           (Metavariable.Frontend.resolvePredicate state origin.localIds depth)
         match proofs with
@@ -435,6 +435,17 @@ private def checked (stx : Syntax) (result : Core.CheckResult α) : ObjectElabM 
         | .ok proofs =>
           let draft := { origin.site with context := { origin.site.context with proofs } }
           (draft.project view).toOption == some site
+      -- Core drops the hypotheses beneath a binder inside a term or predicate, so such a site
+      -- is identified by its variables and parameters.
+      exact.orElse fun _ =>
+        match site.subject with
+        | .proof _ => none
+        | _ =>
+          if site.context.proofs.isEmpty then
+            origins.findRev? fun origin =>
+              let context := { origin.site.context with proofs := [] }
+              ({ origin.site with context }.project view).toOption == some site
+          else none
     let ref := (origin.map (·.ref)).getD stx
     match error.reason with
     | .proofTypeMismatch expected actual .. =>

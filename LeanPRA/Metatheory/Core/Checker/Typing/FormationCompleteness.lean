@@ -88,7 +88,8 @@ private theorem term_complete {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k) :
       | zero => omega
       | succ m =>
           simp only [inferTerm, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok]
-          exact ⟨_, ih m (by omega) (c.pushLocal 0) hc (by simp [Context.pushLocal, hl]), rfl⟩
+          exact ⟨_, ih m (by omega) (c.pushExpressionLocal 0) hc
+            (by simp [Context.pushExpressionLocal, hl]), rfl⟩
   | app f a ihf iha =>
       obtain ⟨n, ihf⟩ := ihf
       obtain ⟨j, iha⟩ := iha
@@ -112,7 +113,8 @@ private theorem term_complete {E Ξ Γ t k} (h : TermTyping E Ξ Γ t k) :
       | succ m =>
           simp only [inferTerm, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok]
           refine ⟨_, ihv m (by omega) c hc hl, ?_⟩
-          exact ihb m (by omega) (c.pushLocal _) hc (by simp [Context.pushLocal, hl])
+          exact ihb m (by omega) (c.pushExpressionLocal _) hc
+            (by simp [Context.pushExpressionLocal, hl])
   | primrec b s ihb ihs =>
       obtain ⟨n, ihb⟩ := ihb
       obtain ⟨j, ihs⟩ := ihs
@@ -288,7 +290,8 @@ private theorem predicate_complete {E Ξ Γ P σ} (h : PredicateTyping E Ξ Γ P
       | zero => omega
       | succ m =>
           simp only [inferPredicate, CheckResult.withSite_eq_ok, CheckResult.bind_eq_ok]
-          exact ⟨_, hn m (by omega) (c.pushLocal 0) hc (by simp [Context.pushLocal, hl]), rfl⟩
+          exact ⟨_, hn m (by omega) (c.pushExpressionLocal 0) hc
+            (by simp [Context.pushExpressionLocal, hl]), rfl⟩
   | @app Γ P k s a function argument ih =>
       obtain ⟨⟨j, t⟩, sub, n, hn⟩ := ih
       have ha : j = k + 1 := sub.arity_eq

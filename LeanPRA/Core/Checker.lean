@@ -61,7 +61,7 @@ def inferTerm : Nat → Environment → Context → Term → CheckResult Arity
       | .zero => pure 0
       | .succ => pure 1
       | .lam _ body =>
-        let arity ← (inferTerm maxDepth environment (context.pushLocal 0) body)
+        let arity ← (inferTerm maxDepth environment (context.pushExpressionLocal 0) body)
         pure (arity + 1)
       | .app function argument =>
         let arity ← (inferTerm maxDepth environment context function)
@@ -72,7 +72,7 @@ def inferTerm : Nat → Environment → Context → Term → CheckResult Arity
           pure arity
       | .letE _ value body =>
         let arity ← (inferTerm maxDepth environment context value)
-        (inferTerm maxDepth environment (context.pushLocal arity) body)
+        (inferTerm maxDepth environment (context.pushExpressionLocal arity) body)
       | .primrec base step =>
         (do checkArity 0 (← inferTerm maxDepth environment context base))
           |>.withSite context (.term base)
@@ -139,7 +139,8 @@ def inferPredicate : Nat → Environment → Context → Predicate → CheckResu
         | some signature => pure signature
         | none => fail (.unboundVariable .predicateParameter i)
       | .lam _ body =>
-        let signature ← (inferPredicate maxDepth environment (context.pushLocal 0) body)
+        let signature ←
+          (inferPredicate maxDepth environment (context.pushExpressionLocal 0) body)
         pure ⟨signature.arity + 1, signature.sort⟩
       | .app function argument =>
         let signature ← (inferPredicate maxDepth environment context function)

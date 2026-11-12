@@ -185,6 +185,12 @@ def Predicate.instantiate (functions : List Term) (predicates : List Predicate)
 def Context.pushLocal (context : Context) (arity : Arity) : Context :=
   { context with locals := arity :: context.locals, proofs := context.proofs.map Predicate.shift }
 
+/-- Push a local variable of `arity` for checking a term or predicate beneath a binder.
+Term and predicate typing reads only the variables and parameters, so the proof hypotheses
+are dropped. -/
+def Context.pushExpressionLocal (context : Context) (arity : Arity) : Context :=
+  { context with locals := arity :: context.locals, proofs := [] }
+
 /-- Push a proof hypothesis. -/
 def Context.pushProof (context : Context) (predicate : Predicate) : Context :=
   { context with proofs := predicate :: context.proofs }
