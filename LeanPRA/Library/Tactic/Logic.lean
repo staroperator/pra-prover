@@ -54,10 +54,6 @@ syntax (name := applyTac) "apply" praExpr : praTactic
 
 macro "rfl" : praExpr => `(praExpr| $(mkIdent `rfl):ident)
 
-/-- Print a predicate in a goal's local namespace and context. -/
-def predicateSyntax (goal : Goal) (p : Metavariable.Predicate) : TacticM (TSyntax `praExpr) :=
-  delabPredicate goal.names (goal.projection.encodePredicate p)
-
 /-- Expose the outer connective while preserving the expressions inside it. -/
 def headPredicate (goal : Goal) (p : Metavariable.Predicate) : TacticM Metavariable.Predicate :=
   match Metavariable.Bridge.whnfPredicate goal.projection goal.maxDepth goal.environment p with
@@ -160,13 +156,12 @@ def evalLogical : Tactic := fun stx => do
     let main ← mainGoal
     let rest := (← get).drop 1
     set [main]
-    let type ← infer p
+    let (proof, type) ← Tactic.elaborateProof p
     let goal ← getGoal
     let used := patternNames stx
     let (binder, splits) ← (patternBinder pat).run' (used ++ goal.names.used)
-    let domain ← predicateSyntax goal type
-    let target ← predicateSyntax goal goal.target
-    Tactic.refine (← `(praExpr| ((fun $binder:praFunBinder => ?_) : $domain → $target) $p))
+    Tactic.assertPremise type proof
+    Tactic.refine (← `(praExpr| fun $binder:praFunBinder => ?_))
     patternSplits used splits
     modify (· ++ rest)
   | `(praTactic| constructor) =>
@@ -193,9 +188,9 @@ def evalLogical : Tactic := fun stx => do
     let name := name.getD (mkIdent (goal.names.freshName "h" `h))
     let binder ← `(praFunBinder| $name:ident)
     let binder : TSyntax `praFunBinder := ⟨binder.raw.setInfo name.raw.getHeadInfo⟩
-    let target ← predicateSyntax goal goal.target
-    let dne := mkIdent `_root_.dne
-    Tactic.refine (← `(praExpr| $dne:ident $target (fun $binder:praFunBinder => ?_)))
+    Tactic.applyProof (.theoremE `dne [] [goal.target])
+      [.imp (.imp goal.target .false) .false]
+    Tactic.refine (← `(praExpr| fun $binder:praFunBinder => ?_))
   | `(praTactic| apply $p:praExpr) =>
     let goal ← getGoal
     let restore ← saveState

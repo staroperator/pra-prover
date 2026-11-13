@@ -1045,6 +1045,26 @@ private def attemptObject (action : ObjectElabM α) : ObjectElabM (Attempt α) :
         return .failed (.error (← getRef) m!"cannot infer this expression; add a type annotation")
     return .failed ex
 
+/-- Create a tactic goal for `type` in the current scope extended by `bindings`, in order, and
+return it with the proof metavariable that stands for it. A defined value must be a number. -/
+private def openTacticGoal (type : Predicate) :
+    List Tactic.Binding → ObjectElabM (Nat × Proof)
+  | [] => do
+    let scope ← read
+    let hole ← runSolver (Metavariable.Frontend.freshProof type scope.context scope.localIds)
+    let .mvar goal _ _ := hole | throwError "expected a proof metavariable"
+    modify fun s => { s with tacticGoals := s.tacticGoals.push (goal, scope) }
+    return (goal, hole)
+  | .definition name value ref :: rest => do
+    let s ← currentScope
+    checked (← getRef) (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment
+      (← currentContext) value 0)
+    withReader (·.addAlias name value ref) do
+      remember ref (.term value)
+      openTacticGoal type rest
+  | .hypothesis name hypothesis ref :: rest =>
+    withProof ref name hypothesis (openTacticGoal type rest)
+
 private def scheduleProof (ref : Syntax) (type : Predicate)
     (status : TaskStatus := .ready) : ObjectElabM ProofResult := do
   let scope ← read
@@ -1186,6 +1206,11 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
       if let .failed error := task.status then throw error
     if let (_, _, error) :: _ := Metavariable.Frontend.conflicts (← get).unification then
       throwError "PRA tactic proof type mismatch: {error}"
+  let unsolved (goals : List Nat) (ref : Syntax) : CommandElabM Unit := do
+    let first :: _ := goals | return
+    run (← goalScope first) do
+      let target ← showPredicate (← displayNames) (← goalType first)
+      throwErrorAt ref "unsolved PRA goals ({goals.length})\n⊢ {← formatSyntax `praExpr target}"
   let ctx : Tactic.Context := {
     inspect := fun id => do
       run (← goalScope id) do
@@ -1223,14 +1248,26 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
           return goals
         finally
           modify fun s => { s with collectingTacticGoals := collecting }
-    close := fun id p => do
+    target := fun id => do
+      run (← goalScope id) (goalType id)
+    check := fun id p type => do
       run (← goalScope id) do
-        let target ← goalType id
         let p ← resolvedProof p
         let proof ← readyProof (← getRef) p
-        constrainFormulas proof.type target
+        constrainFormulas proof.type type
         checkProgress
+        return p
+    openGoal := fun id type bindings => do
+      run (← goalScope id) (openTacticGoal type bindings)
+    assign := fun id p => do
+      run (← goalScope id) do
         runSolver (Metavariable.Frontend.assignProof (← getMaxDepth) id p)
+    prove := fun id type ref body => do
+      let (goal, hole) ← run (← goalScope id) (openTacticGoal type [])
+      unsolved (← body goal) ref
+      run (← goalScope id) (resolvedProof hole)
+    unknownTerm := fun id => do
+      run (← goalScope id) do unknownTerm (← getRef) 0
     infer := fun id stx expected => do
       run (← goalScope id) do
         let p ← proofNow (← expandPraSyntax stx) none
@@ -1243,9 +1280,10 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
         let value ← term (← expandPraSyntax stx) arity
         checkProgress
         resolvedTerm value
-    proof := fun id stx => do
+    proof := fun id stx expected => do
       run (← goalScope id) do
         let result ← proofNow (← expandPraSyntax stx) none
+        if let some expected := expected then constrainFormulas result.type expected stx
         checkProgress
         return (← resolvedProof result.value, ← resolvedPredicate result.type)
     save := do
@@ -1270,11 +1308,7 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
       makeGoalsInfo ref views
   }
   let (_, goals) ← (Tactic.evalTacticSeq seq).run ctx |>.run [rootId]
-  unless goals.isEmpty do
-    let first := goals.head!
-    run (← goalScope first) do
-      let target ← showPredicate (← displayNames) (← goalType first)
-      throwErrorAt seq "unsolved PRA goals ({goals.length})\n⊢ {← formatSyntax `praExpr target}"
+  unsolved goals seq
   return ⟨root, type⟩
 
 private partial def proofLambda (stx : Syntax) (expected : Option Predicate) :

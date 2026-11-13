@@ -57,7 +57,7 @@ Core checking; normalization uses anonymous, explicit binders when comparing exp
 structure BinderInfo where
   name : Lean.Name
   isImplicit : Bool := false
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, Hashable
 
 /-- A binder whose name is chosen by the printer. -/
 def BinderInfo.anonymous : BinderInfo := ⟨.anonymous, false⟩
@@ -93,7 +93,7 @@ inductive Term where
   | letE (binderName : Lean.Name) (value body : Term)
   | primrec (base step : Term)
   | definition (name : Lean.Name) (functions : List Term)
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, Hashable
 
 mutual
 
@@ -138,7 +138,7 @@ inductive Predicate where
   | letTerm (binderName : Lean.Name) (value : Term) (body : Predicate)
   | letPredicate (binderName : Lean.Name) (value body : Predicate)
   | definition (name : Lean.Name) (functions : List Term) (predicates : List Predicate)
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, Hashable
 
 mutual
 
@@ -204,7 +204,7 @@ inductive Proof where
   | succInj
   | lem (formula : Predicate)
   | induction (motive : Predicate)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, Hashable
 
 /-- A function parameter of a `FunctionDefinition`, with its arity and a binder name for printing.
 -/

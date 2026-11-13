@@ -159,11 +159,10 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
       | continue
     let restore ← saveState
     try
-      let candidateSyntax ← delabTerm goal.names (goal.projection.encodeTerm candidate)
-      let expected ← if reverse then `(praExpr| _ = $candidateSyntax)
-        else `(praExpr| $candidateSyntax = _)
-      let instanceType := Bridge.betaReducePredicate goal.projection goal.maxDepth
-        (← infer equation (some expected))
+      let other ← Tactic.unknownTerm
+      let (proof, instanceType) ← Tactic.elaborateProofAs equation
+        (if reverse then .equal other candidate else .equal candidate other)
+      let instanceType := Bridge.betaReducePredicate goal.projection goal.maxDepth instanceType
       let .equal a b := instanceType
         | throwError "rw expects a numerical equality"
       let (source, destination) := if reverse then (b, a) else (a, b)
@@ -171,19 +170,25 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
         throwError "rw could not infer the rule's arguments"
       unless betaEqual goal source candidate do
         throwError "rw occurrence does not match by beta reduction"
-      let annotation ← predicateSyntax goal instanceType
-      let annotated ← `(praExpr| ($equation : $annotation))
       let body := abstractPredicate candidate 0 target
       if body == target.shift then throwError "rw found no occurrence"
-      let name := goal.names.freshName "rw"
-      let motive ← predicateSyntax goal (.lam name body)
-      let symmetry := mkIdent `_root_.eq_symm
-      let equality ← if reverse then `(praExpr| $symmetry:ident $annotated) else pure annotated
+      let motive : Predicate := .lam (goal.names.freshName "rw") body
+      let symmetry (x y : Metavariable.Term) (p : Metavariable.Proof) : Metavariable.Proof :=
+        .impElim (.forallElim (.forallElim (.theoremE `eq_symm [] []) x) y) p
+      -- `transport x y p` carries the motive from `x` to `y` along `p : x = y`.
+      let transport (x y : Metavariable.Term) (p : Metavariable.Proof) : Metavariable.Proof :=
+        .impElim (.forallElim (.forallElim (.eqSubst motive) x) y) p
+      let equality := if reverse then symmetry a b proof else proof
+      let result := Bridge.betaReducePredicate goal.projection goal.maxDepth
+        (.app motive destination)
       match location with
       | none =>
-        Tactic.refine (← `(praExpr| eq_subst $motive ($symmetry:ident $equality) ?_))
+        Tactic.applyProof (transport destination source (symmetry source destination equality))
+          [result]
       | some h =>
-        Tactic.refine (← `(praExpr| let $h:ident := eq_subst $motive $equality $h:ident; ?_))
+        let (hypothesis, _) ← Tactic.elaborateProof (← `(praExpr| $h:ident))
+        Tactic.assert h.getId.eraseMacroScopes result
+          (.impElim (transport source destination equality) hypothesis) h
       return
     catch ex =>
       if ex.isInterrupt then throw ex
@@ -299,10 +304,11 @@ private def unfoldDefinition (decl : Core.Declaration) (location : Option (TSynt
   let (unfolded, occurrence) ← (unfoldPredicateOccurrences goal decl.name 0 target).run none
   if occurrence.isNone then
     throwError "rw found no matching occurrence of definition `{decl.name}`"
-  let type ← predicateSyntax goal unfolded
   match location with
-  | none => Tactic.refine (← `(praExpr| (?_ : $type)))
-  | some h => Tactic.refine (← `(praExpr| let $h:ident : $type := $h:ident; ?_))
+  | none => Tactic.change unfolded
+  | some h =>
+    let (proof, _) ← Tactic.elaborateProof (← `(praExpr| $h:ident))
+    Tactic.assert h.getId.eraseMacroScopes unfolded proof h
 
 private def rewriteRule (rule : TSyntax `praExpr) (reverse : Bool)
     (location : Option (TSyntax `ident)) : TacticM Unit := do

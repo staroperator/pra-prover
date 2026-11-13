@@ -10,6 +10,9 @@ Tactics are Lean programs that fill contextual PRA proof metavariables.
 - `Goal` describes a goal in its saved local context.
 - `Context` connects tactics to the PRA elaborator, including transactional state restoration.
 - `TacticM` carries an ordered list of goals; `refine` replaces the first goal with explicit holes.
+- `applyProof`, `assert`, `assertPremise`, `change`, `define`, and `prove` act on goals with
+  proof data that a tactic has built. They are written with four basic operations of `Context`:
+  read a goal's target, check a proof, open a goal, and assign a goal.
 - `withTacticInfo` records goals before and after a tactic step at its source range.
 - `evalTactic` dispatches syntax to programs registered with `@[pra_tactic syntaxKind]`.
 
@@ -30,6 +33,15 @@ meta def evalTrivial : Tactic := fun _ => Tactic.close .trueIntro
 `Tactic.refine` elaborates quoted `praExpr` syntax. Use `?_` for new proof goals and `_` for
 arguments to infer. `Tactic.close` checks explicit proof data. Use `public meta section` to export
 a tactic from a Lean module.
+
+A tactic that has computed its step as data passes the data on directly.
+`Tactic.applyProof rule [P₁, …, Pₙ]` takes a proof of `P₁ → ⋯ → Pₙ → target` and makes
+`P₁, …, Pₙ` the new goals. `Tactic.define x value` continues with the same target under the
+local definition `x := value`, `Tactic.assert h type proof` continues under the proven hypothesis
+`h : type`, `Tactic.assertPremise type proof` turns the target `T` into `type → T`, and
+`Tactic.change type` replaces the target by a definitionally equal one.
+`Tactic.prove type tactic` proves a separate statement in the first goal's context and returns
+its proof.
 
 For example, `refine (_, ?_)` builds an existential proof whose witness can be inferred while
 solving the new proof goal. A proof-position `_` reports an inference error suggesting `?_`.
@@ -57,17 +69,46 @@ structure Goal where
   projection : Metavariable.Projection
   maxDepth : Nat
 
-/-- Operations supplied by the elaborator. `refine` returns explicit proof holes in source order.
-`infer` can constrain an inferred type while returning its original form with arguments resolved.
-`save` captures assignments, constraints, goals, diagnostics, and editor information. `snapshot`
-builds a native infoview snapshot for the supplied goal list. -/
+/-- An addition to the context of a new goal: a local numerical definition or a hypothesis.
+`ref` is the identifier in the source that introduces the name, when there is one; editor
+information is attached to it. -/
+inductive Binding where
+  | definition (name : Name) (value : Metavariable.Term) (ref : Syntax := .missing)
+  | hypothesis (name : Name) (type : Metavariable.Predicate) (ref : Syntax := .missing)
+
+/-- Operations supplied by the elaborator.
+
+- `inspect` returns a goal with its context and names.
+- `refine` elaborates syntax against a goal and returns its explicit proof holes in source order.
+- `target` returns the statement of a goal.
+- `check` checks an explicit proof, without open proof metavariables, against a statement in a
+  goal's context, and returns the proof with its inferred arguments filled in.
+- `openGoal` creates a goal for a statement in the context of the given goal, extended by the
+  bindings in order. It returns the new goal and the proof metavariable that stands for it.
+- `assign` fills a goal with a proof, which may contain goals created by `openGoal`.
+- `prove` opens a goal for a statement in the given goal's context, passes it to the supplied
+  action, reports the goals that the action returns as unsolved, and returns the finished proof.
+- `unknownTerm` creates a numerical unknown.
+- `infer` can constrain an inferred type while returning its original form with arguments
+  resolved. `term` and `proof` elaborate syntax in a goal's context; `proof` can constrain the
+  type to an expected statement, which may contain unknowns.
+- `save` captures assignments, constraints, goals, diagnostics, and editor information.
+- `snapshot` builds a native infoview snapshot for the supplied goal list. -/
 structure Context where
   inspect : GoalId → CommandElabM Goal
   refine : GoalId → Syntax → CommandElabM (List GoalId)
-  close : GoalId → Metavariable.Proof → CommandElabM Unit
+  target : GoalId → CommandElabM Metavariable.Predicate
+  check : GoalId → Metavariable.Proof → Metavariable.Predicate → CommandElabM Metavariable.Proof
+  openGoal : GoalId → Metavariable.Predicate → List Binding →
+    CommandElabM (GoalId × Metavariable.Proof)
+  assign : GoalId → Metavariable.Proof → CommandElabM Unit
+  prove : GoalId → Metavariable.Predicate → Syntax → (GoalId → CommandElabM (List GoalId)) →
+    CommandElabM Metavariable.Proof
+  unknownTerm : GoalId → CommandElabM Metavariable.Term
   infer : GoalId → Syntax → Option Syntax → CommandElabM Metavariable.Predicate
   term : GoalId → Syntax → Nat → CommandElabM Metavariable.Term
-  proof : GoalId → Syntax → CommandElabM (Metavariable.Proof × Metavariable.Predicate)
+  proof : GoalId → Syntax → Option Metavariable.Predicate →
+    CommandElabM (Metavariable.Proof × Metavariable.Predicate)
   save : CommandElabM (CommandElabM Unit)
   snapshot : List GoalId → Syntax → CommandElabM Info
 
@@ -100,8 +141,92 @@ def refine (proof : TSyntax `praExpr) : TacticM Unit := do
 /-- Check an explicit PRA proof and assign it to the first goal. The proof must have no open
 proof metavariables; its numerical and predicate arguments may use the goal's inference state. -/
 def close (proof : Metavariable.Proof) : TacticM Unit := do
-  (← read).close (← mainGoal) proof
+  let context ← read
+  let goal ← mainGoal
+  context.assign goal (← context.check goal proof (← context.target goal))
   modify (·.drop 1)
+
+/-- Reduce the first goal to `premises`. `rule` must be an explicit proof, without open proof
+metavariables, of the implication from `premises`, in order, to the goal's target. The rule is
+checked, each premise becomes a new leading goal in the first goal's context, and the first goal
+is assigned `rule` applied to the new goals. -/
+def applyProof (rule : Metavariable.Proof) (premises : List Metavariable.Predicate) :
+    TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let mut proof ← context.check goal rule (premises.foldr .imp (← context.target goal))
+  let mut goals := #[]
+  for premise in premises do
+    let (new, hole) ← context.openGoal goal premise []
+    proof := .impElim proof hole
+    goals := goals.push new
+  context.assign goal proof
+  modify fun rest => goals.toList ++ rest.drop 1
+
+/-- Continue the first goal under the local numerical definition `name := value`. The new goal
+has the same target, and its context shows `name` in place of `value`. `ref` is the identifier in
+the source that introduces `name`, when there is one; editor information is attached to it. -/
+def define (name : Name) (value : Metavariable.Term) (ref : Syntax := .missing) :
+    TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.definition name value ref]
+  context.assign goal (.letTerm name value hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Continue the first goal under the hypothesis `name : type`, which `proof` proves. `proof` must
+be an explicit proof without open proof metavariables; it is checked against `type`. `ref` is the
+identifier in the source that introduces `name`, when there is one. -/
+def assert (name : Name) (type : Metavariable.Predicate) (proof : Metavariable.Proof)
+    (ref : Syntax := .missing) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let proof ← context.check goal proof type
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.hypothesis name type ref]
+  context.assign goal (.letE name type proof hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Replace the target `T` of the first goal by `type → T`, using `proof` of `type`. `proof` must
+be an explicit proof without open proof metavariables; it is checked against `type`. -/
+def assertPremise (type : Metavariable.Predicate) (proof : Metavariable.Proof) :
+    TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let proof ← context.check goal proof type
+  let (new, hole) ← context.openGoal goal (.imp type (← context.target goal)) []
+  context.assign goal (.impElim hole proof)
+  modify fun rest => new :: rest.drop 1
+
+/-- Replace the target of the first goal by `type`, which must be definitionally equal to it. -/
+def change (type : Metavariable.Predicate) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  -- The identity on `type` proves `type → target` exactly when the two statements agree.
+  discard <| context.check goal (.impIntro `h type (.hyp 0))
+    (.imp type (← context.target goal))
+  let (new, hole) ← context.openGoal goal type []
+  context.assign goal (.ascribe type hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Prove `type` in the first goal's context by running `tactic` on a new goal, and return the
+finished proof. The current goals are unchanged. Goals that `tactic` leaves open are reported as
+unsolved at `ref`. -/
+def prove (type : Metavariable.Predicate) (ref : Syntax) (tactic : TacticM Unit) :
+    TacticM Metavariable.Proof := do
+  let context ← read
+  context.prove (← mainGoal) type ref fun goal => do
+    let (_, goals) ← (tactic.run context).run [goal]
+    return goals
+
+/-- Create a numerical unknown in the first goal's context for the elaborator to infer. -/
+def unknownTerm : TacticM Metavariable.Term := do
+  (← read).unknownTerm (← mainGoal)
+
+/-- Elaborate a proof in the first goal's context and constrain its type to `expected`, which may
+contain unknowns. Returns the proof and its type with the inferred arguments filled in. -/
+def elaborateProofAs (value : TSyntax `praExpr) (expected : Metavariable.Predicate) :
+    TacticM (Metavariable.Proof × Metavariable.Predicate) := do
+  (← read).proof (← mainGoal) value (some expected)
 
 /-- Infer a proof expression in the first goal's context. An optional expected type supplies
 constraints for its arguments; the result is the inferred type with those arguments resolved. -/
@@ -116,7 +241,7 @@ def elaborateTerm (value : TSyntax `praExpr) (arity : Nat := 0) : TacticM Metava
 /-- Elaborate a proof together with its type in the current goal's context. -/
 def elaborateProof (value : TSyntax `praExpr) :
     TacticM (Metavariable.Proof × Metavariable.Predicate) := do
-  (← read).proof (← mainGoal) value
+  (← read).proof (← mainGoal) value none
 
 /-- Save the complete elaboration session and the current goal list for backtracking. -/
 def saveState : TacticM (TacticM Unit) := do

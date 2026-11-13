@@ -124,20 +124,19 @@ def evalSigmaInduction : Tactic := fun stx => do
     goal.names.termAliases.map (·.1) ++ goal.names.predicateAliases.map (·.1)
   let shadowed := ([n.getId, k.getId, ih.getId].map Name.eraseMacroScopes).eraseDups.filter
     visible.contains
-  let protect (body : TSyntax `praExpr) : CommandElabM (TSyntax `praExpr) := do
-    let mut body := body
+  let protect : TacticM Unit := do
     for (name, i) in shadowed.zipIdx do
       let alias := fresh s!"_sigmaOriginal{i}"
-      body ← `(praExpr| let $alias:ident := $(mkIdent name):ident; $body)
-    return body
+      Tactic.refine (← `(praExpr| let $alias:ident := $(mkIdent name):ident; ?_))
+  let view := goal.projection
   let predecessor := fresh "_sigmaIndex"
   let witness := fresh "_sigmaWitness"
   let property := fresh "_sigmaProperty"
   let baseType := atIndex .zero
-  let baseSyntax ← delabPredicate goal.names baseType
-  let baseBody ← protect (← `(praExpr|
-    ((let $n:ident := 0; by $base:praTacticSeq) : $baseSyntax)))
-  let (baseProof, _) ← Tactic.elaborateProof baseBody
+  let baseProof ← Tactic.prove (view.decodePredicate baseType) base do
+    protect
+    Tactic.refine (← `(praExpr| let $n:ident := 0; ?_))
+    Tactic.evalTacticSeq base
   let baseProof ← complete (Metavariable.Frontend.completeProof baseProof)
   let (baseCode, _, baseChecked) ← Witnessing.compileProof
     (root ++ `base) context baseType baseProof
@@ -147,16 +146,16 @@ def evalSigmaInduction : Tactic := fun stx => do
   let next := Core.Predicate.app family.shift.shift (.app .succ (.bvar 1))
   let stepType := Core.Predicate.all (.lam predecessor.getId
     (.all (.lam witness.getId (.imp premise next))))
-  let stepSyntax ← delabPredicate goal.names stepType
-  let previousSyntax ← delabPredicate
-    ((goal.names.pushLocal predecessor.getId).pushLocal witness.getId) previous
-  let stepBody ← protect (← `(praExpr|
-    ((fun $predecessor:ident $witness:ident $property:ident =>
-      let $ih:ident : $previousSyntax := ($witness:ident, $property:ident);
-      let $n:ident := S $predecessor:ident;
-      let $k:ident := $predecessor:ident;
-      by $step:praTacticSeq) : $stepSyntax)))
-  let (stepProof, _) ← Tactic.elaborateProof stepBody
+  let stepProof ← Tactic.prove (view.decodePredicate stepType) step do
+    protect
+    Tactic.refine (← `(praExpr|
+      fun $predecessor:ident $witness:ident $property:ident => ?_))
+    -- The induction hypothesis pairs the previous witness with its property.
+    Tactic.assert ih.getId.eraseMacroScopes (view.decodePredicate previous)
+      (.existsIntro (view.decodePredicate previousMotive) (.bvar 0) (.hyp 0)) ih
+    Tactic.refine (← `(praExpr|
+      let $n:ident := S $predecessor:ident; let $k:ident := $predecessor:ident; ?_))
+    Tactic.evalTacticSeq step
   let stepProof ← complete (Metavariable.Frontend.completeProof stepProof)
   let (stepCode, _, stepChecked) ← Witnessing.compileProof
     (root ++ `step) context stepType stepProof
