@@ -10,7 +10,13 @@ public import LeanPRA.Core.Utils
 public import LeanPRA.Library.FOL.Common.Language
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
 public import LeanPRA.Library.FOL.Common.Proof
+public import LeanPRA.Library.FOL.Common.Proof.Congruence
+public import LeanPRA.Library.FOL.Common.Proof.Equality
+public import LeanPRA.Library.FOL.Common.Proof.Propositional
+public import LeanPRA.Library.FOL.Common.Sequent
+public import LeanPRA.Library.FOL.Common.Substitution
 public import LeanPRA.Library.FOL.Common.Syntax
+public import LeanPRA.Library.FOL.Common.Theory
 public import LeanPRA.Library.Logic
 public import LeanPRA.Library.Nat.Boolean
 public import LeanPRA.Library.Nat.Bounded

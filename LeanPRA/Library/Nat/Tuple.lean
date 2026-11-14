@@ -18,6 +18,9 @@ Indices start at zero. For each fixed positive length, every code describes a un
   `Tuple.get_le` bounds every component by the tuple code.
 - `Tuple.ext` proves equality from equality of all components.
 - `Tuple.map` applies a function to every component.
+  `Tuple.map_pair_succ` computes a mapped tuple from its head and tail.
+  `Tuple.get_map` reads a mapped component, and `Tuple.map_map` composes two maps.
+  `Tuple.map_id` preserves a tuple under the identity function.
   `Tuple.map_congr_of_get_eq` compares functions only on those components.
 - `Tuple.max` takes the maximum component.
 -/
@@ -138,6 +141,170 @@ theorem map_three (f : Nat → Nat) : ∀ x y z,
     pair (f x) (pair (f y) (f z))
   rw [get_pair_zero, get_pair_succ, get_pair_zero, get_pair_succ, get_two_one]
 
+theorem map_pair_succ (f : Nat → Nat) : ∀ n x xs,
+    map f (S (S n)) (pair x xs) = pair (f x) (map f (S n) xs) := by
+  intro n x xs
+  let large := fun i r => ite i
+    (pair (f (get (S (S n)) (pair x xs) (S (S n) - S i))) r)
+    (f (get (S (S n)) (pair x xs) (pred (S (S n)))))
+  let small := fun i r => ite i
+    (pair (f (get (S n) xs (S n - S i))) r) (f (get (S n) xs (pred (S n))))
+  have entry : ∀ i, i ≤ n →
+      get (S (S n)) (pair x xs) (S (S n) - S i) = get (S n) xs (S n - S i) := by
+    intro i hi
+    rw [succ_sub_succ, succ_sub_of_le n i hi, get_pair_succ, succ_sub_succ]
+  have step : ∀ i r, i ≤ n → large i r = small i r := by
+    intro i r hi
+    change ite i (pair (f (get (S (S n)) (pair x xs) (S (S n) - S i))) r)
+        (f (get (S (S n)) (pair x xs) (pred (S (S n))))) =
+      ite i (pair (f (get (S n) xs (S n - S i))) r)
+        (f (get (S n) xs (pred (S n))))
+    rw [entry i hi, pred_succ, get_pair_succ, pred_succ]
+  have builtPrefix : ∀ k, k ≤ S n → primrec 0 large k = primrec 0 small k := by
+    intro k
+    induction k with j ih
+    · intro hk
+      rfl
+    · intro hk
+      have hj := and_left (succ_le_succ j n) hk
+      change large j (primrec 0 large j) = small j (primrec 0 small j)
+      rw [step j (primrec 0 large j) hj,
+        ih (le_trans j n (S n) hj (le_succ_self n))]
+  change large (S n) (primrec 0 large (S n)) = pair (f x) (map f (S n) xs)
+  rw [builtPrefix (S n) (le_refl (S n))]
+  change pair (f (get (S (S n)) (pair x xs) (S (S n) - S (S n))))
+      (map f (S n) xs) = pair (f x) (map f (S n) xs)
+  rw [sub_self, get_pair_zero]
+
+/-- Reading a mapped tuple applies the function to the original component. -/
+theorem get_map (f : Nat → Nat) : ∀ n xs i, i < n →
+    get n (map f n xs) i = f (get n xs i) := by
+  have total : ∀ k, ite (ltb (unpairRight (unpairRight k)) (unpairLeft k))
+        (get (unpairLeft k) (map f (unpairLeft k) (unpairLeft (unpairRight k)))
+          (unpairRight (unpairRight k))) 0 =
+      ite (ltb (unpairRight (unpairRight k)) (unpairLeft k))
+        (f (get (unpairLeft k) (unpairLeft (unpairRight k)) (unpairRight (unpairRight k)))) 0 := by
+    apply strong_induction_eq
+      (fun k => ite (ltb (unpairRight (unpairRight k)) (unpairLeft k))
+        (get (unpairLeft k) (map f (unpairLeft k) (unpairLeft (unpairRight k)))
+          (unpairRight (unpairRight k))) 0)
+      (fun k => ite (ltb (unpairRight (unpairRight k)) (unpairLeft k))
+        (f (get (unpairLeft k) (unpairLeft (unpairRight k)) (unpairRight (unpairRight k)))) 0)
+    intro k ih
+    let n := unpairLeft k
+    let xs := unpairLeft (unpairRight k)
+    let i := unpairRight (unpairRight k)
+    have hk : pair n (pair xs i) = k := by
+      rw [pair_unpair, pair_unpair]
+    change ite (ltb i n) (get n (map f n xs) i) 0 =
+      ite (ltb i n) (f (get n xs i)) 0
+    by_cases hi : i < n
+    · rw [and_right (ltb_eq_one i n) hi, ite_succ, ite_succ]
+      rcases zero_or_succ_pred n with hn | hn
+      · rw [hn] at hi
+        exact false_elim (not_lt_zero i hi)
+      · rcases zero_or_succ_pred (pred n) with hm | hm
+        · have hz : i = 0 := by
+            rw [hn, hm] at hi
+            exact le_zero i (and_left (lt_succ i 0) hi)
+          rw [hn, hm, hz, map_one f, get_one, get_one]
+        · have shape : xs = pair (unpairLeft xs) (unpairRight xs) := eq_symm (pair_unpair xs)
+          rcases zero_or_succ_pred i with hz | hz
+          · rw [hn, hm, shape, hz, map_pair_succ f, get_pair_zero, get_pair_zero]
+          · have smaller : pair (pred n) (pair (unpairRight xs) (pred i)) < k := by
+              have hnlt : pred n < n := by
+                rw [hn, pred_succ]
+                exact lt_succ_self (pred n)
+              have hile : pred i ≤ i := by
+                rw [hz, pred_succ]
+                exact le_succ_self (pred i)
+              have h := pair_lt_left (pred n) (pair (unpairRight xs) (pred i)) n
+                (pair xs i) hnlt
+                (pair_mono _ _ _ _ (unpairRight_le xs) hile)
+              rw [hk] at h
+              exact h
+            have hit : pred i < pred n := by
+              rw [hn, hz] at hi
+              exact and_left (succ_le_succ (S (pred i)) (pred n)) hi
+            have ht := ih (pair (pred n) (pair (unpairRight xs) (pred i))) smaller
+            rw [unpairLeft_pair, unpairRight_pair,
+              unpairLeft_pair, unpairRight_pair] at ht
+            rw [and_right (ltb_eq_one (pred i) (pred n)) hit, ite_succ, ite_succ] at ht
+            rw [hn, hm, shape, hz, map_pair_succ f, get_pair_succ, get_pair_succ]
+            rw [hm] at ht
+            exact ht
+    · rw [ltb_eq_zero_of_ge i n (le_of_not_lt n i hi), ite_zero, ite_zero]
+  intro n xs i hi
+  have h := total (pair n (pair xs i))
+  rw [unpairLeft_pair, unpairRight_pair,
+    unpairLeft_pair, unpairRight_pair] at h
+  rw [and_right (ltb_eq_one i n) hi, ite_succ, ite_succ] at h
+  exact h
+
+/-- Mapping a function over a mapped tuple is pointwise function composition. -/
+theorem map_map (f g : Nat → Nat) : ∀ n xs,
+    map f n (map g n xs) = map (fun x => f (g x)) n xs := by
+  have total : ∀ k,
+      map f (unpairLeft k) (map g (unpairLeft k) (unpairRight k)) =
+        map (fun x => f (g x)) (unpairLeft k) (unpairRight k) := by
+    apply strong_induction_eq
+      (fun k => map f (unpairLeft k) (map g (unpairLeft k) (unpairRight k)))
+      (fun k => map (fun x => f (g x)) (unpairLeft k) (unpairRight k))
+    intro k ih
+    let n := unpairLeft k
+    let xs := unpairRight k
+    have hk : pair n xs = k := pair_unpair k
+    rcases zero_or_succ_pred n with hn | hn
+    · rw [hn, map_zero f, map_zero (fun x => f (g x))]
+    · rcases zero_or_succ_pred (pred n) with hm | hm
+      · rw [hn, hm, map_one g, map_one f, map_one (fun x => f (g x))]
+      · have shape : xs = pair (unpairLeft xs) (unpairRight xs) := eq_symm (pair_unpair xs)
+        have smaller : pair (S (pred (pred n))) (unpairRight xs) < k := by
+          have hl : pair (S (pred (pred n))) (unpairRight xs) < pair n xs := by
+            apply pair_lt_left
+            · rw [hn, hm]
+              exact lt_succ_self (S (pred (pred n)))
+            · exact unpairRight_le xs
+          rw [hk] at hl
+          exact hl
+        have ht := ih (pair (S (pred (pred n))) (unpairRight xs)) smaller
+        rw [unpairLeft_pair, unpairRight_pair] at ht
+        change map f n (map g n xs) = map (fun x => f (g x)) n xs
+        rw [hn, hm, shape, map_pair_succ g, map_pair_succ f,
+          map_pair_succ (fun x => f (g x)), ht]
+  intro n xs
+  have h := total (pair n xs)
+  rw [unpairLeft_pair, unpairRight_pair] at h
+  exact h
+
+/-- Mapping the identity over a positive-length tuple preserves its code. -/
+theorem map_id : ∀ n xs, map (fun x => x) (S n) xs = xs := by
+  have total : ∀ k, map (fun x => x) (S (unpairLeft k)) (unpairRight k) = unpairRight k := by
+    apply strong_induction_eq
+      (fun k => map (fun x => x) (S (unpairLeft k)) (unpairRight k)) unpairRight
+    intro k ih
+    let n := unpairLeft k
+    let xs := unpairRight k
+    have hk : pair n xs = k := pair_unpair k
+    rcases zero_or_succ_pred n with hn | hn
+    · rw [hn, map_one (fun x => x)]
+    · have smaller : pair (pred n) (unpairRight xs) < k := by
+        have hlt : pred n < n := by
+          rw [hn, pred_succ]
+          exact lt_succ_self (pred n)
+        have h := pair_lt_left (pred n) (unpairRight xs) n xs hlt (unpairRight_le xs)
+        rw [hk] at h
+        exact h
+      have ht := ih (pair (pred n) (unpairRight xs)) smaller
+      rw [unpairLeft_pair, unpairRight_pair] at ht
+      have shape : xs = pair (unpairLeft xs) (unpairRight xs) := eq_symm (pair_unpair xs)
+      change map (fun x => x) (S n) xs = xs
+      rw [hn, shape, map_pair_succ (fun x => x), ht]
+  intro n xs
+  have h := total (pair n xs)
+  rw [unpairLeft_pair, unpairRight_pair] at h
+  exact h
+
 theorem map_congr_of_get_eq (f g : Nat → Nat) : ∀ n xs,
     (∀ i, i < n → f (get n xs i) = g (get n xs i)) → map f n xs = map g n xs := by
   intro n xs h
@@ -165,6 +332,80 @@ theorem map_congr_of_get_eq (f g : Nat → Nat) : ∀ n xs,
 theorem map_congr (f g : Nat → Nat) :
     (∀ x, f x = g x) → ∀ n xs, map f n xs = map g n xs :=
   fun h n xs => map_congr_of_get_eq f g n xs (fun i _ => h (get n xs i))
+
+/-- A function that is larger on every component gives a larger tuple code. -/
+theorem map_mono (f g : Nat → Nat) : ∀ n xs,
+    (∀ i, i < n → f (get n xs i) ≤ g (get n xs i)) → map f n xs ≤ map g n xs := by
+  intro n xs h
+  let stepF : Nat → Nat → Nat := fun i r =>
+    ite i (pair (f (get n xs (n - S i))) r) (f (get n xs (pred n)))
+  let stepG : Nat → Nat → Nat := fun i r =>
+    ite i (pair (g (get n xs (n - S i))) r) (g (get n xs (pred n)))
+  by_cases hn : n = 0
+  · rw [hn, map_zero f, map_zero g]
+    exact le_refl 0
+  have hp := lt_succ_self (pred n)
+  rw [succ_pred n hn] at hp
+  have build : ∀ k, primrec 0 stepF k ≤ primrec 0 stepG k := by
+    intro k
+    induction k with j ih
+    · exact le_refl 0
+    · by_cases hj : j = 0
+      · change ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) ≤
+          ite j (pair (g (get n xs (n - S j))) (primrec 0 stepG j)) (g (get n xs (pred n)))
+        rw [hj, ite_zero, ite_zero]
+        exact h (pred n) hp
+      · change ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) ≤
+          ite j (pair (g (get n xs (n - S j))) (primrec 0 stepG j)) (g (get n xs (pred n)))
+        rw [ite_of_ne_zero j _ _ hj, ite_of_ne_zero j _ _ hj]
+        exact pair_mono _ _ _ _
+          (h (n - S j) (sub_lt_of_pos n (S j) (pos_of_ne_zero n hn)
+            (pos_of_ne_zero (S j) (succ_ne_zero j)))) ih
+  exact build n
+
+/-- If on every component either `t ≤ f x` or `f x = g x`, then either `t` is at most the
+mapped tuple code or the two mapped tuple codes are equal. -/
+theorem map_dichotomy (f g : Nat → Nat) (t : Nat) : ∀ n xs,
+    (∀ i, i < n → t ≤ f (get n xs i) ∨ f (get n xs i) = g (get n xs i)) →
+      t ≤ map f n xs ∨ map f n xs = map g n xs := by
+  intro n xs h
+  let stepF : Nat → Nat → Nat := fun i r =>
+    ite i (pair (f (get n xs (n - S i))) r) (f (get n xs (pred n)))
+  let stepG : Nat → Nat → Nat := fun i r =>
+    ite i (pair (g (get n xs (n - S i))) r) (g (get n xs (pred n)))
+  by_cases hn : n = 0
+  · right
+    rw [hn, map_zero f, map_zero g]
+  have hp := lt_succ_self (pred n)
+  rw [succ_pred n hn] at hp
+  have build : ∀ k,
+      t ≤ primrec 0 stepF k ∨ primrec 0 stepF k = primrec 0 stepG k := by
+    intro k
+    induction k with j ih
+    · right
+      rfl
+    · by_cases hj : j = 0
+      · change
+          t ≤ ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) ∨
+          ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) =
+          ite j (pair (g (get n xs (n - S j))) (primrec 0 stepG j)) (g (get n xs (pred n)))
+        rw [hj, ite_zero, ite_zero]
+        exact h (pred n) hp
+      · change
+          t ≤ ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) ∨
+          ite j (pair (f (get n xs (n - S j))) (primrec 0 stepF j)) (f (get n xs (pred n))) =
+          ite j (pair (g (get n xs (n - S j))) (primrec 0 stepG j)) (g (get n xs (pred n)))
+        rw [ite_of_ne_zero j _ _ hj, ite_of_ne_zero j _ _ hj]
+        rcases h (n - S j) (sub_lt_of_pos n (S j) (pos_of_ne_zero n hn)
+          (pos_of_ne_zero (S j) (succ_ne_zero j))) with hc | hc
+        · left
+          exact le_trans t _ _ hc (left_le_pair _ _)
+        · rcases ih with hr | hr
+          · left
+            exact le_trans t _ _ hr (right_le_pair _ _)
+          · right
+            rw [hc, hr]
+  exact build n
 
 /-- `Tuple.max n xs` returns the maximum of the `n` components of positive-length tuple code `xs`. -/
 def max : Nat → Nat → Nat := fun n xs =>

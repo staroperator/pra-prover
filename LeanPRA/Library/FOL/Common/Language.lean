@@ -79,6 +79,20 @@ theorem relations_make : ∀ c fs rs, relations (make c fs rs) = rs := by
   intro c fs rs
   rw [relations, make, unpairRight_pair, unpairRight_pair]
 
+theorem functionCount_make : ∀ c fs rs, functionCount (make c fs rs) = Sequence.length fs := by
+  intro c fs rs
+  rw [functionCount, functions_make]
+
+theorem functionArity_make : ∀ c fs rs j,
+    functionArity (make c fs rs) j = S (Sequence.get fs j) := by
+  intro c fs rs j
+  rw [functionArity, functions_make]
+
+theorem relationCount_make : ∀ c fs rs,
+    relationCount (make c fs rs) = Sequence.length rs := by
+  intro c fs rs
+  rw [relationCount, relations_make]
+
 end Language
 
 end FOL

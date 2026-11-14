@@ -367,6 +367,30 @@ theorem get_map (f : Nat → Nat) :
     ∀ xs i, i < length xs → get (map f xs) i = f (get xs i) :=
   fun xs i hi => get_tabulate (fun j => f (get xs j)) (length xs) i hi
 
+theorem map_nil (f : Nat → Nat) : map f nil = nil := rfl
+
+theorem get_cons_map (f : Nat → Nat) : ∀ x xs i, i < S (length xs) →
+    f (get (cons x xs) i) = get (cons (f x) (map f xs)) i := by
+  intro x xs i
+  induction i with j ih
+  · intro _
+    rw [get_cons_zero, get_cons_zero]
+  · intro h
+    rw [get_cons_succ, get_cons_succ,
+      get_map f xs j (and_left (succ_le_succ (S j) (length xs)) h)]
+
+theorem map_cons (f : Nat → Nat) : ∀ x xs, map f (cons x xs) = cons (f x) (map f xs) := by
+  intro x xs
+  apply ext (map f (cons x xs)) (cons (f x) (map f xs))
+  · rw [length_map f, length_cons, length_cons, length_map f]
+  · intro i hi
+    rw [length_map f, length_cons] at hi
+    have bound : i < length (cons x xs) := by
+      rw [length_cons]
+      exact hi
+    rw [get_map f (cons x xs) i bound]
+    exact get_cons_map f x xs i hi
+
 /-- Reverse the order of the entries. -/
 def reverse : Nat → Nat :=
   fun xs => tabulate (fun i => get xs (length xs - S i)) (length xs)
@@ -448,23 +472,61 @@ theorem update_of_length_le : ∀ xs i x, length xs ≤ i → update xs i x = xs
   rw [he] at hj
   exact not_le_of_lt i (length xs) hj hi
 
-/-- Fold the first `n` entries of `xs` from left to right starting from `initial`. -/
-def fold (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat :=
-  fun xs initial n => primrec initial (fun i r => f r (get xs i)) n
+/-- Fold every entry of `xs` from left to right, starting from `initial`.
+The function receives the accumulated value first and the current entry second. -/
+def fold (f : Nat → Nat → Nat) : Nat → Nat → Nat :=
+  fun xs initial => primrec initial (fun i r => f r (get xs i)) (length xs)
 
-theorem fold_zero (f : Nat → Nat → Nat) : ∀ xs a, fold f xs a 0 = a := fun xs a => rfl
+theorem fold_nil (f : Nat → Nat → Nat) : ∀ a, fold f nil a = a := fun a => rfl
 
-theorem fold_succ (f : Nat → Nat → Nat) : ∀ xs a n,
-    fold f xs a (S n) = f (fold f xs a n) (get xs n) := fun xs a n => rfl
+theorem fold_cons (f : Nat → Nat → Nat) : ∀ x xs a,
+    fold f (cons x xs) a = fold f xs (f a x) := by
+  intro x xs a
+  have initialSegments : ∀ n,
+      primrec a (fun i r => f r (get (cons x xs) i)) (S n) =
+        primrec (f a x) (fun i r => f r (get xs i)) n := by
+    intro n
+    induction n with k ih
+    · change f a (get (cons x xs) 0) = f a x
+      rw [get_cons_zero]
+    · change f (primrec a (fun i r => f r (get (cons x xs) i)) (S k))
+          (get (cons x xs) (S k)) =
+        f (primrec (f a x) (fun i r => f r (get xs i)) k) (get xs k)
+      rw [ih, get_cons_succ]
+  rw [fold, length_cons, fold]
+  exact initialSegments (length xs)
 
+theorem fold_map (f : Nat → Nat → Nat) (g : Nat → Nat) : ∀ xs a,
+    fold f (map g xs) a = fold (fun r x => f r (g x)) xs a := by
+  intro xs a
+  have initialSegments : ∀ n, n ≤ length xs →
+      primrec a (fun i r => f r (get (map g xs) i)) n =
+        primrec a (fun i r => f r (g (get xs i))) n := by
+    intro n
+    induction n with k ih
+    · intro _
+      rfl
+    · intro hk
+      change f (primrec a (fun i r => f r (get (map g xs) i)) k)
+          (get (map g xs) k) =
+        f (primrec a (fun i r => f r (g (get xs i))) k) (g (get xs k))
+      rw [get_map g xs k hk, ih (le_of_lt k (length xs) hk)]
+  rw [fold, length_map g, fold]
+  exact initialSegments (length xs) (le_refl (length xs))
+
+/-- A quantifier-free property preserved at each entry holds after folding the whole sequence. -/
 theorem fold_invariant (P : Nat → QFProp) (f : Nat → Nat → Nat) : ∀ xs a,
-    P a → (∀ i r, i < length xs → P r → P (f r (get xs i))) →
-    ∀ n, n ≤ length xs → P (fold f xs a n) := by
-  intro xs a initial step n
-  induction n with k ih
-  · intro _; exact initial
-  · intro hk
-    exact step k (fold f xs a k) hk (ih (le_of_lt k (length xs) hk))
+    P a → (∀ i r, i < length xs → P r → P (f r (get xs i))) → P (fold f xs a) := by
+  intro xs a initial step
+  have initialSegments : ∀ n, n ≤ length xs → P (primrec a (fun i r => f r (get xs i)) n) := by
+    intro n
+    induction n with k ih
+    · intro _
+      exact initial
+    · intro hk
+      exact step k (primrec a (fun i r => f r (get xs i)) k) hk
+        (ih (le_of_lt k (length xs) hk))
+  exact initialSegments (length xs) (le_refl (length xs))
 
 theorem tabulate_congr (f g : Nat → Nat) : ∀ n,
     agreeBelow f g n → tabulate f n = tabulate g n := by
@@ -521,16 +583,12 @@ theorem take_append : ∀ xs ys, take (append xs ys) (length xs) = xs := by
     rw [get_take (append xs ys) (length xs) i hi
       (lt_of_lt_of_le i (length xs) _ hi hl), get_append_left xs ys i hi]
 
-theorem fold_congr (f : Nat → Nat → Nat) : ∀ xs ys a n,
-    agreeBelow (get xs) (get ys) n → fold f xs a n = fold f ys a n := by
-  intro xs ys a n
-  induction n with k ih
-  · intro _; rfl
-  · intro h
-    have hp : agreeBelow (get xs) (get ys) k :=
-      allBelow_prefix (fun i => eqb (get xs i) (get ys i)) k (S k) (le_succ_self k) h
-    have he := and_left (agreeBelow_iff (get xs) (get ys) (S k)) h k (lt_succ_self k)
-    rw [fold_succ f, fold_succ f, ih hp, he]
+theorem fold_congr (f : Nat → Nat → Nat) : ∀ xs ys a,
+    length xs = length ys → agreeBelow (get xs) (get ys) (length xs) →
+      fold f xs a = fold f ys a := by
+  intro xs ys a hlen hget
+  have same := ext xs ys hlen (and_left (agreeBelow_iff (get xs) (get ys) (length xs)) hget)
+  rw [same]
 
 /-- Tabulate `findBelow (relation i) (bound i)` for `i = 0` through `n - 1`. -/
 def collect (relation : Nat → Nat → Nat) (bound : Nat → Nat) : Nat → Nat :=

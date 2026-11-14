@@ -38,18 +38,26 @@ arguments.
 
 Variables use de Bruijn indices: `0` refers to the nearest binder, with larger indices counting
 outward. Beneath `d` binders, an index `i ≥ d` refers to surrounding position `i - d`.
-Formulas have no fixed scope. The main operations are:
+Formulas have no fixed scope. The main operations and proof principles are:
 
+- `Term.cases` and `Formula.cases` recover the constructor represented by any code.
+- `Term.induction_of_bool` and `Formula.induction_of_bool` prove predicates represented by
+  numerical tests, using hypotheses for the immediate children.
+- `Formula.inductionWithDepth_of_bool` also tracks binder depth, allowing smaller child depths.
+- `Term.induction_eq` and `Formula.induction_eq` specialize these principles to equations;
+  the formula version tracks binder depth.
 - `Term.rec` processes variables, constants, and function applications by numerical recursion,
   passing an exact-arity tuple of child results to the application handler.
-- `Formula.recWithDepth` processes the five formula cases while tracking binder depth.
+- `Formula.recWithDepth` makes the binder depth available to every formula handler.
   Its paired recursion rank decreases when entering a quantified body, even though depth increases.
 - `Formula.rec` processes the same cases with handlers that ignore binder depth.
 - `Term.subst` and `Formula.subst` replace variables, tracking depth beneath quantifiers.
 - `Formula.instantiateAt` and `Formula.instantiate` substitute a term into a surrounding
   variable position or quantifier body, lifting it beneath inner binders and lowering later indices.
 - `Term.bound` and `Formula.bound` give the number of surrounding variable positions
-  needed by the syntax; `Formula.isClosed` tests whether the formula bound is `0`.
+  needed by the syntax.
+- `Formula.Closed` states that a formula has no free variable positions;
+  `Formula.isClosed` is its numerical test.
 -/
 
 @[expose] public section
@@ -136,6 +144,105 @@ theorem args_lt_app : ∀ L j args, args < app L j args := by
     and_right (lt_succ args (S (Language.functionCount L) * args + j)) (le_trans _ _ _ h₁ h₂)
   exact lt_of_lt_of_le _ _ _ h₃
     (le_add_left (Language.constants L) (S (Language.functionCount L) * args + S j))
+
+theorem var_mono : ∀ L i d, var L i ≤ var L (i + d) := by
+  intro L i d
+  change Language.constants L + S (Language.functionCount L) * i ≤
+    Language.constants L + S (Language.functionCount L) * (i + d)
+  exact add_le_add_left _ _ (Language.constants L)
+    (mul_le_mul_left i (i + d) (S (Language.functionCount L)) (le_add_right i d))
+
+theorem app_mono : ∀ L j xs ys, xs ≤ ys → app L j xs ≤ app L j ys := by
+  intro L j xs ys h
+  change Language.constants L + (S (Language.functionCount L) * xs + S j) ≤
+    Language.constants L + (S (Language.functionCount L) * ys + S j)
+  exact add_le_add_left _ _ (Language.constants L)
+    (add_le_add_right _ _ (S j) (mul_le_mul_left xs ys (S (Language.functionCount L)) h))
+
+theorem head_lt : ∀ L t, head L t < S (Language.functionCount L) :=
+  fun L t => mod_lt (t - Language.constants L) (S (Language.functionCount L))
+    (succ_ne_zero (Language.functionCount L))
+
+theorem var_arg_of_head_eq_zero : ∀ L t, Language.constants L ≤ t → head L t = 0 →
+    var L (arg L t) = t := by
+  intro L t hc hh
+  have h : S (Language.functionCount L) * arg L t + head L t = t - Language.constants L :=
+    div_mod (t - Language.constants L) (S (Language.functionCount L))
+  rw [hh, add_zero] at h
+  rw [var, h, add_comm]
+  exact sub_add_cancel_of_le t (Language.constants L) hc
+
+theorem app_arg_of_head_ne_zero : ∀ L t,
+    Language.constants L ≤ t → ¬ head L t = 0 →
+    pred (head L t) < Language.functionCount L ∧
+      app L (pred (head L t)) (arg L t) = t := by
+  intro L t hc hh
+  constructor
+  · have h := and_left (lt_succ (head L t) (Language.functionCount L)) (head_lt L t)
+    rw [← succ_pred (head L t) hh] at h
+    exact h
+  · have h : S (Language.functionCount L) * arg L t + head L t = t - Language.constants L :=
+      div_mod (t - Language.constants L) (S (Language.functionCount L))
+    rw [app, succ_pred (head L t) hh, h, add_comm]
+    exact sub_add_cancel_of_le t (Language.constants L) hc
+
+/-- Every number denotes a constant, variable, or application with a valid symbol index. -/
+theorem cases (P : Nat → Prop) : ∀ L,
+    (∀ j, j < Language.constants L → P (const L j)) →
+    (∀ i, P (var L i)) →
+    (∀ j args, j < Language.functionCount L → P (app L j args)) → ∀ t, P t := by
+  intro L hc hv ha t
+  by_cases ht : t < Language.constants L
+  · exact hc t ht
+  · have hle := le_of_not_lt (Language.constants L) t ht
+    by_cases hh : head L t = 0
+    · rw [← var_arg_of_head_eq_zero L t hle hh]
+      exact hv (arg L t)
+    · have h := app_arg_of_head_ne_zero L t hle hh
+      rw [← and_right h]
+      exact ha (pred (head L t)) (arg L t) (and_left h)
+
+/-- Structural induction on term codes for a predicate represented by the numerical test `f`.
+The application case assumes the predicate for each component of its argument tuple. -/
+theorem induction_of_bool (P : Nat → Prop) (f : Nat → Nat) : ∀ L,
+    (∀ t, ¬ f t = 0 ↔ P t) →
+    (∀ j, j < Language.constants L → P (const L j)) →
+    (∀ i, P (var L i)) →
+    (∀ j args, j < Language.functionCount L →
+      (∀ i, i < Language.functionArity L j → P (Tuple.get (Language.functionArity L j) args i)) →
+      P (app L j args)) → ∀ t, P t := by
+  intro L spec hc hv ha
+  apply strong_induction_of_bool P f spec
+  apply cases (fun t => (∀ u, u < t → P u) → P t) L
+  · intro j hj ih
+    exact hc j hj
+  · intro i ih
+    exact hv i
+  · intro j args hj ih
+    apply ha j args hj
+    intro i hi
+    exact ih (Tuple.get (Language.functionArity L j) args i)
+      (lt_of_le_of_lt _ args _ (Tuple.get_le (Language.functionArity L j) args i)
+        (args_lt_app L j args))
+
+/-- Prove equations on term codes from their constant, variable, and application cases. -/
+theorem induction_eq (f g : Nat → Nat) : ∀ L,
+    (∀ j, j < Language.constants L → f (const L j) = g (const L j)) →
+    (∀ i, f (var L i) = g (var L i)) →
+    (∀ j args, j < Language.functionCount L →
+      (∀ i, i < Language.functionArity L j →
+        f (Tuple.get (Language.functionArity L j) args i) =
+          g (Tuple.get (Language.functionArity L j) args i)) →
+      f (app L j args) = g (app L j args)) → ∀ t, f t = g t := by
+  intro L
+  apply induction_of_bool (fun t => f t = g t) (fun t => eqb (f t) (g t)) L
+  intro t
+  constructor
+  · intro h
+    by_contra hn
+    exact h (and_right (eqb_eq_zero (f t) (g t)) hn)
+  · intro h hn
+    exact and_left (eqb_eq_zero (f t) (g t)) hn h
 
 end Term
 
@@ -291,6 +398,38 @@ theorem body_lt_all : ∀ A, A < all A := by
   intro A
   apply and_right (lt_succ A (3 * A + 2))
   exact le_trans _ _ _ (le_mul_of_pos A 3 (succ_ne_zero 2)) (le_add_right (3 * A) 2)
+
+theorem le_equal_left : ∀ L t u, t ≤ equal L t u := by
+  intro L t u
+  change t ≤ S (3 * (S (Language.relationCount L) * pair t u))
+  exact le_trans _ _ _ (left_le_pair t u)
+    (le_trans _ _ _
+      (le_mul_of_pos (pair t u) (S (Language.relationCount L))
+        (succ_ne_zero (Language.relationCount L)))
+      (le_trans _ _ _
+        (le_mul_of_pos (S (Language.relationCount L) * pair t u) 3 (succ_ne_zero 2))
+        (le_succ_self (3 * (S (Language.relationCount L) * pair t u)))))
+
+theorem le_equal_right : ∀ L t u, u ≤ equal L t u := by
+  intro L t u
+  change u ≤ S (3 * (S (Language.relationCount L) * pair t u))
+  exact le_trans _ _ _ (right_le_pair t u)
+    (le_trans _ _ _
+      (le_mul_of_pos (pair t u) (S (Language.relationCount L))
+        (succ_ne_zero (Language.relationCount L)))
+      (le_trans _ _ _
+        (le_mul_of_pos (S (Language.relationCount L) * pair t u) 3 (succ_ne_zero 2))
+        (le_succ_self (3 * (S (Language.relationCount L) * pair t u)))))
+
+theorem args_le_rel : ∀ L j xs, xs ≤ rel L j xs := by
+  intro L j xs
+  change xs ≤ S (3 * (S (Language.relationCount L) * xs + S j))
+  exact le_trans _ _ _
+    (le_mul_of_pos xs (S (Language.relationCount L)) (succ_ne_zero (Language.relationCount L)))
+    (le_trans _ _ _ (le_add_right (S (Language.relationCount L) * xs) (S j))
+      (le_trans _ _ _
+        (le_mul_of_pos (S (Language.relationCount L) * xs + S j) 3 (succ_ne_zero 2))
+        (le_succ_self (3 * (S (Language.relationCount L) * xs + S j)))))
 
 theorem imp_arg_of_head_eq_one : ∀ L A, ¬ A = 0 → head L A = 1 →
     imp (unpairLeft (arg L A)) (unpairRight (arg L A)) = A := by
@@ -467,183 +606,297 @@ theorem binder_rank_lt : ∀ A d, pair A (S d) < pair (all A) d := by
   rw [succ_add] at hd
   exact hd
 
-/--
-`Formula.recWithDepth equal rel imp all L falsum A d` processes formula code `A` to a numerical
-value in language code `L`, starting at binder depth `d`:
+/-- Every number denotes falsity, an atomic formula, an implication, or a quantifier. -/
+theorem cases (P : Nat → Prop) : ∀ L, P falsum →
+    (∀ t u, P (equal L t u)) →
+    (∀ j xs, j < Language.relationCount L → P (rel L j xs)) →
+    (∀ A B, P (imp A B)) → (∀ A, P (all A)) → ∀ A, P A := by
+  intro L hf he hr hi ha A
+  by_cases hz : A = 0
+  · rw [hz]
+    exact hf
+  · let r := pred A % 3
+    have tags : r = 0 ∨ r = 1 ∨ r = 2 := by
+      have bound : r < 3 := mod_lt (pred A) 3 (succ_ne_zero 2)
+      rcases zero_or_succ_pred r with h0 | h0
+      · left
+        exact h0
+      · rcases zero_or_succ_pred (pred r) with h1 | h1
+        · right
+          left
+          rw [h0, h1]
+        · rcases zero_or_succ_pred (pred (pred r)) with h2 | h2
+          · right
+            right
+            rw [h0, h1, h2]
+          · rw [h0, h1, h2] at bound
+            exact false_elim (succ_ne_zero (pred (pred (pred r))) bound)
+    rcases tags with h0 | hrest
+    · let q := pred A / 3
+      let m := S (Language.relationCount L)
+      have outer : 3 * q = pred A := by
+        have h := div_mod (pred A) 3
+        rw [h0, add_zero] at h
+        exact h
+      by_cases hq : q % m = 0
+      · have inner : m * (q / m) = q := by
+          have h := div_mod q m
+          rw [hq, add_zero] at h
+          exact h
+        have form : equal L (unpairLeft (q / m)) (unpairRight (q / m)) = A := by
+          rw [equal, pair_unpair, inner, outer, succ_pred A hz]
+        rw [← form]
+        exact he (unpairLeft (q / m)) (unpairRight (q / m))
+      · have symbol : pred (q % m) < Language.relationCount L := by
+          have h := and_left (lt_succ (q % m) (Language.relationCount L))
+            (mod_lt q m (succ_ne_zero (Language.relationCount L)))
+          rw [← succ_pred (q % m) hq] at h
+          exact h
+        have form : rel L (pred (q % m)) (q / m) = A := by
+          rw [rel, succ_pred (q % m) hq, div_mod, outer, succ_pred A hz]
+        rw [← form]
+        exact hr (pred (q % m)) (q / m) symbol
+    · rcases hrest with h1 | h2
+      · have hh : head L A = 1 := by
+          rw [head, h1]
+          rfl
+        rw [← imp_arg_of_head_eq_one L A hz hh]
+        exact hi (unpairLeft (arg L A)) (unpairRight (arg L A))
+      · have hh : head L A = 2 := by
+          rw [head, h2]
+          rfl
+        rw [← all_arg_of_head_eq_two L A hz hh]
+        exact ha (arg L A)
 
-- `falsum` is the value for falsity.
-- `equal k t s` handles equality of term codes `t`, `s` at the current binder depth `k`.
-- `rel k j xs` handles relation symbol index `j` at depth `k`, with a tuple `xs` of term codes
-  of length `Language.relationArity L j`.
-- `imp x y` combines the results for the antecedent and consequent of an implication.
-- `all x` handles a quantified body, whose result `x` is computed one binder deeper.
+/-- Structural induction with a binder depth for a predicate represented by the numerical test
+`f`. At depth `d`, implication cases may use either child at depths at most `d`; the quantified
+case may use its body at depths at most `S d`. Atomic cases receive their term codes directly.
+This allows comparisons between a traversal at its current depth and at a smaller depth. -/
+theorem inductionWithDepth_of_bool (P : Nat → Nat → Prop) (f : Nat → Nat → Nat) : ∀ L,
+    (∀ A d, ¬ f A d = 0 ↔ P A d) →
+    (∀ d, P falsum d) →
+    (∀ t u d, P (equal L t u) d) →
+    (∀ j xs d, j < Language.relationCount L → P (rel L j xs) d) →
+    (∀ A B d, (∀ e, e ≤ d → P A e) → (∀ e, e ≤ d → P B e) → P (imp A B) d) →
+    (∀ A d, (∀ e, e ≤ S d → P A e) → P (all A) d) → ∀ A d, P A d := by
+  intro L spec hf he hr hi ha
+  have step : ∀ A d, (∀ B e, pair B e < pair A d → P B e) → P A d := by
+    apply cases (fun A => ∀ d, (∀ B e, pair B e < pair A d → P B e) → P A d) L
+    · intro d ih
+      exact hf d
+    · intro t u d ih
+      exact he t u d
+    · intro j xs hj d ih
+      exact hr j xs d hj
+    · intro A B d ih
+      exact hi A B d
+        (fun e h => ih A e (pair_lt_left A e (imp A B) d (left_lt_imp A B) h))
+        (fun e h => ih B e (pair_lt_left B e (imp A B) d (right_lt_imp A B) h))
+    · intro A d ih
+      apply ha A d
+      intro e h
+      exact ih A e (lt_of_le_of_lt _ _ _
+        (pair_mono A e A (S d) (le_refl A) h) (binder_rank_lt A d))
+  have total : ∀ k, P (unpairLeft k) (unpairRight k) := by
+    apply strong_induction_of_bool
+      (fun k => P (unpairLeft k) (unpairRight k))
+      (fun k => f (unpairLeft k) (unpairRight k))
+    · intro k
+      exact spec (unpairLeft k) (unpairRight k)
+    · intro k ih
+      apply step (unpairLeft k) (unpairRight k)
+      intro B e h
+      rw [pair_unpair] at h
+      have hp := ih (pair B e) h
+      rw [unpairLeft_pair, unpairRight_pair] at hp
+      exact hp
+  intro A d
+  have h := total (pair A d)
+  rw [unpairLeft_pair, unpairRight_pair] at h
+  exact h
+
+/-- Structural induction on formula codes for a predicate represented by the numerical test `f`.
+Implication has one hypothesis for each child, and quantification has one for its body.
+Equality and relation cases receive term codes; use term induction when reasoning about them. -/
+theorem induction_of_bool (P : Nat → Prop) (f : Nat → Nat) : ∀ L,
+    (∀ A, ¬ f A = 0 ↔ P A) → P falsum →
+    (∀ t u, P (equal L t u)) →
+    (∀ j xs, j < Language.relationCount L → P (rel L j xs)) →
+    (∀ A B, P A → P B → P (imp A B)) →
+    (∀ A, P A → P (all A)) → ∀ A, P A := by
+  intro L spec hf he hr hi ha A
+  have h := inductionWithDepth_of_bool (fun A d => P A) (fun A d => f A) L
+    (fun A d => spec A) (fun d => hf) (fun t u d => he t u)
+    (fun j xs d hj => hr j xs hj)
+    (fun A B d hA hB => hi A B (hA d (le_refl d)) (hB d (le_refl d)))
+    (fun A d hA => ha A (hA (S d) (le_refl (S d)))) A 0
+  exact h
+
+/-- Prove equations on formula codes and binder depths from their constructor cases.
+The quantified-body hypothesis is at depth `S d`; implication hypotheses are at depth `d`. -/
+theorem induction_eq (f g : Nat → Nat → Nat) : ∀ L,
+    (∀ d, f falsum d = g falsum d) →
+    (∀ t u d, f (equal L t u) d = g (equal L t u) d) →
+    (∀ j xs d, j < Language.relationCount L → f (rel L j xs) d = g (rel L j xs) d) →
+    (∀ A B d, f A d = g A d → f B d = g B d → f (imp A B) d = g (imp A B) d) →
+    (∀ A d, f A (S d) = g A (S d) → f (all A) d = g (all A) d) →
+    ∀ A d, f A d = g A d := by
+  intro L hf he hr hi ha
+  apply inductionWithDepth_of_bool (fun A d => f A d = g A d)
+    (fun A d => eqb (f A d) (g A d)) L
+  · intro A d
+    constructor
+    · intro h
+      by_contra hn
+      exact h (and_right (eqb_eq_zero (f A d) (g A d)) hn)
+    · intro h hn
+      exact and_left (eqb_eq_zero (f A d) (g A d)) hn h
+  · exact hf
+  · exact he
+  · exact hr
+  · intro A B d hA hB
+    exact hi A B d (hA d (le_refl d)) (hB d (le_refl d))
+  · intro A d hA
+    exact ha A d (hA (S d) (le_refl (S d)))
+
+/--
+`Formula.recWithDepth falsum equal rel imp all L A d` processes formula code `A` in language
+code `L`, starting at binder depth `d`. Every handler receives the current depth `k`:
+
+- `falsum k` is the value for falsity.
+- `equal k t s` handles equality of term codes `t` and `s`.
+- `rel k j xs` handles relation symbol index `j`, with a tuple `xs` of term codes of length
+  `Language.relationArity L j`.
+- `imp k x y` combines the recursive results for the antecedent and consequent at depth `k`.
+- `all k x` handles a quantified body whose recursive result `x` is computed at depth `S k`.
 
 The equality and relation handlers receive term codes; they can use `Term.rec` to process them.
 -/
-def recWithDepth (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat) (all : Nat → Nat) :
-    Nat → Nat → Nat → Nat → Nat :=
-  fun L falsum A d => covrec (fun n history =>
+def recWithDepth (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) :
+    Nat → Nat → Nat → Nat :=
+  fun L A d => covrec (fun n history =>
     let A := unpairLeft n;
     let d := unpairRight n;
     ite A
       (ite (head L A)
         (ite (eqb (head L A) 1)
-          (imp (Sequence.rget history (pair (unpairLeft (arg L A)) d))
+          (imp d (Sequence.rget history (pair (unpairLeft (arg L A)) d))
             (Sequence.rget history (pair (unpairRight (arg L A)) d)))
           (ite (eqb (head L A) 2)
-            (all (Sequence.rget history (pair (arg L A) (S d))))
+            (all d (Sequence.rget history (pair (arg L A) (S d))))
             (rel d (relationIndex L A) (arg L A))))
-        (equal d (unpairLeft (arg L A)) (unpairRight (arg L A)))) falsum) (pair A d)
+        (equal d (unpairLeft (arg L A)) (unpairRight (arg L A)))) (falsum d)) (pair A d)
 
-theorem recWithDepth_falsum (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat)
-    (all : Nat → Nat) : ∀ L falsum d,
-    recWithDepth equal rel imp all L falsum Formula.falsum d = falsum := by
-  intro L falsum d
+theorem recWithDepth_falsum (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) : ∀ L d,
+    recWithDepth falsum equal rel imp all L Formula.falsum d = falsum d := by
+  intro L d
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
   rfl
 
-theorem recWithDepth_equal (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat)
-    (all : Nat → Nat) : ∀ L falsum t s d,
-    recWithDepth equal rel imp all L falsum (Formula.equal L t s) d = equal d t s := by
-  intro L falsum t s d
+theorem recWithDepth_equal (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) : ∀ L t s d,
+    recWithDepth falsum equal rel imp all L (Formula.equal L t s) d = equal d t s := by
+  intro L t s d
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
-  change ite (Formula.equal L t s) _ falsum = _
+  change ite (Formula.equal L t s) _ (falsum d) = _
   rw [ite_of_ne_zero _ _ _ (equal_ne_zero L t s), head_equal,
     arg_equal, unpairLeft_pair, unpairRight_pair]
   rfl
 
-theorem recWithDepth_rel (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat)
-    (all : Nat → Nat) : ∀ L falsum j xs d, j < Language.relationCount L →
-    recWithDepth equal rel imp all L falsum (Formula.rel L j xs) d = rel d j xs := by
-  intro L falsum j xs d hj
+theorem recWithDepth_rel (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
+    recWithDepth falsum equal rel imp all L (Formula.rel L j xs) d = rel d j xs := by
+  intro L j xs d hj
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
-  change ite (Formula.rel L j xs) _ falsum = _
+  change ite (Formula.rel L j xs) _ (falsum d) = _
   rw [ite_of_ne_zero _ _ _ (rel_ne_zero L j xs), head_rel L j xs hj,
     relationIndex_rel L j xs hj, arg_rel L j xs hj]
   rfl
 
-theorem recWithDepth_imp (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat)
-    (all : Nat → Nat) : ∀ L falsum A B d,
-    recWithDepth equal rel imp all L falsum (Formula.imp A B) d =
-      imp (recWithDepth equal rel imp all L falsum A d)
-        (recWithDepth equal rel imp all L falsum B d) := by
-  intro L falsum A B d
+theorem recWithDepth_imp (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) : ∀ L A B d,
+    recWithDepth falsum equal rel imp all L (Formula.imp A B) d =
+      imp d (recWithDepth falsum equal rel imp all L A d)
+        (recWithDepth falsum equal rel imp all L B d) := by
+  intro L A B d
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
-  change ite (Formula.imp A B) _ falsum = _
+  change ite (Formula.imp A B) _ (falsum d) = _
   rw [ite_of_ne_zero _ _ _ (imp_ne_zero A B), head_imp, arg_imp,
     unpairLeft_pair, unpairRight_pair]
-  change imp (Sequence.rget _ (pair A d)) (Sequence.rget _ (pair B d)) = _
+  change imp d (Sequence.rget _ (pair A d)) (Sequence.rget _ (pair B d)) = _
   rw [Sequence.rget_generate _ (pair A d) (pair (Formula.imp A B) d)
       (pair_lt_left A d (Formula.imp A B) d (left_lt_imp A B) (le_refl d)),
     Sequence.rget_generate _ (pair B d) (pair (Formula.imp A B) d)
       (pair_lt_left B d (Formula.imp A B) d (right_lt_imp A B) (le_refl d))]
   rfl
 
-theorem recWithDepth_all (equal rel : Nat → Nat → Nat → Nat) (imp : Nat → Nat → Nat)
-    (all : Nat → Nat) : ∀ L falsum A d,
-    recWithDepth equal rel imp all L falsum (Formula.all A) d =
-      all (recWithDepth equal rel imp all L falsum A (S d)) := by
-  intro L falsum A d
+theorem recWithDepth_all (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
+    (all : Nat → Nat → Nat) : ∀ L A d,
+    recWithDepth falsum equal rel imp all L (Formula.all A) d =
+      all d (recWithDepth falsum equal rel imp all L A (S d)) := by
+  intro L A d
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
-  change ite (Formula.all A) _ falsum = _
+  change ite (Formula.all A) _ (falsum d) = _
   rw [ite_of_ne_zero _ _ _ (all_ne_zero A), head_all, arg_all]
-  change all (Sequence.rget _ (pair A (S d))) = _
+  change all d (Sequence.rget _ (pair A (S d))) = _
   rw [Sequence.rget_generate _ (pair A (S d)) (pair (Formula.all A) d) (binder_rank_lt A d)]
   rfl
 
-/-- Ignoring depth in the atomic handlers makes the result independent of the starting depth. -/
+/-- Ignoring depth in every handler makes the result independent of the starting depth. -/
 theorem recWithDepth_eq_zero_depth (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     ∀ L falsum A d,
-    recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum A d =
-      recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum A 0 := by
-  intro L falsum A d
-  let R := recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum
-  have atomic : ∀ B k, ¬ B = 0 → ¬ head L B = 1 → ¬ head L B = 2 →
-      R B k = ite (head L B) (rel (relationIndex L B) (arg L B))
-        (equal (unpairLeft (arg L B)) (unpairRight (arg L B))) := by
-    intro B k hz h1 h2
-    change recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-      imp all L falsum B k = _
-    rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair,
-      ite_of_ne_zero B _ _ hz,
-      and_right (eqb_eq_zero (head L B) 1) h1,
-      and_right (eqb_eq_zero (head L B) 2) h2]
-    rfl
-  have invariant : ∀ n, R (unpairLeft n) (unpairRight n) = R (unpairLeft n) 0 := by
-    apply strong_induction_of_bool
-      (fun n => R (unpairLeft n) (unpairRight n) = R (unpairLeft n) 0)
-      (fun n => eqb (R (unpairLeft n) (unpairRight n)) (R (unpairLeft n) 0))
-    · intro n
-      constructor
-      · intro h
-        by_contra he
-        exact h (and_right (eqb_eq_zero _ _) he)
-      · intro he h
-        exact and_left (eqb_eq_zero _ _) h he
-    · intro n earlier
-      let B := unpairLeft n
-      let k := unpairRight n
-      have ih : ∀ C e, pair C e < pair B k → R C e = R C 0 := by
-        intro C e hc
-        have hn : pair B k = n := pair_unpair n
-        rw [hn] at hc
-        have result := earlier (pair C e) hc
-        rw [unpairLeft_pair, unpairRight_pair] at result
-        exact result
-      change recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-        imp all L falsum B k = recWithDepth (fun _ t s => equal t s)
-          (fun _ j xs => rel j xs) imp all L falsum B 0
-      by_cases hz : B = 0
-      · rw [hz]
-        exact eq_trans
-          (recWithDepth_falsum (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-            imp all L falsum k)
-          (eq_symm (recWithDepth_falsum (fun _ t s => equal t s)
-            (fun _ j xs => rel j xs) imp all L falsum 0))
-      by_cases h1 : head L B = 1
-      · let C := unpairLeft (arg L B)
-        let D := unpairRight (arg L B)
-        have he : Formula.imp C D = B := imp_arg_of_head_eq_one L B hz h1
-        have hc : C < B := by
-          have h := left_lt_imp C D
-          rw [he] at h
-          exact h
-        have hd : D < B := by
-          have h := right_lt_imp C D
-          rw [he] at h
-          exact h
-        have ec := ih C k (pair_lt_left C k B k hc (le_refl k))
-        have ed := ih D k (pair_lt_left D k B k hd (le_refl k))
-        have ek := recWithDepth_imp (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-          imp all L falsum C D k
-        have ez := recWithDepth_imp (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-          imp all L falsum C D 0
-        rw [he] at ek
-        rw [he] at ez
-        exact eq_trans ek (eq_trans (eq_congr₂ imp ec ed) (eq_symm ez))
-      by_cases h2 : head L B = 2
-      · let C := arg L B
-        have he : Formula.all C = B := all_arg_of_head_eq_two L B hz h2
-        have hc : pair C (S k) < pair B k := by
-          have h := binder_rank_lt C k
-          rw [he] at h
-          exact h
-        have hzero : pair C 1 < pair B k :=
-          lt_of_le_of_lt _ _ _
-            (pair_mono C 1 C (S k) (le_refl C)
-              (and_right (succ_le_succ 0 k) (zero_le k))) hc
-        have ec := eq_trans (ih C (S k) hc) (eq_symm (ih C 1 hzero))
-        have ek := recWithDepth_all (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-          imp all L falsum C k
-        have ez := recWithDepth_all (fun _ t s => equal t s) (fun _ j xs => rel j xs)
-          imp all L falsum C 0
-        rw [he] at ek
-        rw [he] at ez
-        exact eq_trans ek (eq_trans (eq_congr all ec) (eq_symm ez))
-      exact eq_trans (atomic B k hz h1 h2) (eq_symm (atomic B 0 hz h1 h2))
-  have result := invariant (pair A d)
-  rw [unpairLeft_pair, unpairRight_pair] at result
-  exact result
+    recWithDepth (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+      (fun _ x y => imp x y) (fun _ x => all x) L A d =
+    recWithDepth (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+      (fun _ x y => imp x y) (fun _ x => all x) L A 0 := by
+  intro L falsum
+  let R := recWithDepth (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L
+  apply inductionWithDepth_of_bool (fun A d => R A d = R A 0)
+    (fun A d => eqb (R A d) (R A 0)) L
+  · intro A d
+    constructor
+    · intro h
+      by_contra hn
+      exact h (and_right (eqb_eq_zero _ _) hn)
+    · intro h hn
+      exact and_left (eqb_eq_zero _ _) hn h
+  · intro d
+    exact eq_trans
+      (recWithDepth_falsum (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+        (fun _ x y => imp x y) (fun _ x => all x) L d)
+      (eq_symm (recWithDepth_falsum (fun _ => falsum) (fun _ t s => equal t s)
+        (fun _ j xs => rel j xs) (fun _ x y => imp x y) (fun _ x => all x) L 0))
+  · intro t s d
+    exact eq_trans
+      (recWithDepth_equal (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+        (fun _ x y => imp x y) (fun _ x => all x) L t s d)
+      (eq_symm (recWithDepth_equal (fun _ => falsum) (fun _ t s => equal t s)
+        (fun _ j xs => rel j xs) (fun _ x y => imp x y) (fun _ x => all x) L t s 0))
+  · intro j xs d hj
+    exact eq_trans
+      (recWithDepth_rel (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+        (fun _ x y => imp x y) (fun _ x => all x) L j xs d hj)
+      (eq_symm (recWithDepth_rel (fun _ => falsum) (fun _ t s => equal t s)
+        (fun _ j xs => rel j xs) (fun _ x y => imp x y) (fun _ x => all x) L j xs 0 hj))
+  · intro A B d hA hB
+    exact eq_trans
+      (recWithDepth_imp (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+        (fun _ x y => imp x y) (fun _ x => all x) L A B d)
+      (eq_trans (eq_congr₂ imp (hA d (le_refl d)) (hB d (le_refl d)))
+        (eq_symm (recWithDepth_imp (fun _ => falsum) (fun _ t s => equal t s)
+          (fun _ j xs => rel j xs) (fun _ x y => imp x y) (fun _ x => all x) L A B 0)))
+  · intro A d hA
+    have body := eq_trans (hA (S d) (le_refl (S d)))
+      (eq_symm (hA 1 (and_right (succ_le_succ 0 d) (zero_le d))))
+    exact eq_trans
+      (recWithDepth_all (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+        (fun _ x y => imp x y) (fun _ x => all x) L A d)
+      (eq_trans (eq_congr all body)
+        (eq_symm (recWithDepth_all (fun _ => falsum) (fun _ t s => equal t s)
+          (fun _ j xs => rel j xs) (fun _ x y => imp x y) (fun _ x => all x) L A 0)))
 
 /--
 `Formula.rec equal rel imp all L falsum A` processes formula code `A` in language code `L`.
@@ -657,36 +910,42 @@ It uses `recWithDepth` with handlers that ignore binder depth:
 -/
 def rec (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     Nat → Nat → Nat → Nat := fun L falsum A =>
-  recWithDepth (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum A 0
+  recWithDepth (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L A 0
 
 theorem rec_falsum (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     ∀ L falsum, rec equal rel imp all L falsum Formula.falsum = falsum :=
   fun L falsum => recWithDepth_falsum
-    (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum 0
+    (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L 0
 
 theorem rec_equal (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     ∀ L falsum t s, rec equal rel imp all L falsum (Formula.equal L t s) = equal t s :=
   fun L falsum t s => recWithDepth_equal
-    (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum t s 0
+    (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L t s 0
 
 theorem rec_rel (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     ∀ L falsum j xs, j < Language.relationCount L →
     rec equal rel imp all L falsum (Formula.rel L j xs) = rel j xs :=
   fun L falsum j xs hj => recWithDepth_rel
-    (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum j xs 0 hj
+    (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L j xs 0 hj
 
 theorem rec_imp (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) : ∀ L falsum A B,
     rec equal rel imp all L falsum (Formula.imp A B) =
       imp (rec equal rel imp all L falsum A) (rec equal rel imp all L falsum B) :=
   fun L falsum A B => recWithDepth_imp
-    (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum A B 0
+    (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L A B 0
 
 theorem rec_all (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) : ∀ L falsum A,
     rec equal rel imp all L falsum (Formula.all A) =
       all (rec equal rel imp all L falsum A) := by
   intro L falsum A
   exact eq_trans (recWithDepth_all
-    (fun _ t s => equal t s) (fun _ j xs => rel j xs) imp all L falsum A 0)
+    (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
+    (fun _ x y => imp x y) (fun _ x => all x) L A 0)
     (eq_congr all (recWithDepth_eq_zero_depth equal rel imp all L falsum A 1))
 
 end Formula
@@ -784,43 +1043,50 @@ at binder depth `d`. `f k i` supplies a term code for variable index `i` at the 
 `k`. Each quantifier increases `k` by one; `f` determines how bound variables are treated.
 -/
 def subst (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat := fun L =>
-  recWithDepth (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum
-
-theorem subst_falsum (f : Nat → Nat → Nat) : ∀ L d, subst f L falsum d = falsum :=
-  fun L d => recWithDepth_falsum
+  recWithDepth (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum d
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L
+
+theorem subst_falsum (f : Nat → Nat → Nat) : ∀ L d, subst f L falsum d = falsum :=
+  fun L d => recWithDepth_falsum (fun _ => falsum)
+    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
+    (fun d j xs => rel L j
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L d
 
 theorem subst_equal (f : Nat → Nat → Nat) : ∀ L t s d,
     subst f L (equal L t s) d = equal L (Term.subst (f d) L t) (Term.subst (f d) L s) :=
-  fun L t s d => recWithDepth_equal
+  fun L t s d => recWithDepth_equal (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum t s d
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L t s d
 
 theorem subst_rel (f : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
     subst f L (rel L j xs) d =
       rel L j (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs) :=
-  fun L j xs d hj => recWithDepth_rel
+  fun L j xs d hj => recWithDepth_rel (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum j xs d hj
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L j xs d hj
 
 theorem subst_imp (f : Nat → Nat → Nat) : ∀ L A B d,
     subst f L (imp A B) d = imp (subst f L A d) (subst f L B d) :=
-  fun L A B d => recWithDepth_imp
+  fun L A B d => recWithDepth_imp (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum A B d
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L A B d
 
 theorem subst_all (f : Nat → Nat → Nat) : ∀ L A d, subst f L (all A) d = all (subst f L A (S d)) :=
-  fun L A d => recWithDepth_all
+  fun L A d => recWithDepth_all (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs)) imp all L falsum A d
+      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+    (fun _ x y => imp x y) (fun _ x => all x) L A d
 
 /--
 `Formula.instantiateAt L k A t` substitutes term code `t` for surrounding position `k` in
@@ -865,11 +1131,15 @@ def bound : Nat → Nat → Nat := fun L =>
     (fun j xs => Tuple.max (Language.relationArity L j)
       (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0
 
-/--
-`Formula.isClosed L A` returns `1` when `Formula.bound L A = 0` in language code `L`,
-and `0` otherwise.
--/
+/-- `Formula.Closed L A` states that formula code `A` has no free variable positions in
+language code `L`. Such a formula is a sentence. -/
+def Closed : Nat → Nat → QFProp := fun L A => bound L A = 0
+
+/-- `Formula.isClosed L A` returns `1` when `Formula.Closed L A` holds, and `0` otherwise. -/
 def isClosed : Nat → Nat → Nat := fun L A => eqb (bound L A) 0
+
+theorem isClosed_eq_one : ∀ L A, isClosed L A = 1 ↔ Closed L A :=
+  fun L A => eqb_eq_one (bound L A) 0
 
 theorem bound_falsum : ∀ L, bound L falsum = 0 :=
   fun L => rec_falsum

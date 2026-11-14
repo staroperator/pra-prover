@@ -80,6 +80,10 @@ theorem eq_congr (f : Nat → Nat) : ∀ {x y}, x = y → f x = f y :=
 theorem eq_congr₂ (f : Nat → Nat → Nat) : ∀ {a b c d}, a = c → b = d → f a b = f c d :=
   fun a b c d h₁ h₂ => eq_trans (eq_congr (fun x => f x b) h₁) (eq_congr (f c) h₂)
 
+theorem eq_congr₃ (f : Nat → Nat → Nat → Nat) :
+    ∀ {a b c d e g}, a = d → b = e → c = g → f a b c = f d e g :=
+  fun a b c d e g h₁ h₂ h₃ => eq_trans (eq_congr₂ (fun x y => f x y c) h₁ h₂) (eq_congr (f d e) h₃)
+
 theorem forall_congr {P Q : Nat → Prop} : (∀ x, P x ↔ Q x) → ((∀ x, P x) ↔ (∀ x, Q x)) :=
   fun h => (fun hP x => and_left (h x) (hP x), fun hQ x => and_right (h x) (hQ x))
 

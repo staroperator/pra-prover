@@ -354,6 +354,23 @@ theorem eqb_eq_one : ∀ a b, eqb a b = 1 ↔ a = b := by
 theorem eqb_self : ∀ x, eqb x x = 1 :=
   fun x => and_right (eqb_eq_one x x) rfl
 
+/-- The boolean form of "`x ≤ y` or `y = z`", for inductions on a decidable statement. -/
+theorem le_or_eq_bool : ∀ x y z, ¬ bor (leb x y) (eqb y z) = 0 ↔ (x ≤ y ∨ y = z) := by
+  intro x y z
+  constructor
+  · intro h
+    have h₁ := and_right (bool_eq_one (bor (leb x y) (eqb y z)) (bor_bool (leb x y) (eqb y z))) h
+    rcases and_left (bor_eq_one (leb x y) (eqb y z)) h₁ with ha | hb
+    · left
+      exact and_left (leb_eq_one x y) (and_right (bool_eq_one (leb x y) (leb_bool x y)) ha)
+    · right
+      exact and_left (eqb_eq_one y z) (and_right (bool_eq_one (eqb y z) (eqb_bool y z)) hb)
+  · intro h
+    apply and_left (bool_eq_one (bor (leb x y) (eqb y z)) (bor_bool (leb x y) (eqb y z)))
+    rcases h with ha | hb
+    · exact bor_eq_one_of_left_eq_one (leb x y) (eqb y z) (and_right (leb_eq_one x y) ha)
+    · exact bor_eq_one_of_right_eq_one (leb x y) (eqb y z) (and_right (eqb_eq_one y z) hb)
+
 theorem eqb_eq_zero : ∀ a b, eqb a b = 0 ↔ ¬ a = b := by
   intro a b
   constructor

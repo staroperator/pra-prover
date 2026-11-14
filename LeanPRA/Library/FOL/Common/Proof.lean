@@ -1,12 +1,18 @@
 module
 
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
+public import LeanPRA.Library.FOL.Common.Substitution
+meta import LeanPRA.Library.Tactic.Witnessing
 
 /-!
-# Numerical Hilbert proof trees
+# Numerical Hilbert proofs and provability
 
-For a first-order language `L` and a theory `T` of formulas, the Hilbert proof system has
-four rules:
+This module encodes first-order proofs as natural numbers, checks their inference rules, and
+proves that the proof constructors produce accepted proofs. It also derives proofs of the
+logical axioms and proves universal instantiation for arbitrary formula and term codes.
+
+For a first-order language `L` and a theory `T` of formulas, the Hilbert proof system has four
+rules:
 
 - Logical axiom: `T ⊢ A` if `A` is an instance of a schema in `LogicalAxiom.lean`.
 - Hypothesis: `T ⊢ A` if `A ∈ T`.
@@ -32,11 +38,19 @@ numerical membership test: `T A = 1` means that formula code `A` is an axiom of 
 Taking the predecessor and unpairing recovers the node fields through `Proof.rule`,
 `Proof.conclusion`, and `Proof.premises`. Code `0`, rule tags above `3`, and leaves with nonzero
 premise data are invalid. Every subtree code is smaller than its parent, so the tree can be
-traversed by numerical course-of-values recursion. The main operations are:
+traversed by numerical course-of-values recursion.
+
+The module provides:
 
 - `Proof.rec` combines the results from premise subtrees according to the rule at each node.
 - `isProof L T prf` checks the rules and membership in `T` in one traversal.
-- `Provable L T A` states that a checked proof of `A` exists.
+- `IsProofOf L T A prf` states that `prf` is an accepted proof with conclusion `A`.
+- `Provable L T A` states that some proof code satisfies `IsProofOf L T A`.
+- `Proof.mp'` reads the consequent from the first proof and applies modus ponens.
+- Proof-construction lemmas justify the inference rules and logical axiom instances, with congruence
+  restricted to symbols in the language.
+- Universal instantiation holds for every formula and term code because the bounded axiom search
+  can use either the substituted term or the term with code `0`.
 -/
 
 @[expose] public section
@@ -81,6 +95,11 @@ def conclusion : Nat → Nat := fun prf => unpairLeft (unpairRight (pred prf))
 ponens, or one subtree code for generalization. Code `0` is invalid.
 -/
 def premises : Nat → Nat := fun prf => unpairRight (unpairRight (pred prf))
+
+/-- Apply a proof of an implication to a proof of its antecedent. The implication
+conclusion supplies the consequent code; `IsProofOf.mp'` states the required premises. -/
+def mp' : Nat → Nat → Nat → Nat := fun L p q =>
+  mp (unpairRight (Formula.arg L (conclusion p))) p q
 
 theorem rule_axiom : ∀ A, rule (Proof.axiom A) = 0 := by
   intro A
@@ -257,6 +276,31 @@ theorem isProof_gen_eq (L : Nat) (T : Nat → Nat) : ∀ A p,
   rw [isProof, Proof.rec_gen _ _ _ _]
   rfl
 
+theorem isProof_node_eq (L : Nat) (T : Nat → Nat) : ∀ k A children,
+    isProof L T (S (pair k (pair A children))) =
+      ite (eqb k 0) (ite (eqb children 0) (isLogicalAxiom L A) 0)
+        (ite (eqb k 1) (ite (eqb children 0) (eqb (T A) 1) 0)
+          (ite (eqb k 2)
+            (band (band (isProof L T (unpairLeft children))
+              (isProof L T (unpairRight children)))
+              (eqb (Proof.conclusion (unpairLeft children))
+                (Formula.imp (Proof.conclusion (unpairRight children)) A)))
+            (ite (eqb k 3) (band (isProof L T children)
+              (eqb A (Formula.all (Proof.conclusion children)))) 0))) := by
+  intro k A children
+  have hc : children < S (pair k (pair A children)) :=
+    lt_of_le_of_lt _ _ _
+      (le_trans _ _ _ (right_le_pair A children) (right_le_pair k (pair A children)))
+      (lt_succ_self (pair k (pair A children)))
+  have hl := lt_of_le_of_lt _ _ _ (unpairLeft_le children) hc
+  have hr := lt_of_le_of_lt _ _ _ (unpairRight_le children) hc
+  rw [isProof, Proof.rec, covrec, Proof.rule, Proof.conclusion, Proof.premises,
+    pred_succ, unpairLeft_pair, unpairRight_pair, unpairLeft_pair, unpairRight_pair,
+    ite_succ]
+  rw [Sequence.rget_generate _ _ _ hl, Sequence.rget_generate _ _ _ hr,
+    Sequence.rget_generate _ _ _ hc]
+  rfl
+
 theorem isProof_bool (L : Nat) (T : Nat → Nat) : ∀ prf, IsBool (isProof L T prf) := by
   intro prf
   by_cases hz : prf = 0
@@ -289,12 +333,21 @@ theorem isProof_bool (L : Nat) (T : Nat → Nat) : ∀ prf, IsBool (isProof L T 
   rw [and_right (eqb_eq_zero (Proof.rule prf) 3) h₃]
   left; rfl
 
+/-- `IsProofOf L T A p` states that proof code `p` is accepted in language `L` over theory `T`
+and has conclusion formula code `A`. Its two numerical equations form a quantifier-free predicate,
+suitable for induction on proof-code builders. -/
+def IsProofOf (L : Nat) (T : Nat → Nat) : Nat → Nat → QFProp :=
+  fun A p => isProof L T p = 1 ∧ Proof.conclusion p = A
+
 /--
 `Provable L T A` states that formula code `A` has a checked proof in language code `L` over
 theory `T`.
 -/
 def Provable (L : Nat) (T : Nat → Nat) : Nat → Prop := fun A =>
-  ∃ prf, isProof L T prf = 1 ∧ Proof.conclusion prf = A
+  ∃ prf, IsProofOf L T A prf
+
+theorem IsProofOf.provable (L : Nat) (T : Nat → Nat) : ∀ A p,
+    IsProofOf L T A p → Provable L T A := fun A p h => (p, h)
 
 /-! ## Construction of checked proofs -/
 
@@ -323,6 +376,247 @@ theorem isProof_gen (L : Nat) (T : Nat → Nat) : ∀ A p,
   rw [isProof_gen_eq L T, hp, he, eqb_self]
   rfl
 
+theorem IsProofOf.mp (L : Nat) (T : Nat → Nat) : ∀ A B p q,
+    IsProofOf L T (Formula.imp A B) p → IsProofOf L T A q →
+      IsProofOf L T B (Proof.mp B p q) := by
+  intro A B p q hp hq
+  constructor
+  · apply isProof_mp L T B p q (and_left hp) (and_left hq)
+    rw [and_right hp, and_right hq]
+  · exact Proof.conclusion_mp B p q
+
+theorem IsProofOf.gen (L : Nat) (T : Nat → Nat) : ∀ A p,
+    IsProofOf L T A p → IsProofOf L T (Formula.all A) (Proof.gen A p) := by
+  intro A p hp
+  exact (isProof_gen L T A p (and_left hp) (and_right hp), Proof.conclusion_gen A p)
+
+theorem IsProofOf.mp' (L : Nat) (T : Nat → Nat) : ∀ A B p q,
+    IsProofOf L T (Formula.imp A B) p → IsProofOf L T A q →
+      IsProofOf L T B (Proof.mp' L p q) := by
+  intro A B p q hp hq
+  rw [Proof.mp', and_right hp, Formula.arg_imp, unpairRight_pair]
+  exact IsProofOf.mp L T A B p q hp hq
+
+/-! ## Provability rules and logical axioms -/
+
+theorem Provable.axiom (L : Nat) (T : Nat → Nat) : ∀ A,
+    isLogicalAxiom L A = 1 → Provable L T A :=
+  fun A h => (Proof.axiom A, isProof_axiom L T A h, Proof.conclusion_axiom A)
+
+theorem Provable.hypothesis (L : Nat) (T : Nat → Nat) : ∀ A,
+    T A = 1 → Provable L T A :=
+  fun A h => (Proof.hypothesis A, isProof_hypothesis L T A h, Proof.conclusion_hypothesis A)
+
+theorem Provable.mp (L : Nat) (T : Nat → Nat) : ∀ A B,
+    Provable L T (Formula.imp A B) → Provable L T A → Provable L T B := by
+  rintro A B (p, hp, ep) (q, hq, eq)
+  exists Proof.mp B p q
+  constructor
+  · apply isProof_mp L T B p q hp hq
+    rw [eq]
+    exact ep
+  · exact Proof.conclusion_mp B p q
+
+theorem Provable.gen (L : Nat) (T : Nat → Nat) : ∀ A,
+    Provable L T A → Provable L T (Formula.all A) := by
+  rintro A (p, hp, ep)
+  exact (Proof.gen A p, isProof_gen L T A p hp ep, Proof.conclusion_gen A p)
+
+namespace Provable
+
+theorem implication (L : Nat) (T : Nat → Nat) (A B : Nat) :
+    Provable L T (Formula.imp A (Formula.imp B A)) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_implication L A B)
+
+theorem implicationDistribution (L : Nat) (T : Nat → Nat) (A B C : Nat) :
+    Provable L T (Formula.imp (Formula.imp A (Formula.imp B C))
+      (Formula.imp (Formula.imp A B) (Formula.imp A C))) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_implicationDistribution L A B C)
+
+theorem contraposition (L : Nat) (T : Nat → Nat) (A B : Nat) :
+    Provable L T
+      (Formula.imp (Formula.imp (Formula.neg A) (Formula.neg B)) (Formula.imp B A)) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_contraposition L A B)
+
+theorem quantifierImplication (L : Nat) (T : Nat → Nat) (A B : Nat) :
+    Provable L T (Formula.imp (Formula.all (Formula.imp (Formula.shift L A) B))
+      (Formula.imp A (Formula.all B))) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_quantifierImplication L A B)
+
+theorem reflexivity (L : Nat) (T : Nat → Nat) (t : Nat) :
+    Provable L T (Formula.equal L t t) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_reflexivity L t)
+
+theorem symmetry (L : Nat) (T : Nat → Nat) (s t : Nat) :
+    Provable L T (Formula.imp (Formula.equal L s t) (Formula.equal L t s)) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_symmetry L s t)
+
+theorem transitivity (L : Nat) (T : Nat → Nat) (s t u : Nat) :
+    Provable L T (Formula.imp (Formula.equal L s t)
+      (Formula.imp (Formula.equal L t u) (Formula.equal L s u))) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_transitivity L s t u)
+
+theorem functionCongruence (L : Nat) (T : Nat → Nat) (j xs ys : Nat) :
+    j < Language.functionCount L →
+      Provable L T (Formula.equalPremises L (Language.functionArity L j) xs ys
+        (Formula.equal L (Term.app L j xs) (Term.app L j ys))) :=
+  fun h => FOL.Provable.axiom L T _ (isLogicalAxiom_of_functionCongruence L j xs ys h)
+
+theorem relationCongruence (L : Nat) (T : Nat → Nat) (j xs ys : Nat) :
+    j < Language.relationCount L →
+      Provable L T (Formula.equalPremises L (Language.relationArity L j) xs ys
+        (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))) :=
+  fun h => FOL.Provable.axiom L T _ (isLogicalAxiom_of_relationCongruence L j xs ys h)
+
+end Provable
+
+/-! ## Universal instantiation -/
+
+namespace Term
+
+/-- Instantiating position `0` by `t` in a term at binder depth `d` either gives a code at least
+`t`, or gives the same code as instantiating by `0`. -/
+theorem instantiateAt_dichotomy : ∀ L t d s,
+    t ≤ subst (instantiateAt L 0 t d) L s ∨
+      subst (instantiateAt L 0 t d) L s = subst (instantiateAt L 0 0 d) L s := by
+  intro L t d
+  apply induction_of_bool
+    (fun s => t ≤ subst (instantiateAt L 0 t d) L s ∨
+      subst (instantiateAt L 0 t d) L s = subst (instantiateAt L 0 0 d) L s)
+    (fun s => bor (leb t (subst (instantiateAt L 0 t d) L s))
+      (eqb (subst (instantiateAt L 0 t d) L s) (subst (instantiateAt L 0 0 d) L s))) L
+  · intro s
+    exact le_or_eq_bool t (subst (instantiateAt L 0 t d) L s) (subst (instantiateAt L 0 0 d) L s)
+  · intro j hj
+    right
+    rw [subst_const (instantiateAt L 0 t d) L j hj, subst_const (instantiateAt L 0 0 d) L j hj]
+  · intro i
+    rw [subst_var (instantiateAt L 0 t d), subst_var (instantiateAt L 0 0 d)]
+    change
+      t ≤ ite (ltb i d) (var L i)
+        (ite (eqb (i - d) 0) (shift L d t) (var L (ite (ltb 0 (i - d)) (pred i) i))) ∨
+      ite (ltb i d) (var L i)
+        (ite (eqb (i - d) 0) (shift L d t) (var L (ite (ltb 0 (i - d)) (pred i) i))) =
+      ite (ltb i d) (var L i)
+        (ite (eqb (i - d) 0) (shift L d 0) (var L (ite (ltb 0 (i - d)) (pred i) i)))
+    by_cases h₁ : ltb i d = 0
+    · rw [h₁, ite_zero, ite_zero]
+      by_cases h₂ : eqb (i - d) 0 = 0
+      · right
+        rw [h₂, ite_zero, ite_zero]
+      · left
+        rw [ite_of_ne_zero (eqb (i - d) 0) _ _ h₂]
+        exact le_shift L d t
+    · right
+      rw [ite_of_ne_zero (ltb i d) _ _ h₁, ite_of_ne_zero (ltb i d) _ _ h₁]
+  · intro j args hj ih
+    rw [subst_app (instantiateAt L 0 t d) L j args hj,
+      subst_app (instantiateAt L 0 0 d) L j args hj]
+    rcases Tuple.map_dichotomy (subst (instantiateAt L 0 t d) L)
+        (subst (instantiateAt L 0 0 d) L) t (Language.functionArity L j) args
+        (fun i hi => ih i hi) with hm | hm
+    · left
+      exact le_trans t _ _ hm (le_of_lt _ _ (args_lt_app L j
+        (Tuple.map (subst (instantiateAt L 0 t d) L) (Language.functionArity L j) args)))
+    · right
+      rw [hm]
+
+end Term
+
+namespace Formula
+
+/-- Instantiating position `0` by `t` in a formula at binder depth `d` either gives a code at
+least `t`, or gives the same code as instantiating by `0`. -/
+theorem instantiate_dichotomy : ∀ L t A d,
+    (t ≤ subst (Term.instantiateAt L 0 t) L A d ∨
+      subst (Term.instantiateAt L 0 t) L A d = subst (Term.instantiateAt L 0 0) L A d) := by
+  intro L t
+  apply inductionWithDepth_of_bool
+    (fun A d => t ≤ subst (Term.instantiateAt L 0 t) L A d ∨
+      subst (Term.instantiateAt L 0 t) L A d = subst (Term.instantiateAt L 0 0) L A d)
+    (fun A d => bor (leb t (subst (Term.instantiateAt L 0 t) L A d))
+      (eqb (subst (Term.instantiateAt L 0 t) L A d)
+        (subst (Term.instantiateAt L 0 0) L A d))) L
+  · intro A d
+    exact le_or_eq_bool t (subst (Term.instantiateAt L 0 t) L A d)
+      (subst (Term.instantiateAt L 0 0) L A d)
+  · intro d
+    right
+    rw [subst_falsum (Term.instantiateAt L 0 t) L d, subst_falsum (Term.instantiateAt L 0 0) L d]
+  · intro a b d
+    rw [subst_equal (Term.instantiateAt L 0 t) L a b d,
+      subst_equal (Term.instantiateAt L 0 0) L a b d]
+    rcases Term.instantiateAt_dichotomy L t d a with ha | ha
+    · left
+      exact le_trans t _ _ ha (le_equal_left L _ _)
+    · rcases Term.instantiateAt_dichotomy L t d b with hb | hb
+      · left
+        exact le_trans t _ _ hb (le_equal_right L _ _)
+      · right
+        rw [ha, hb]
+  · intro j xs d hj
+    rw [subst_rel (Term.instantiateAt L 0 t) L j xs d hj,
+      subst_rel (Term.instantiateAt L 0 0) L j xs d hj]
+    rcases Tuple.map_dichotomy (Term.subst (Term.instantiateAt L 0 t d) L)
+        (Term.subst (Term.instantiateAt L 0 0 d) L) t
+        (Language.relationArity L j) xs
+        (fun i hi => Term.instantiateAt_dichotomy L t d
+          (Tuple.get (Language.relationArity L j) xs i)) with hm | hm
+    · left
+      exact le_trans t _ _ hm (args_le_rel L j _)
+    · right
+      rw [hm]
+  · intro A B d hA hB
+    rw [subst_imp (Term.instantiateAt L 0 t) L A B d,
+      subst_imp (Term.instantiateAt L 0 0) L A B d]
+    rcases hA d (le_refl d) with ha | ha
+    · left
+      exact le_trans t _ _ ha (le_of_lt _ _ (left_lt_imp _ _))
+    · rcases hB d (le_refl d) with hb | hb
+      · left
+        exact le_trans t _ _ hb (le_of_lt _ _ (right_lt_imp _ _))
+      · right
+        rw [ha, hb]
+  · intro A d ih
+    rw [subst_all (Term.instantiateAt L 0 t) L A d, subst_all (Term.instantiateAt L 0 0) L A d]
+    rcases ih (S d) (le_refl (S d)) with ha | ha
+    · left
+      exact le_trans t _ _ ha (le_of_lt _ _ (body_lt_all _))
+    · right
+      rw [ha]
+
+/-- Either `t` is at most the instance `A[t]`, or `A[t]` is the instance `A[0]`. -/
+theorem instantiate_bound : ∀ L A t,
+    t ≤ instantiate L A t ∨ instantiate L A t = instantiate L A 0 :=
+  fun L A t => instantiate_dichotomy L t A 0
+
+end Formula
+
+/-- Every instance `(∀ A) → A[t]` passes the test for the instantiation axiom: the search for
+the term succeeds with `t` or with `0`. -/
+theorem isLogicalAxiom_of_instantiate : ∀ L A t,
+    isLogicalAxiom L (Formula.imp (Formula.all A) (Formula.instantiate L A t)) = 1 := by
+  intro L A t
+  rcases Formula.instantiate_bound L A t with h | h
+  · exact isLogicalAxiom_of_instantiation L A t
+      (le_trans t (Formula.instantiate L A t) _ h
+        (le_of_lt _ _ (Formula.right_lt_imp (Formula.all A) (Formula.instantiate L A t))))
+  · rw [h]
+    exact isLogicalAxiom_of_instantiation L A 0 (zero_le _)
+
+namespace Provable
+
+/-- Universal instantiation for every formula code and every term code. -/
+theorem instantiate (L : Nat) (T : Nat → Nat) (A t : Nat) :
+    Provable L T (Formula.imp (Formula.all A) (Formula.instantiate L A t)) :=
+  FOL.Provable.axiom L T _ (isLogicalAxiom_of_instantiate L A t)
+
+end Provable
+
 end FOL
+
+extract_witness FOL.Provable.contraposition FOL.Provable.functionCongruence FOL.Provable.implication
+  FOL.Provable.implicationDistribution FOL.Provable.instantiate FOL.Provable.quantifierImplication
+  FOL.Provable.reflexivity FOL.Provable.symmetry FOL.Provable.transitivity
 
 end

@@ -13,6 +13,7 @@ indices `0` through `n - 1`, and a numerical test `f : Nat → Nat` counts as tr
 - `anyBelow f n` returns `1` when `¬ f i = 0` for some `i < n`, and `0` otherwise.
 - `findBelow f n` returns the least `i < n` with `¬ f i = 0`, or `n` when `f i = 0` for all `i < n`.
 - `agreeBelow f g n` states as a quantifier-free formula that `f i = g i` for all `i < n`.
+- `strong_induction_eq` proves numerical equations from their instances at smaller indices.
 
 Ordinary quantifier-free induction on `allBelow` yields strong induction, and inducting on `n - k`
 yields downward induction from `n` to `0`.
@@ -109,6 +110,18 @@ theorem strong_induction_of_bool (P : Nat → Prop) (f : Nat → Nat) :
   apply step k
   intro i hi
   exact and_left (spec i) (allBelow_elim f i k hk hi)
+
+/-- Prove pointwise equality of numerical functions by assuming equality at every smaller index. -/
+theorem strong_induction_eq (f g : Nat → Nat) :
+    (∀ n, (∀ i, i < n → f i = g i) → f n = g n) → ∀ n, f n = g n := by
+  apply strong_induction_of_bool (fun n => f n = g n) (fun n => eqb (f n) (g n))
+  intro n
+  constructor
+  · intro h
+    by_contra hn
+    exact h (and_right (eqb_eq_zero (f n) (g n)) hn)
+  · intro h hn
+    exact and_left (eqb_eq_zero (f n) (g n)) hn h
 
 /-- Test whether at least one index strictly below the bound satisfies the predicate. -/
 def anyBelow (f : Nat → Nat) : Nat → Nat :=
