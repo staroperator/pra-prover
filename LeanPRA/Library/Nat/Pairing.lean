@@ -187,4 +187,17 @@ theorem pair_mono : ∀ a b c d, a ≤ c → b ≤ d → pair a b ≤ pair c d :
     · exact le_of_lt _ _ (pair_lt_right c b c d (le_refl c) hlt)
     · rw [he']; exact le_refl _
 
+theorem triangular_double : ∀ n, triangular n + triangular n = n * S n := by
+  intro n
+  induction n with k ih
+  · rfl
+  · have h : S k * S (S k) = k * S k + (S k + S k) := by
+      rw [mul_succ, succ_mul, add_assoc]
+    change triangular k + S k + (triangular k + S k) = S k * S (S k)
+    rw [add_add_add_comm, ih, h]
+
+theorem pair_double : ∀ x y, pair x y + pair x y = (x + y) * S (x + y) + (x + x) := by
+  intro x y
+  rw [pair, add_add_add_comm, triangular_double]
+
 end

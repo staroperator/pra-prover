@@ -11,12 +11,12 @@ This module declares the first-order language of arithmetic together with Robins
 and Peano arithmetic (`PA`), and sets up surface notation and display handlers for arithmetic
 terms and order formulas.
 
-- `FOL.Arithmetic.language` has the constant `zero` and the functions `succ`, `add`, and `mul`.
-- Arithmetic terms use numerals, `S`, `+`, and `*`; `FOL.Arithmetic.le` and `FOL.Arithmetic.lt`
+- `Arithmetic.language` has the constant `zero` and the functions `succ`, `add`, and `mul`.
+- Arithmetic terms use numerals, `S`, `+`, and `*`; `Arithmetic.le` and `Arithmetic.lt`
   define `≤` and `<`.
-- `FOL.Q.isAxiom` checks the seven axioms of Robinson arithmetic.
-- `FOL.PA.isAxiom` extends `Q` with the full first-order induction schema `FOL.PA.induction`.
-- `FOL.Q.subtheory_PA` transfers `Q` derivations to `PA`, and `FOL.Q.consistent_of_PA` transfers
+- `Q.isAxiom` checks the seven axioms of Robinson arithmetic.
+- `PA.isAxiom` extends `Q` with the full first-order induction schema `PA.induction`.
+- `Q.subtheory_PA` transfers `Q` derivations to `PA`, and `Q.consistent_of_PA` transfers
   consistency from `PA` to `Q`.
 
 The shared Hilbert checker supplies classical first-order logic with equality. Induction permits
@@ -129,12 +129,6 @@ fol_theory PA over Arithmetic extends Q where
   axiom induction (p : formula of 1) :=
     p 0 → (∀ x, p x → p (S x)) → ∀ x, p x
 
-end
-
-@[expose] public section
-
-pra
-
 namespace Q
 
 open Arithmetic
@@ -152,8 +146,6 @@ theorem consistent_of_PA :
   FOL.Consistent.of_subtheory language Q.isAxiom PA.isAxiom subtheory_PA
 
 end Q
-
-end
 
 end
 

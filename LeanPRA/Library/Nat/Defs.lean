@@ -592,4 +592,23 @@ theorem iter_congr (f g : Nat → Nat) :
   · rfl
   · rw [iter_succ f, iter_succ g, ih, h]
 
+theorem add_self_lt : ∀ x y, x < y → x + x < y + y := by
+  intro x y h
+  exact lt_of_lt_of_le (x + x) (y + x) (y + y)
+    (add_lt_add_right x y x h) (add_le_add_left x y y (le_of_lt x y h))
+
+theorem add_self_inj : ∀ x y, x + x = y + y → x = y := by
+  intro x y he
+  apply le_antisymm x y
+  · apply le_of_not_lt x y
+    intro h
+    have hl := add_self_lt y x h
+    rw [he] at hl
+    exact not_lt_self (y + y) hl
+  · apply le_of_not_lt y x
+    intro h
+    have hl := add_self_lt x y h
+    rw [he] at hl
+    exact not_lt_self (y + y) hl
+
 end

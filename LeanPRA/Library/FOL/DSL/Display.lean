@@ -25,7 +25,8 @@ every goal, hypothesis, and message.
 The names of the assumptions are read from their name markers. An object variable is shown by
 the local PRA name that stands for its code. A bound variable receives a fresh name, since a
 formula code stores de Bruijn indices rather than binder names. A subformula or subterm given by
-an opaque PRA expression is shown as a splice `${…}`.
+an opaque PRA expression is shown as a splice `${…}`. Named formula codes stay visible even
+when their definitions have no substitution theorem. Rendering leaves the tactic goal unchanged.
 -/
 
 public meta section
@@ -187,9 +188,15 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     return ⟨spliceNode (if arguments.isEmpty then ``formulaSplice else ``formulaSpliceApplication)
       value (if arguments.isEmpty then none else some (arguments.map (·.raw)))⟩
 
+private def withDisplayNames {α : Type} (action : CommandElabM α) : CommandElabM α := do
+  let saved := (← getScope).opts
+  let preserve := !(fol.openDefinitions.get saved)
+  modifyScope fun scope => { scope with opts := fol.preserveDisplayNames.set scope.opts preserve }
+  try action finally modifyScope fun scope => { scope with opts := saved }
+
 /-- Format a provability statement of a declared theory as a sequent in FOL notation. -/
 @[pra_display FOL.Provable, pra_display FOL.Sequent]
-def displayProvable : PredicateDisplay := fun names predicate => do
+def displayProvable : PredicateDisplay := fun names predicate => withDisplayNames do
   let some (language, theory, conclusion, context) := provabilityParts? predicate | return none
   let some T := (theories.getState (← getEnv)).find? fun T =>
       theory == applyDefinition (T.name ++ `isAxiom) && language == languageTerm T.language |

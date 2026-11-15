@@ -10,6 +10,8 @@ public meta import LeanPRA.Library.FOL.DSL.Tactic.Context
 equality derivations from named rules and closes the resulting PRA provability goal. A rule of
 `prw` that names a definition opens that definition in the goal, or in the assumption named
 after `at`, and leaves the resulting goal.
+Each list entry records the goals before and after its step for the editor. Equality rules
+accumulate from left to right, and the closing bracket finishes the resulting equation.
 -/
 
 public meta section
@@ -68,7 +70,7 @@ private partial def rewriteTerm (rules : List Nat) (t : TermView) (fuel : Nat :=
     return ← eqTrans initial (← eqTrans step (← rewriteTerm rules v (fuel - 1)))
   return initial
 
-private def rewriteGoal (goal : FormulaView) (rules : List Nat) : DeriveM Nat := do
+private def rewriteSides (goal : FormulaView) (rules : List Nat) : DeriveM (Nat × Nat) := do
   let .equal a b := goal | throwError "prw currently closes equality goals"
   let universals ← rules.filterM fun p => do
     return match ← conclusion p with | .all _ _ => true | _ => false
@@ -82,7 +84,34 @@ private def rewriteGoal (goal : FormulaView) (rules : List Nat) : DeriveM Nat :=
   let rules := normalized ++ rules
   let p ← rewriteTerm rules a
   let q ← rewriteTerm rules b
-  eqTrans p (← eqSymm q)
+  return (p, q)
+
+private def rewriteEquations (equations : Array (TSyntax `praExpr)) : TacticM Unit := do
+  let g ← currentGoalAs fun a => match (assumptions a).2 with
+    | .equal _ _ => true
+    | _ => false
+  let (hypotheses, target) := assumptions g.formula
+  let isEquation (a : FormulaView) := match (unbind a).2 with
+    | .equal _ _ => true
+    | _ => false
+  let rules ← equations.toList.mapM fun r => do exposeStep g (← rule g r) isEquation
+  refineDerivation g do
+    let (p, q) ← rewriteSides target (← rules.mapM id)
+    let .equal _ a ← conclusion p | throwError "invalid rewrite result"
+    let .equal _ b ← conclusion q | throwError "invalid rewrite result"
+    let next := hypotheses.foldr (fun (_, h) body => .imp h body) (.equal a b)
+    return ([next], fun ps => do
+      let mut middle := ps[0]!
+      for (name, h) in hypotheses do
+        middle ← mp middle (← addNode h (.hypothesis name))
+      discharge hypotheses (← eqTrans p (← eqTrans middle (← eqSymm q))))
+
+private def closeEquation : TacticM Unit := do
+  let g ← currentGoal
+  let (hypotheses, target) := assumptions g.formula
+  let .equal a b := target | throwError "prw currently closes equality goals"
+  unless a == b do throwError "prw did not close the equation"
+  finish g do discharge hypotheses (← eqRefl a)
 
 /-- Elaborate the equality tactics through checked PRA proof data. -/
 @[pra_tactic preflTac, pra_tactic prwTac, pra_tactic ptransTac, pra_tactic psymmTac,
@@ -116,40 +145,38 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
     refineDerivation g do
       return ((xs.zip ys).map (fun (a, b) => .equal a b), fun ps => eqCongr i ps)
   | `(praTactic| prw $[[$rules:praExpr,*]]? $[at $location:ident]?) =>
-    -- A rule that names a definition opens it; the other rules are equations.
-    let rules : Array (TSyntax `praExpr) := rules.map (·.getElems) |>.getD #[]
-    let g ← currentGoal
-    let mut names := []
+    let some rules := rules | do
+      if let some h := location then
+        throwErrorAt h "prw at an assumption needs a definition to open"
+      closeEquation
+    let elems := rules.getElems
+    withTacticInfo (mkNullNode #[stx[0], stx[1][0]]) (pure ())
+    let mut opened := false
     let mut equations := #[]
-    for r in rules do
-      if let `(praExpr| $id:ident) := r then
-        let name := id.getId.eraseMacroScopes
-        unless g.context.entries.any (·.1 == name) ||
-            (← getGoal).names.used.contains name do
-          if let some d ← findDefinition name then
-            unless d.isFormula do
-              throwErrorAt id "the term definition `{name}` is always written out in a formula"
-            names := d.name :: names
-            continue
-      equations := equations.push r
-    unless names.isEmpty do openNamed names location
-    if let some h := location then
-      unless equations.isEmpty do
-        throwErrorAt h "prw changes an assumption only by opening definitions"
-      if names.isEmpty then throwErrorAt h "prw at an assumption needs a definition to open"
-      return
-    if !names.isEmpty && equations.isEmpty then return
-    let g ← currentGoalAs fun a => match (assumptions a).2 with
-      | .equal _ _ => true
-      | _ => false
-    let (hypotheses, target) := assumptions g.formula
-    let isEquation (a : FormulaView) := match (unbind a).2 with
-      | .equal _ _ => true
-      | _ => false
-    let rules ← equations.toList.mapM fun r => do exposeStep g (← rule g r) isEquation
-    finish g do
-      let rules ← rules.mapM id
-      discharge hypotheses (← rewriteGoal target rules)
+    for i in [:elems.size] do
+      let r := elems[i]!
+      let sep := rules.elemsAndSeps.getD (2 * i + 1) .missing
+      let isDefinition ← withTacticInfo (mkNullNode #[r.raw, sep]) <| withRef r do
+        let g ← currentGoal
+        if let `(praExpr| $id:ident) := r then
+          let name := id.getId.eraseMacroScopes
+          unless g.context.entries.any (·.1 == name) ||
+              (← getGoal).names.used.contains name do
+            if let some d ← findDefinition name then
+              unless d.isFormula do
+                throwErrorAt id "the term definition `{name}` is always written out in a formula"
+              openNamed [d.name] location
+              return true
+        if let some h := location then
+          throwErrorAt h "prw changes an assumption only by opening definitions"
+        rewriteEquations (equations.push r)
+        return false
+      if isDefinition then opened := true else equations := equations.push r
+    withTacticInfo stx[1][2] <| withRef stx[1][2] do
+      if let some h := location then
+        unless opened do throwErrorAt h "prw at an assumption needs a definition to open"
+      else if !opened || !equations.isEmpty then
+        closeEquation
   | _ => throwUnsupportedSyntax
 
 end LeanPRA.Library.FOL.DSL

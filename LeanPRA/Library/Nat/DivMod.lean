@@ -10,6 +10,8 @@ Euclidean division and remainder on `Nat`:
 - `div` (`/`) finds the quotient `x / d` as the first `q ≤ x` with `x < d * S q` when `¬ d = 0`,
   and returns `0` when `d = 0`.
 - `mod` (`%`) computes the remainder `x - d * (x / d)`, with `x % 0 = x`.
+- `mod_add_eq` and `mod_mul_eq` reduce sums and products to their remainders.
+- `factorial_mod`, `product_mod_one`, and `product_mod_zero` give remainders of finite products.
 
 For a nonzero divisor `d`, `d * (x / d) + x % d = x` and `x % d < d`, and these conditions uniquely
 determine both `x / d` and `x % d`.
@@ -267,5 +269,94 @@ theorem div_mod_succ_of_eq : ∀ x d, S (mod x d) = d →
     rw [add_zero, mul_succ]
     exact he
   · exact pos_of_ne_zero d hd
+
+/-! ## Remainder identities and finite products -/
+
+theorem mod_add_eq (a b d : Nat) : (a + b) % d = (a % d + b % d) % d := by
+  have h : (a % d + b % d) + d * (a / d + b / d) = a + b := by
+    rw [mul_add_left_distrib, add_add_add_comm,
+      add_comm (a % d) (d * (a / d)), add_comm (b % d) (d * (b / d)), div_mod, div_mod]
+  rw [← h, mod_add_mul]
+
+theorem mod_mul_left (a b d : Nat) : (a * b) % d = ((a % d) * b) % d := by
+  have h : (a % d) * b + d * ((a / d) * b) = a * b := by
+    rw [← mul_assoc, ← mul_add_right_distrib, add_comm, div_mod]
+  rw [← h, mod_add_mul]
+
+theorem mod_mul_eq (a b d : Nat) : (a * b) % d = ((a % d) * (b % d)) % d := by
+  rw [mod_mul_left a b d, mul_comm (a % d) b, mod_mul_left b (a % d) d,
+    mul_comm (b % d) (a % d)]
+
+theorem mod_eq_of_add_mul_eq (a b m u v : Nat) : a + m * u = b + m * v → a % m = b % m := by
+  intro h
+  have hm := eq_congr (fun x => x % m) h
+  rw [mod_add_mul, mod_add_mul] at hm
+  exact hm
+
+theorem inverse_of_negative (a u v k : Nat) :
+    a * u + 1 = S k * v → (a * (k * u)) % S k = 1 % S k := by
+  intro h
+  apply mod_eq_of_add_mul_eq (a * (k * u)) 1 (S k) v (a * u)
+  rw [← h, mul_left_comm a k u, ← add_assoc, ← succ_mul, add_comm]
+
+theorem adjusted_remainder (b d u m r : Nat) :
+    ¬ m = 0 → r < m → (d * u) % m = 1 % m → (b + d * (u * (r + m - b % m))) % m = r := by
+  intro hm hr hu
+  let z := r + m - b % m
+  have hz : b % m + z = r + m := by
+    have hb : b % m ≤ r + m :=
+      le_trans (b % m) m (r + m) (le_of_lt (b % m) m (mod_lt b m hm))
+        (le_add_left r m)
+    rw [add_comm]
+    exact sub_add_cancel_of_le (r + m) (b % m) hb
+  have hp : (d * (u * z)) % m = z % m := by
+    rw [← mul_assoc d u z, mod_mul_eq (d * u) z m, hu,
+      ← mod_mul_eq 1 z m, one_mul]
+  have hs := mod_add_eq (b % m) z m
+  rw [mod_mod] at hs
+  change (b + d * (u * z)) % m = r
+  rw [mod_add_eq b (d * (u * z)) m, hp, ← hs, hz]
+  have ht := mod_add_mul r m 1
+  rw [mul_one] at ht
+  rw [ht, mod_of_lt r m hr]
+
+theorem factorial_mod : ∀ j n, ¬ j = 0 → j ≤ n → factorial n % j = 0 := by
+  intro j n hj
+  induction n with n ih
+  · intro h
+    exact false_elim (hj (le_zero j h))
+  · intro h
+    rcases lt_or_eq_of_le j (S n) h with hl | he
+    · have hjn : j ≤ n := and_left (lt_succ j n) hl
+      rw [factorial_succ n, mod_mul_eq (factorial n) (S n) j, ih hjn, zero_mul, zero_mod]
+    · rw [he, factorial_succ n, mul_comm, mod_mul]
+
+theorem product_mod_one (f : Nat → Nat) (n m : Nat) :
+    (∀ i, i < n → f i % m = 1 % m) → product f n % m = 1 % m := by
+  intro h
+  have prefixes : ∀ k, k ≤ n → product f k % m = 1 % m := by
+    intro k
+    induction k with k ih
+    · intro hk
+      rfl
+    · intro hk
+      have hkn : k ≤ n := le_trans k (S k) n (le_succ_self k) hk
+      rw [product_succ f, mod_mul_eq (product f k) (f k) m, ih hkn, h k hk]
+      rw [← mod_mul_eq 1 1 m, one_mul]
+  exact prefixes n (le_refl n)
+
+theorem product_mod_zero (f : Nat → Nat) (n i m : Nat) :
+    i < n → f i % m = 0 → product f n % m = 0 := by
+  intro hi hf
+  have prefixes : ∀ k, i < k → product f k % m = 0 := by
+    intro k
+    induction k with k ih
+    · intro hk
+      exact false_elim (not_lt_zero i hk)
+    · intro hk
+      rcases lt_or_eq_of_le i k (and_left (lt_succ i k) hk) with hil | hie
+      · rw [product_succ f, mod_mul_eq (product f k) (f k) m, ih hil, zero_mul, zero_mod]
+      · rw [← hie, product_succ f, mod_mul_eq (product f i) (f i) m, hf, mul_zero, zero_mod]
+  exact prefixes n hi
 
 end

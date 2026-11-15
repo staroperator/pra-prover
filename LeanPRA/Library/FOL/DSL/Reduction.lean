@@ -43,6 +43,12 @@ register_option fol.openDefinitions : Bool := {
   descr := "open every FOL definition when a formula is calculated or read"
 }
 
+/-- Keep named formula codes intact while preparing the goal display. -/
+register_option fol.preserveDisplayNames : Bool := {
+  defValue := false
+  descr := "preserve named formula codes during goal display"
+}
+
 /-- Whether every FOL definition is opened in the current scope. -/
 def opensDefinitions : CommandElabM Bool := return fol.openDefinitions.get (← getOptions)
 
@@ -393,6 +399,10 @@ mutual
     return .impElim (← projectTheorem false `ltb_eq_one [a, b]) h
 
   private partial def calculateFresh (input : Term) : CalculationM Calculation := do
+    if fol.preserveDisplayNames.get (← getOptions) then
+      if let .definition name _ := input then
+        if (definitions.getState (← getEnv)).any (fun d => d.name == name && d.isFormula) then
+          return ⟨input, .forallElim .eqRefl input⟩
     let beta := Core.betaReduceTerm 2048 input
     if beta != input then return ← follow input beta (.forallElim .eqRefl input)
     match input with

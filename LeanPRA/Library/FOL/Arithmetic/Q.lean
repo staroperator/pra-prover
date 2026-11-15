@@ -9,19 +9,19 @@ public import LeanPRA.Library.FOL.Arithmetic.Numeral
 This module develops basic arithmetic, numeral computation, and bounded quantifier expansions as
 checked derivations in Robinson arithmetic (`Q`).
 
-- `FOL.Arithmetic.eqNumDisj`, `FOL.Arithmetic.finiteConj`, and `FOL.Arithmetic.finiteDisj` build
+- `Arithmetic.eqNumDisj`, `Arithmetic.finiteConj`, and `Arithmetic.finiteDisj` build
   finite disjunctions and conjunctions over the numerals below a natural number `n`.
-- `FOL.Arithmetic.boundedAll` and `FOL.Arithmetic.boundedAny` express universal and existential
+- `Arithmetic.boundedAll` and `Arithmetic.boundedAny` express universal and existential
   quantification bounded by `num n`.
-- `FOL.Q.succ_inj_iff`, `FOL.Q.add_eq_zero_iff`, and `FOL.Q.succ_le_succ_iff` establish basic
+- `Q.succ_inj_iff`, `Q.add_eq_zero_iff`, and `Q.succ_le_succ_iff` establish basic
   equality and order properties in `Q`.
-- `FOL.Q.add_num` and `FOL.Q.mul_num` compute sums and products of numerals in `Q` by induction on
-  their PRA parameters, and `FOL.Q.le_num`, `FOL.Q.lt_num`, `FOL.Q.not_le_num`, `FOL.Q.not_lt_num`,
-  and `FOL.Q.ne_num` reflect numerical comparisons into `Q` proofs.
-- `FOL.Q.lt_num_iff` and `FOL.Q.le_num_iff` characterize order below a numeral as a finite
-  disjunction of equations, and `FOL.Q.lt_or_ge_num` and `FOL.Q.ne_num_iff` split comparisons with
+- `Q.add_num` and `Q.mul_num` compute sums and products of numerals in `Q` by induction on
+  their PRA parameters, and `Q.le_num`, `Q.lt_num`, `Q.not_le_num`, `Q.not_lt_num`,
+  and `Q.num_ne` reflect numerical comparisons into `Q` proofs.
+- `Q.lt_num_iff` and `Q.le_num_iff` characterize order below a numeral as a finite
+  disjunction of equations, and `Q.lt_or_ge_num` and `Q.ne_num_iff` split comparisons with
   a numeral.
-- `FOL.Q.boundedAll_iff_finiteConj` and `FOL.Q.boundedAny_iff_finiteDisj` prove in `Q` that
+- `Q.boundedAll_iff_finiteConj` and `Q.boundedAny_iff_finiteDisj` prove in `Q` that
   numeral-bounded quantifiers are equivalent to finite conjunctions and disjunctions.
 -/
 
@@ -396,28 +396,50 @@ theorem not_lt_num (a b : Nat) : b ≤ a → (Q ⊢ ¬ ${num a} < ${num b}) := b
   rw [num_succ] at hp
   pexact hp
 
-theorem ne_num (a b : Nat) : ¬ a = b → (Q ⊢ ${num a} ≠ ${num b}) := by
-  intro h
-  by_cases hab : a ≤ b
-  · have hlt : a < b := by
-      rcases _root_.lt_or_eq_of_le a b hab with hl | he
-      · exact hl
-      · exact false_elim (h he)
-    have hn := Q.not_le_num b a hlt
-    pintro he
-    papply hn
-    pexists 0
-    ptrans ${num b}
-    · pexact (Q.zero_add_num b)
-    · psymm
-      passumption
-  · have hn := Q.not_le_num a b (_root_.lt_of_not_le b a hab)
-    pintro he
-    papply hn
-    pexists 0
-    ptrans ${num a}
-    · pexact (Q.zero_add_num a)
-    · passumption
+theorem num_ne_of_lt (a b : Nat) : a < b → (Q ⊢ ${num a} ≠ ${num b}) := by
+  intro hab
+  have hn := not_le_num b a hab
+  pintro he
+  papply hn
+  pexists 0
+  ptrans ${num b}
+  · pexact (zero_add_num b)
+  · psymm
+    passumption
+
+theorem num_ne_of_gt (a b : Nat) : b < a → (Q ⊢ ${num a} ≠ ${num b}) := by
+  intro hab
+  have hn := not_le_num a b hab
+  pintro he
+  papply hn
+  pexists 0
+  ptrans ${num a}
+  · pexact (zero_add_num a)
+  · passumption
+
+extract_witness num_ne_of_lt num_ne_of_gt
+
+/-- `numNeProof a b` constructs a Q proof that `num a ≠ num b` when `a` and `b` are distinct.
+The order test `ltb a b` selects the proof branch directly from `a` and `b`. -/
+def numNeProof (a b : Nat) : Nat :=
+  ite (ltb a b) (num_ne_of_lt.witness a b) (num_ne_of_gt.witness a b)
+
+theorem numNeProof_checked (a b : Nat) :
+    ¬ a = b → IsProofOf language isAxiom (Formula.neg (Formula.equal language (num a) (num b)))
+    (numNeProof a b) := by
+  intro hne
+  by_cases hab : a < b
+  · rw [numNeProof, and_right (ltb_eq_one a b) hab]
+    exact num_ne_of_lt.witness_correct a b hab
+  · have hba : b < a := by
+      rcases _root_.lt_or_eq_of_le b a (_root_.le_of_not_lt b a hab) with hlt | heq
+      · exact hlt
+      · exact false_elim (hne (eq_symm heq))
+    rw [numNeProof, and_right (ltb_eq_zero a b) hab]
+    exact num_ne_of_gt.witness_correct a b hba
+
+theorem num_ne (a b : Nat) : ¬ a = b → (Q ⊢ ${num a} ≠ ${num b}) :=
+  fun h => (numNeProof a b, numNeProof_checked a b h)
 
 fol_theorem eqNumDisj_succ_zero (n : Nat) : Q ⊢ ${eqNumDisj (S n) (num 0)} := by
   sigma_induction n with

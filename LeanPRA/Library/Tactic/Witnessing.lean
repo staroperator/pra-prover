@@ -29,6 +29,8 @@ compiled for an arbitrary `w` satisfying that statement's body, and the resultin
 to the intermediate witness term. That term is substituted for `w` in the continuation's witness
 term, keeping the entire result in `thm.witness` and `thm.witness_correct`. Both declarations pass
 through the PRA checker before publication.
+When the intermediate witness's property is itself existential, compilation uses its extracted
+proof to expose the next witness before continuing.
 
 When a compiled proof references another theorem whose conclusion is existential and whose
 premises are quantifier-free or existential with quantifier-free bodies, the referenced theorem is
@@ -399,6 +401,9 @@ private partial def extract (context : Core.Context) (target : Core.Predicate)
     return shareWitness n value motive target body
   | .impElim (.impElim (.existsElim motive _) value) branch =>
     let value ← extract context motive value
+    if let .ex _ ← formulaHead value.property then
+      return ← extract context target
+        (.impElim (.forallElim branch value.witness) value.proof)
     let premise := Core.Predicate.app motive.shift (.bvar 0)
     let body ← extract ((context.pushLocal 0).pushProof premise) target.shift
       (openExistentialBranch branch)

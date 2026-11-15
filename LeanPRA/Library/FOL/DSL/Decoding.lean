@@ -50,7 +50,17 @@ partial def freePositions (closed : Array DefinitionInfo) (t : Term) (depth : Na
   | .definition `FOL.Term.var _, [_, i] => ((numeralValue? i).getD 0 + 1) - depth
   | .definition `FOL.Formula.all _, [a] => freePositions closed a (depth + 1)
   | .definition `FOL.Formula.subst [f], [_, a] =>
-    max (freePositions closed f depth) (freePositions closed a depth)
+    -- Count the substituted positions used by the body, excluding replaced free variables.
+    let rec substituted : Nat → Term → Nat
+      | 0, _ => 0
+      | count + 1, substitution =>
+        match getAppFnArgs substitution with
+        | (.definition `FOL.consSubst [value, rest], []) =>
+          max (freePositions closed value depth) (substituted count rest)
+        | (.definition `FOL.shiftSubst [_, offset], []) =>
+          ((numeralValue? offset).getD 0 + count + 1) - depth
+        | _ => max (freePositions closed substitution depth) (count + 1 - depth)
+    substituted (freePositions closed a) f
   | .definition `FOL.consSubst [t, rest], [] =>
     max (freePositions closed t depth) (freePositions closed rest depth)
   | .definition name values, [] =>
@@ -59,14 +69,16 @@ partial def freePositions (closed : Array DefinitionInfo) (t : Term) (depth : Na
       values.zipIdx.foldl (fun n (value, i) =>
         if let some p := d.syntaxAt? i then
           max n (freePositions closed value (depth + p.arity))
-        else n) 0
+        else n) (d.resultArity - depth)
     | none => 0
   | _, _ => args.foldl (fun n a => max n (freePositions closed a depth)) 0
 
 /-- The definitions that stay closed when formulas are read in the current scope. -/
 def closedDefinitions : CommandElabM (Array DefinitionInfo) := do
   if ← opensDefinitions then return #[]
-  return (definitions.getState (← getEnv)).filter fun d => d.isFormula && d.substitution.isSome
+  let preserve := fol.preserveDisplayNames.get (← getOptions)
+  return (definitions.getState (← getEnv)).filter fun d =>
+    d.isFormula && (d.substitution.isSome || preserve)
 
 partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
     (fuel : Nat := 64) : CommandElabM TermView := do
@@ -126,6 +138,10 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
       values.set position (applyDefinition `FOL.Term.var [languageTerm L, numeral i])) values
     let arguments ← terms.mapM (readTerm L bound free ·)
     return .code (languageTerm L) (.definition d.name variables) arguments
+  if fol.preserveDisplayNames.get (← getOptions) then
+    if let .definition name _ := value then
+      if (definitions.getState (← getEnv)).any (fun d => d.name == name && d.isFormula) then
+        return .code (languageTerm L) value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
   if reduced.value != value then return ← readFormula L bound free reduced.value (fuel - 1)
   if let .definition `FOL.Formula.subst [f] := head then

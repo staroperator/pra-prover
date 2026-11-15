@@ -13,6 +13,9 @@ indices `0` through `n - 1`, and a numerical test `f : Nat → Nat` counts as tr
 - `anyBelow f n` returns `1` when `¬ f i = 0` for some `i < n`, and `0` otherwise.
 - `findBelow f n` returns the least `i < n` with `¬ f i = 0`, or `n` when `f i = 0` for all `i < n`.
 - `agreeBelow f g n` states as a quantifier-free formula that `f i = g i` for all `i < n`.
+- `factorial n` is the product of the numbers from one through `n`.
+- `product f n` multiplies the first `n` values of `f`.
+- `maximum f n` bounds the first `n` values of `f`.
 - `strong_induction_eq` proves numerical equations from their instances at smaller indices.
 
 Ordinary quantifier-free induction on `allBelow` yields strong induction, and inducting on `n - k`
@@ -428,5 +431,61 @@ theorem induction_down (P : Nat → QFProp) : ∀ n,
   have h := backward n (le_refl n)
   have he := sub_self n
   exact eq_subst P he h
+
+/-! ## Finite products and maxima -/
+
+/-- `factorial n` is the product of the numbers from one through `n`; its value at zero is one. -/
+def factorial : Nat → Nat := primrec 1 (fun i n => n * S i)
+
+theorem factorial_zero : factorial 0 = 1 := rfl
+
+theorem factorial_succ (n : Nat) : factorial (S n) = factorial n * S n := rfl
+
+theorem factorial_ne_zero : ∀ n, ¬ factorial n = 0 := by
+  intro n
+  induction n with n ih
+  · exact succ_ne_zero 0
+  · intro hz
+    have hle : factorial n ≤ S n * factorial n :=
+      le_mul_of_pos (factorial n) (S n) (succ_ne_zero n)
+    rw [mul_comm, ← factorial_succ n, hz] at hle
+    exact ih (le_zero (factorial n) hle)
+
+/-- `product f n` multiplies `f i` for `i < n`, starting with one. -/
+def product (f : Nat → Nat) : Nat → Nat := primrec 1 (fun i p => p * f i)
+
+theorem product_zero (f : Nat → Nat) : product f 0 = 1 := rfl
+
+theorem product_succ (f : Nat → Nat) : ∀ n, product f (S n) = product f n * f n :=
+  fun n => rfl
+
+theorem product_mul (f g : Nat → Nat) :
+    ∀ n, product (fun i => f i * g i) n = product f n * product g n := by
+  intro n
+  induction n with n ih
+  · rfl
+  · rw [product_succ (fun i => f i * g i), product_succ f, product_succ g, ih,
+      mul_mul_mul_comm]
+
+/-- `maximum f n` is the largest of the first `n` values of `f`, with zero for the empty prefix. -/
+def maximum (f : Nat → Nat) : Nat → Nat := primrec 0 (fun i m => max m (f i))
+
+theorem maximum_succ (f : Nat → Nat) : ∀ n,
+    maximum f (S n) = max (maximum f n) (f n) := fun n => rfl
+
+theorem le_maximum (f : Nat → Nat) (i n : Nat) : i < n → f i ≤ maximum f n := by
+  intro hi
+  have prefixes : ∀ k, i < k → f i ≤ maximum f k := by
+    intro k
+    induction k with k ih
+    · intro hk
+      exact false_elim (not_lt_zero i hk)
+    · intro hk
+      rcases lt_or_eq_of_le i k (and_left (lt_succ i k) hk) with hil | hie
+      · exact le_trans (f i) (maximum f k) (max (maximum f k) (f k))
+          (ih hil) (le_max_left (maximum f k) (f k))
+      · rw [hie]
+        exact le_max_right (maximum f k) (f k)
+  exact prefixes n hi
 
 end
