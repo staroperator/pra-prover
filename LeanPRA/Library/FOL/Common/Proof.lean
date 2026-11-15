@@ -528,24 +528,27 @@ namespace Formula
 /-- Instantiating position `0` by `t` in a formula at binder depth `d` either gives a code at
 least `t`, or gives the same code as instantiating by `0`. -/
 theorem instantiate_dichotomy : ∀ L t A d,
-    (t ≤ subst (Term.instantiateAt L 0 t) L A d ∨
-      subst (Term.instantiateAt L 0 t) L A d = subst (Term.instantiateAt L 0 0) L A d) := by
+    (t ≤ substWithDepth (Term.instantiateAt L 0 t) L A d ∨
+      substWithDepth (Term.instantiateAt L 0 t) L A d =
+        substWithDepth (Term.instantiateAt L 0 0) L A d) := by
   intro L t
   apply inductionWithDepth_of_bool
-    (fun A d => t ≤ subst (Term.instantiateAt L 0 t) L A d ∨
-      subst (Term.instantiateAt L 0 t) L A d = subst (Term.instantiateAt L 0 0) L A d)
-    (fun A d => bor (leb t (subst (Term.instantiateAt L 0 t) L A d))
-      (eqb (subst (Term.instantiateAt L 0 t) L A d)
-        (subst (Term.instantiateAt L 0 0) L A d))) L
+    (fun A d => t ≤ substWithDepth (Term.instantiateAt L 0 t) L A d ∨
+      substWithDepth (Term.instantiateAt L 0 t) L A d =
+        substWithDepth (Term.instantiateAt L 0 0) L A d)
+    (fun A d => bor (leb t (substWithDepth (Term.instantiateAt L 0 t) L A d))
+      (eqb (substWithDepth (Term.instantiateAt L 0 t) L A d)
+        (substWithDepth (Term.instantiateAt L 0 0) L A d))) L
   · intro A d
-    exact le_or_eq_bool t (subst (Term.instantiateAt L 0 t) L A d)
-      (subst (Term.instantiateAt L 0 0) L A d)
+    exact le_or_eq_bool t (substWithDepth (Term.instantiateAt L 0 t) L A d)
+      (substWithDepth (Term.instantiateAt L 0 0) L A d)
   · intro d
     right
-    rw [subst_falsum (Term.instantiateAt L 0 t) L d, subst_falsum (Term.instantiateAt L 0 0) L d]
+    rw [substWithDepth_falsum (Term.instantiateAt L 0 t) L d,
+      substWithDepth_falsum (Term.instantiateAt L 0 0) L d]
   · intro a b d
-    rw [subst_equal (Term.instantiateAt L 0 t) L a b d,
-      subst_equal (Term.instantiateAt L 0 0) L a b d]
+    rw [substWithDepth_equal (Term.instantiateAt L 0 t) L a b d,
+      substWithDepth_equal (Term.instantiateAt L 0 0) L a b d]
     rcases Term.instantiateAt_dichotomy L t d a with ha | ha
     · left
       exact le_trans t _ _ ha (le_equal_left L _ _)
@@ -555,8 +558,8 @@ theorem instantiate_dichotomy : ∀ L t A d,
       · right
         rw [ha, hb]
   · intro j xs d hj
-    rw [subst_rel (Term.instantiateAt L 0 t) L j xs d hj,
-      subst_rel (Term.instantiateAt L 0 0) L j xs d hj]
+    rw [substWithDepth_rel (Term.instantiateAt L 0 t) L j xs d hj,
+      substWithDepth_rel (Term.instantiateAt L 0 0) L j xs d hj]
     rcases Tuple.map_dichotomy (Term.subst (Term.instantiateAt L 0 t d) L)
         (Term.subst (Term.instantiateAt L 0 0 d) L) t
         (Language.relationArity L j) xs
@@ -567,8 +570,8 @@ theorem instantiate_dichotomy : ∀ L t A d,
     · right
       rw [hm]
   · intro A B d hA hB
-    rw [subst_imp (Term.instantiateAt L 0 t) L A B d,
-      subst_imp (Term.instantiateAt L 0 0) L A B d]
+    rw [substWithDepth_imp (Term.instantiateAt L 0 t) L A B d,
+      substWithDepth_imp (Term.instantiateAt L 0 0) L A B d]
     rcases hA d (le_refl d) with ha | ha
     · left
       exact le_trans t _ _ ha (le_of_lt _ _ (left_lt_imp _ _))
@@ -578,7 +581,8 @@ theorem instantiate_dichotomy : ∀ L t A d,
       · right
         rw [ha, hb]
   · intro A d ih
-    rw [subst_all (Term.instantiateAt L 0 t) L A d, subst_all (Term.instantiateAt L 0 0) L A d]
+    rw [substWithDepth_all (Term.instantiateAt L 0 t) L A d,
+      substWithDepth_all (Term.instantiateAt L 0 0) L A d]
     rcases ih (S d) (le_refl (S d)) with ha | ha
     · left
       exact le_trans t _ _ ha (le_of_lt _ _ (body_lt_all _))

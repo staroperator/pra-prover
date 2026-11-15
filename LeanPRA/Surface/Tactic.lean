@@ -10,9 +10,10 @@ Tactics are Lean programs that fill contextual PRA proof metavariables.
 - `Goal` describes a goal in its saved local context.
 - `Context` connects tactics to the PRA elaborator, including transactional state restoration.
 - `TacticM` carries an ordered list of goals; `refine` replaces the first goal with explicit holes.
-- `applyProof`, `assert`, `assertPremise`, `change`, `define`, and `prove` act on goals with
-  proof data that a tactic has built. They are written with four basic operations of `Context`:
-  read a goal's target, check a proof, open a goal, and assign a goal.
+- `applyProof`, `assert`, `replaceHypothesis`, `assertPremise`, `change`, `define`, `redefine`,
+  `rename`, `clearHypothesis`, and `prove` act on goals using proof data built by a tactic.
+  They use four basic operations of `Context`: read a goal's target, check a proof, open a goal,
+  and assign a goal.
 - `withTacticInfo` records goals before and after a tactic step at its source range.
 - `evalTactic` dispatches syntax to programs registered with `@[pra_tactic syntaxKind]`.
 
@@ -69,12 +70,19 @@ structure Goal where
   projection : Metavariable.Projection
   maxDepth : Nat
 
-/-- An addition to the context of a new goal: a local numerical definition or a hypothesis.
+/-- A change to the bindings of a new goal.
 `ref` is the identifier in the source that introduces the name, when there is one; editor
-information is attached to it. -/
+information is attached to it. A `redefinition` gives a defined name a new value, and the goal
+display lists the name once. A `replacement` changes a hypothesis at its existing index.
+A `removal` drops a hypothesis and shifts the following proof indices. A `renaming` changes
+local names while preserving their values and context indices. -/
 inductive Binding where
   | definition (name : Name) (value : Metavariable.Term) (ref : Syntax := .missing)
   | hypothesis (name : Name) (type : Metavariable.Predicate) (ref : Syntax := .missing)
+  | redefinition (name : Name) (value : Metavariable.Term)
+  | renaming (oldName newName : Name)
+  | replacement (index : Nat) (type : Metavariable.Predicate) (ref : Syntax := .missing)
+  | removal (index : Nat)
 
 /-- Operations supplied by the elaborator.
 
@@ -83,8 +91,8 @@ inductive Binding where
 - `target` returns the statement of a goal.
 - `check` checks an explicit proof, without open proof metavariables, against a statement in a
   goal's context, and returns the proof with its inferred arguments filled in.
-- `openGoal` creates a goal for a statement in the context of the given goal, extended by the
-  bindings in order. It returns the new goal and the proof metavariable that stands for it.
+- `openGoal` creates a goal for a statement in the context of the given goal, applying the
+  bindings in order. It returns the new goal and its proof metavariable in the resulting context.
 - `assign` fills a goal with a proof, which may contain goals created by `openGoal`.
 - `prove` opens a goal for a statement in the given goal's context, passes it to the supplied
   action, reports the goals that the action returns as unsolved, and returns the finished proof.
@@ -174,6 +182,23 @@ def define (name : Name) (value : Metavariable.Term) (ref : Syntax := .missing) 
   context.assign goal (.letTerm name value hole)
   modify fun rest => new :: rest.drop 1
 
+/-- Give the local numerical definition `name` the new value `value` in the first goal. The goal
+display lists `name` once, with the new value. -/
+def redefine (name : Name) (value : Metavariable.Term) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.redefinition name value]
+  context.assign goal (.letTerm name value hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Give existing local bindings a fresh name, preserving their values and context indices. -/
+def rename (oldName newName : Name) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.renaming oldName newName]
+  context.assign goal hole
+  modify fun rest => new :: rest.drop 1
+
 /-- Continue the first goal under the hypothesis `name : type`, which `proof` proves. `proof` must
 be an explicit proof without open proof metavariables; it is checked against `type`. `ref` is the
 identifier in the source that introduces `name`, when there is one. -/
@@ -184,6 +209,32 @@ def assert (name : Name) (type : Metavariable.Predicate) (proof : Metavariable.P
   let proof ← context.check goal proof type
   let (new, hole) ← context.openGoal goal (← context.target goal) [.hypothesis name type ref]
   context.assign goal (.letE name type proof hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Replace the hypothesis at `index` by `type`, preserving its name and position. `proof` is
+checked against `type` in the original context and must have no open proof metavariables.
+The continuation can use the replacement and the other hypotheses. -/
+def replaceHypothesis (index : Nat) (type : Metavariable.Predicate) (proof : Metavariable.Proof)
+    (ref : Syntax := .missing) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let some name := (← getGoal).names.proofs[index]?
+    | throwError "unknown PRA hypothesis"
+  let proof ← context.check goal proof type
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.replacement index type ref]
+  -- The new let binds the replacement at zero; the other hypotheses refer to the outer context.
+  let hole := hole.subst .bvar (fun i => .hyp (if i == index then 0 else i + 1))
+  context.assign goal (.letE name type proof hole)
+  modify fun rest => new :: rest.drop 1
+
+/-- Remove the hypothesis at `index` from the first goal's context. The continuation proof is
+weakened back into the original context when it fills the goal. -/
+def clearHypothesis (index : Nat) : TacticM Unit := do
+  let context ← read
+  let goal ← mainGoal
+  let (new, hole) ← context.openGoal goal (← context.target goal) [.removal index]
+  let hole := hole.subst .bvar (fun i => .hyp (if i < index then i else i + 1))
+  context.assign goal hole
   modify fun rest => new :: rest.drop 1
 
 /-- Replace the target `T` of the first goal by `type → T`, using `proof` of `type`. `proof` must

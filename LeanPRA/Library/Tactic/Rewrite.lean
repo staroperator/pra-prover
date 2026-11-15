@@ -11,8 +11,8 @@ Equality-rule matching contracts lambda applications and ignores binder names. D
 recursor equations, and eta expansion keep their explicit form during matching. Each rule replaces
 all occurrences of that instance, including occurrences beneath binders.
 An instance must be expressible in the current goal context; introduce a bound variable before
-using a rule whose instance depends on it. `rw [h] at hp` adds a rewritten version of `hp`
-under the same name.
+using a rule whose instance depends on it. `rw [h] at hp` replaces `hp` with its rewritten
+version, preserving its name and position in the context.
 
 A definition name in `rw [f]` unfolds the first matching application and its other occurrences.
 Function and predicate parameters come from that application. Lambda applications and exposed head
@@ -187,7 +187,8 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
           [result]
       | some h =>
         let (hypothesis, _) ← Tactic.elaborateProof (← `(praExpr| $h:ident))
-        Tactic.assert h.getId.eraseMacroScopes result
+        let .hyp index := hypothesis | throwErrorAt h "expected a local proof hypothesis"
+        Tactic.replaceHypothesis index result
           (.impElim (transport source destination equality) hypothesis) h
       return
     catch ex =>
@@ -308,7 +309,8 @@ private def unfoldDefinition (decl : Core.Declaration) (location : Option (TSynt
   | none => Tactic.change unfolded
   | some h =>
     let (proof, _) ← Tactic.elaborateProof (← `(praExpr| $h:ident))
-    Tactic.assert h.getId.eraseMacroScopes unfolded proof h
+    let .hyp index := proof | throwErrorAt h "expected a local proof hypothesis"
+    Tactic.replaceHypothesis index unfolded proof h
 
 private def rewriteRule (rule : TSyntax `praExpr) (reverse : Bool)
     (location : Option (TSyntax `ident)) : TacticM Unit := do

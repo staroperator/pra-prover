@@ -56,6 +56,26 @@ def applyTheorem (name : Name) (args : List Term := []) (parameters : List Term 
     (premises : List Proof := []) : Proof :=
   premises.foldl .impElim (args.foldl .forallElim (.theoremE name parameters []))
 
+/-- Project one side of a conjunction theorem after instantiating its numerical arguments.
+The theorem statement supplies the two formula arguments of the primitive projection. -/
+def projectTheorem (right : Bool) (name : Name) (args : List Term := [])
+    (parameters : List Term := []) : CommandElabM Proof := do
+  let env := Surface.CoreEnvironment.getState (← getEnv)
+  let some (.theoremE declaration) := env.lookup name | throwError "unknown theorem {name}"
+  let checked {α} (result : CheckResult α) : CommandElabM α :=
+    match result with
+    | .ok value => pure value
+    | .error error => throwError "{error.message}"
+  let mut type := declaration.type.instantiate parameters []
+  for arg in args do
+    let .all motive ← checked (whnfPredicate 2048 env type)
+      | throwError "expected universal theorem {name}"
+    type := .app motive arg
+  let .and left rightType ← checked (whnfPredicate 2048 env type)
+    | throwError "expected conjunction theorem {name}"
+  let head := if right then Proof.andRight left rightType else Proof.andLeft left rightType
+  return .impElim head (applyTheorem name args parameters)
+
 /-- Apply `eq_symm` to a proof of `a = b`. -/
 def mkEqSymm (a b : Term) (proof : Proof) : Proof :=
   applyTheorem `eq_symm [a, b] [] [proof]

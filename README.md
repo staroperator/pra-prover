@@ -57,7 +57,8 @@ def iter (f : Nat → Nat) : Nat → Nat → Nat :=
 end
 ```
 
-This language further supports tactics as programs written in Lean.
+This language further supports tactics as programs written in Lean. The library provides a large set
+of tactics to use; see [`LeanPRA/Library/Tactic/README.md`](LeanPRA/Library/Tactic/README.md).
 
 ```lean4
 pra
@@ -69,12 +70,48 @@ theorem add_left_comm : ∀ x y z, x + (y + z) = y + (x + z) := by
 end
 ```
 
+Metaprogramming allows us to create DSL for defining and proving in first-order logic. For example,
+you can define a first-order theory of arithmetic, writing a proof in first-order logic, and they
+are translated into natural number operations and proofs in PRA. See
+[`LeanPRA/Library/FOL/DSL/README.md`](LeanPRA/Library/FOL/DSL/README.md) for more details.
+
+```lean4
+pra
+
+fol_language Arith where
+  constant zero
+  function succ of 1
+  function add of 2
+
+fol_theory Base over Arith where
+  axiom add_zero := ∀ x, add(x, zero) = x
+  axiom add_succ := ∀ x y, add(x, succ(y)) = succ(add(x, y))
+
+fol_theory AddTheory over Arith extends Base where
+  axiom induction (p : formula of 1) :=
+    p(zero) → (∀ x, p(x) → p(succ(x))) → ∀ x, p(x)
+
+fol_def double over Arith (x : term) : term := add(x, x)
+
+fol_theorem and_symm (p q : formula) : AddTheory ⊢ p ∧ q → q ∧ p := by
+  pintro hpq
+  pcases hpq with ⟨hp, hq⟩
+  pconstructor
+  · passumption
+  · passumption
+
+end
+```
+
 ## Structure
 
 - [`LeanPRA/Core`](LeanPRA/Core/) contains the syntax and executable checker for the core language.
 - [`LeanPRA/Surface`](LeanPRA/Surface/) contains the surface language, including parsing,
   elaboration, printing, and editor support.
 - [`LeanPRA/Library`](LeanPRA/Library/) is the library for the PRA language.
+  - [`Nat`](LeanPRA/Library/Nat/) gives basic operations and theorems in PRA.
+  - [`Tactic`](LeanPRA/Library/Tactic/) provides tactics in PRA.
+  - [`FOL`](LeanPRA/Library/FOL/) formalizes first-order logic in PRA.
 - [`LeanPRA/Metatheory`](LeanPRA/Metatheory/) contains the metatheory of the PRA language and
   first-order PRA; see [`LeanPRA/Metatheory/README.md`](LeanPRA/Metatheory/README.md) for the
   summary of results.

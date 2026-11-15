@@ -33,12 +33,15 @@ through the PRA checker before publication.
 When a compiled proof references another theorem whose conclusion is existential and whose
 premises are quantifier-free or existential with quantifier-free bodies, the referenced theorem is
 compiled once and reused. At each call site, the witnesses for any existential premises are first
-extracted from the premise proofs. A theorem from the current module is compiled under its own
-name; an imported theorem is compiled under `<current module>.Witnesses.<theorem>` so that separate
-modules publish distinct names. If the referenced theorem's extracted witness is a single variable
-or function call and its proof has at most `directLimit` steps, the compiler unfolds the theorem at
-each use instead of publishing a separate witness declaration. Theorems with other premise shapes
-are also unfolded at each use.
+extracted from the premise proofs. Every named theorem uses `thm.witness` and
+`thm.witness_correct`. Automatic extraction publishes these declarations in the module that
+defines the theorem. An imported theorem uses its existing witness or is unfolded when none has
+been published. Use `extract_witness` at the end of the defining module to share a witness with
+importing modules.
+
+If the referenced theorem's extracted witness is a single variable or function call and its proof
+has at most `directLimit` steps, automatic extraction unfolds the theorem at each use. Theorems
+with other premise shapes are also unfolded at each use.
 -/
 
 public meta section
@@ -336,11 +339,10 @@ private partial def proofHead (p : Core.Proof) : CommandElabM Core.Proof := do
     | some (some root) => return ← compiled root
     | some none => return ← proofHead (instantiate fs ps d.body)
     | none => pure ()
-    if ← hasExistentialResult { functions := d.functions, predicates := d.predicates } d.type then
-      let env ← getEnv
-      let root := if LeanPRA.Surface.CoreEnvironment.isLocal env n then n
-        else env.mainModule ++ `Witnesses ++ n
-      if ← compileWitnessCore d root false (← getRef) then return ← compiled root
+    if LeanPRA.Surface.CoreEnvironment.isLocal (← getEnv) n &&
+        (← hasExistentialResult { functions := d.functions, predicates := d.predicates }
+          d.type) then
+      if ← compileWitnessCore d n false (← getRef) then return ← compiled n
     proofHead (instantiate fs ps d.body)
   | .ascribe _ q | .letTerm _ _ q | .letPredicate _ _ q => proofHead q
   | .impElim (.andLeft _ _) q =>
@@ -493,8 +495,9 @@ def compileProof (root : Name) (context : Core.Context) (type : Core.Predicate)
 specification theorem `source.witness_correct`. Universal numerical binders and the witnesses of
 existential premises become function arguments, while other premises stay in the specification. If
 `source` has already been compiled under its own name, `compileWitness` leaves the environment
-unchanged. Call `compileWitness` in at most one module among modules that are imported together so
-that `source.witness` is published only once. -/
+unchanged. Publish shared witnesses in the theorem's defining module so that importing modules
+reuse the same declaration pair. An explicit call for an imported theorem also uses its original
+name; such a witness must be published in only one module among modules imported together. -/
 def compileWitness (source : Name) (stx : Syntax) : CommandElabM Unit := do
   let some (.theoremE d) ← LeanPRA.Surface.resolveDeclaration? (← environment) source |
     throwError "expected a PRA theorem"

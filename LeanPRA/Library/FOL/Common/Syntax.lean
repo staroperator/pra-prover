@@ -51,7 +51,7 @@ Formulas have no fixed scope. The main operations and proof principles are:
 - `Formula.recWithDepth` makes the binder depth available to every formula handler.
   Its paired recursion rank decreases when entering a quantified body, even though depth increases.
 - `Formula.rec` processes the same cases with handlers that ignore binder depth.
-- `Term.subst` and `Formula.subst` replace variables, tracking depth beneath quantifiers.
+- `Term.subst` and `Formula.substWithDepth` replace variables, tracking depth beneath quantifiers.
 - `Formula.instantiateAt` and `Formula.instantiate` substitute a term into a surrounding
   variable position or quantifier body, lifting it beneath inner binders and lowering later indices.
 - `Term.bound` and `Formula.bound` give the number of surrounding variable positions
@@ -1038,34 +1038,35 @@ end Term
 namespace Formula
 
 /--
-`Formula.subst f L A d` replaces variables in formula code `A` in language code `L`, starting
-at binder depth `d`. `f k i` supplies a term code for variable index `i` at the current depth
-`k`. Each quantifier increases `k` by one; `f` determines how bound variables are treated.
+`Formula.substWithDepth f L A d` replaces variables in formula code `A` in language code `L`,
+starting at binder depth `d`. `f k i` supplies a term code for variable index `i` at the
+current depth `k`. Each quantifier increases `k` by one. The replacement function `f`
+determines how bound variables are treated.
 -/
-def subst (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat := fun L =>
+def substWithDepth (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat := fun L =>
   recWithDepth (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
       (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L
 
-theorem subst_falsum (f : Nat → Nat → Nat) : ∀ L d, subst f L falsum d = falsum :=
+theorem substWithDepth_falsum (f : Nat → Nat → Nat) : ∀ L d, substWithDepth f L falsum d = falsum :=
   fun L d => recWithDepth_falsum (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
       (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L d
 
-theorem subst_equal (f : Nat → Nat → Nat) : ∀ L t s d,
-    subst f L (equal L t s) d = equal L (Term.subst (f d) L t) (Term.subst (f d) L s) :=
+theorem substWithDepth_equal (f : Nat → Nat → Nat) : ∀ L t s d,
+    substWithDepth f L (equal L t s) d = equal L (Term.subst (f d) L t) (Term.subst (f d) L s) :=
   fun L t s d => recWithDepth_equal (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
       (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L t s d
 
-theorem subst_rel (f : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
-    subst f L (rel L j xs) d =
+theorem substWithDepth_rel (f : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
+    substWithDepth f L (rel L j xs) d =
       rel L j (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs) :=
   fun L j xs d hj => recWithDepth_rel (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
@@ -1073,15 +1074,16 @@ theorem subst_rel (f : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relatio
       (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L j xs d hj
 
-theorem subst_imp (f : Nat → Nat → Nat) : ∀ L A B d,
-    subst f L (imp A B) d = imp (subst f L A d) (subst f L B d) :=
+theorem substWithDepth_imp (f : Nat → Nat → Nat) : ∀ L A B d,
+    substWithDepth f L (imp A B) d = imp (substWithDepth f L A d) (substWithDepth f L B d) :=
   fun L A B d => recWithDepth_imp (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
       (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L A B d
 
-theorem subst_all (f : Nat → Nat → Nat) : ∀ L A d, subst f L (all A) d = all (subst f L A (S d)) :=
+theorem substWithDepth_all (f : Nat → Nat → Nat) : ∀ L A d,
+    substWithDepth f L (all A) d = all (substWithDepth f L A (S d)) :=
   fun L A d => recWithDepth_all (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
@@ -1095,7 +1097,7 @@ surrounding positions are preserved; `t` is shifted beneath binders, and later p
 move down by one.
 -/
 def instantiateAt : Nat → Nat → Nat → Nat → Nat :=
-  fun L k A t => subst (Term.instantiateAt L k t) L A 0
+  fun L k A t => substWithDepth (Term.instantiateAt L k t) L A 0
 
 /--
 `Formula.instantiate L A t` instantiates the body formula code `A` with term code `t` in language
@@ -1110,7 +1112,7 @@ position in formula code `A` by one, in language code `L`. Indices referring to 
 inside `A` are preserved.
 -/
 def shift : Nat → Nat → Nat := fun L A =>
-  subst (fun d n => Term.var L (ite (ltb n d) n (S n))) L A 0
+  substWithDepth (fun d n => Term.var L (ite (ltb n d) n (S n))) L A 0
 
 /--
 `Formula.successorInstance L successor A` replaces surrounding position `0` in formula code `A`
@@ -1118,7 +1120,8 @@ by its successor, preserving other positions. `L` is a language code, and `succe
 is a function symbol index below `Language.functionCount L` with arity `1`.
 -/
 def successorInstance : Nat → Nat → Nat → Nat := fun L successor A =>
-  subst (fun d n => ite (eqb n d) (Term.app L successor (Term.var L n)) (Term.var L n)) L A 0
+  substWithDepth
+    (fun d n => ite (eqb n d) (Term.app L successor (Term.var L n)) (Term.var L n)) L A 0
 
 /--
 `Formula.bound L A` gives the number of surrounding variable positions needed by formula

@@ -13,7 +13,8 @@ proves the resulting quantifier-free invariant with PRA induction.
 
 The tactic uses the current goal and local context. It supports declaration parameters and
 introduced numerical variables, including in local and nested proofs. The step hypothesis `ih`
-has the original existential form. Branches must use proof forms supported by the witness compiler.
+has the original existential form. The witness compiler opens that hypothesis after the branch
+proof is complete. Branches must use proof forms supported by the witness compiler.
 `sigma_induction n with k ih` also accepts two bulleted branches. Generated declarations and the
 completed proof pass through the existing PRA checker.
 -/
@@ -114,47 +115,31 @@ def evalSigmaInduction : Tactic := fun stx => do
   unless signature == ⟨1, .qf⟩ do
     throwError "sigma_induction requires an existential goal with a quantifier-free body"
   let root := (← getEnv).mainModule ++ `SigmaInduction ++ (← liftCoreM (mkFreshUserName `proof))
-  let used := goal.names.used ++ [n.getId, k.getId, ih.getId]
-  let fresh (stem : String) := Id.run do
-    let mut name := Name.mkSimple stem
-    while used.contains name do name := name.appendAfter "_"
-    return mkIdent name
-  -- Preserve references to outer values when branch names shadow them.
-  let visible := goal.names.locals ++ goal.names.functions ++ goal.names.predicates ++
-    goal.names.termAliases.map (·.1) ++ goal.names.predicateAliases.map (·.1)
-  let shadowed := ([n.getId, k.getId, ih.getId].map Name.eraseMacroScopes).eraseDups.filter
-    visible.contains
-  let protect : TacticM Unit := do
-    for (name, i) in shadowed.zipIdx do
-      let alias := fresh s!"_sigmaOriginal{i}"
-      Tactic.refine (← `(praExpr| let $alias:ident := $(mkIdent name):ident; ?_))
+  -- Give outer values distinct names before introducing the branch binders.
+  let protect (binders : List Name) : TacticM Unit := do
+    for name in binders.eraseDups do
+      let names := (← getGoal).names
+      if names.used.contains name then
+        let reserved := { names with locals := binders ++ names.locals }
+        Tactic.rename name (reserved.freshName name.toString name)
   let view := goal.projection
-  let predecessor := fresh "_sigmaIndex"
-  let witness := fresh "_sigmaWitness"
-  let property := fresh "_sigmaProperty"
   let baseType := atIndex .zero
   let baseProof ← Tactic.prove (view.decodePredicate baseType) base do
-    protect
+    protect [n.getId.eraseMacroScopes]
     Tactic.refine (← `(praExpr| let $n:ident := 0; ?_))
     Tactic.evalTacticSeq base
   let baseProof ← complete (Metavariable.Frontend.completeProof baseProof)
   let (baseCode, _, baseChecked) ← Witnessing.compileProof
     (root ++ `base) context baseType baseProof
-  let previous := Core.betaReducePredicate goal.maxDepth (.app family.shift.shift (.bvar 1))
-  let previousMotive ← existential goal.maxDepth previous
-  let premise := Core.Predicate.app previousMotive (.bvar 0)
-  let next := Core.Predicate.app family.shift.shift (.app .succ (.bvar 1))
-  let stepType := Core.Predicate.all (.lam predecessor.getId
-    (.all (.lam witness.getId (.imp premise next))))
+  let previous := Core.betaReducePredicate goal.maxDepth (.app family.shift (.bvar 0))
+  let next := Core.Predicate.app family.shift (.app .succ (.bvar 0))
+  let stepType := Core.Predicate.all (.lam k.getId (.imp previous next))
   let stepProof ← Tactic.prove (view.decodePredicate stepType) step do
-    protect
-    Tactic.refine (← `(praExpr|
-      fun $predecessor:ident $witness:ident $property:ident => ?_))
-    -- The induction hypothesis pairs the previous witness with its property.
-    Tactic.assert ih.getId.eraseMacroScopes (view.decodePredicate previous)
-      (.existsIntro (view.decodePredicate previousMotive) (.bvar 0) (.hyp 0)) ih
-    Tactic.refine (← `(praExpr|
-      let $n:ident := S $predecessor:ident; let $k:ident := $predecessor:ident; ?_))
+    protect [n.getId.eraseMacroScopes, k.getId.eraseMacroScopes, ih.getId.eraseMacroScopes]
+    Tactic.refine (← `(praExpr| fun $k:ident $ih:ident => ?_))
+    if n.getId.eraseMacroScopes != k.getId.eraseMacroScopes &&
+        n.getId.eraseMacroScopes != ih.getId.eraseMacroScopes then
+      Tactic.refine (← `(praExpr| let $n:ident := S $k:ident; ?_))
     Tactic.evalTacticSeq step
   let stepProof ← complete (Metavariable.Frontend.completeProof stepProof)
   let (stepCode, _, stepChecked) ← Witnessing.compileProof
@@ -167,7 +152,7 @@ def evalSigmaInduction : Tactic := fun stx => do
   let premise := Core.Predicate.app invariant.shift (.bvar 0)
   let conclusion := Core.Predicate.app invariant.shift (.app .succ (.bvar 0))
   let branch := Core.Proof.forallIntro k.getId (.lam k.getId (.imp premise conclusion))
-    (.impIntro property.getId premise stepCheck)
+    (.impIntro ih.getId premise stepCheck)
   let proof := Core.Proof.forallElim
     (.impElim (.impElim (.induction invariant) baseChecked) branch) index
   let goalMotive ← existential goal.maxDepth target

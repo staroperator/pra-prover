@@ -13,6 +13,7 @@ Delaboration from Core expressions to `praExpr` and `praDecl` syntax:
 - `delabProof` delaborates a proof expression.
 - `delabDeclaration` delaborates a full declaration.
 - `delabSignature` formats a declaration signature for `#check` and hover.
+- `@[pra_display name]` lets a library show the statements with head `name` in its own notation.
 
 Binder names come from Core hints when available, disambiguated against names in scope.
 -/
@@ -148,6 +149,27 @@ private def numeralValue? : Core.Term → Option Nat
   | .app .succ t | .app (.definition `S []) t => (· + 1) <$> numeralValue? t
   | _ => none
 
+/-- A display function of a library. It returns the notation in which a statement is shown, or
+`none` when the function does not handle the statement. -/
+abbrev PredicateDisplay := Names → Predicate → CommandElabM (Option (TSyntax `praExpr))
+
+/-- `@[pra_display name]` registers a display function for the statements whose head is the PRA
+predicate `name`. Every printed statement with that head, in goals, hypotheses, and messages, is
+passed to the registered functions before the ordinary notation is used. -/
+unsafe initialize predicateDisplayAttribute : KeyedDeclsAttribute PredicateDisplay ←
+  KeyedDeclsAttribute.init {
+    builtinName := `builtin_pra_display
+    name := `pra_display
+    descr := "display of a PRA statement in a library's notation"
+    valueTypeName := ``PredicateDisplay
+    evalKey := fun _ stx => return (← Attribute.Builtin.getIdent stx).getId.eraseMacroScopes
+  }
+
+private def predicateHead : Predicate → Option Name
+  | .app p _ => predicateHead p
+  | .definition name _ _ => some name
+  | _ => none
+
 /-- Hover type attached to a `DelabTree` node. -/
 inductive DelabType where
   | none
@@ -275,6 +297,10 @@ partial def delabTermTree (names : Names) (term : Core.Term)
 partial def delabPredicateTree (names : Names) (predicate : Predicate)
     (typing : Option DelabContext := none) : CommandElabM DelabTree := do
   let type ← predicateType typing predicate
+  if let some head := predicateHead predicate then
+    for display in predicateDisplayAttribute.getEntries (← getEnv) head do
+      let shown ← try display.value names predicate catch _ => pure none
+      if let some stx := shown then return ⟨stx, type, #[]⟩
   if let some (name, _) := names.predicateAliases.find? (·.2 == predicate) then
     return ⟨← identExpr name, type, #[]⟩
   let pred := fun p => delabPredicateTree names p typing

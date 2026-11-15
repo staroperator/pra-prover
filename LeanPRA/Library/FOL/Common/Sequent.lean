@@ -15,7 +15,7 @@ newest assumption next to `A`. An empty sequence gives `Provable L T A`.
 - `Sequent.imp_intro` and `cons_of_imp` move a formula between the list and the conclusion;
   `falsum_elim`, `neg_neg_elim`, and the conjunction and disjunction rules handle connectives.
 - `Sequent.all_intro` shifts the assumptions past a fresh variable, and `all_elim` instantiates
-  a universal quantifier. The `reindex_consSubst` lemmas collect successive substitutions.
+  a universal quantifier. The `subst_consSubst` lemmas collect successive substitutions.
 - `Sequent.ex_intro` and `ex_elim` introduce and eliminate an existential quantifier;
   `ex_elim_of_all_imp` uses a branch stated as a universally quantified implication.
 -/
@@ -151,13 +151,13 @@ namespace Formula
 
 theorem shift_imp : ∀ L A B, shift L (imp A B) = imp (shift L A) (shift L B) := by
   intro L A B
-  rw [shift_eq_reindex L (imp A B), shift_eq_reindex L A, shift_eq_reindex L B]
-  exact reindex_imp (FOL.shiftSubst L 1) L A B
+  rw [shift_eq_subst L (imp A B), shift_eq_subst L A, shift_eq_subst L B]
+  exact subst_imp (FOL.shiftSubst L 1) L A B
 
 theorem shift_falsum : ∀ L, shift L falsum = falsum := by
   intro L
-  rw [shift_eq_reindex L falsum]
-  exact reindex_falsum (FOL.shiftSubst L 1) L
+  rw [shift_eq_subst L falsum]
+  exact subst_falsum (FOL.shiftSubst L 1) L
 
 theorem shift_neg : ∀ L A, shift L (neg A) = neg (shift L A) := by
   intro L A
@@ -165,9 +165,9 @@ theorem shift_neg : ∀ L A, shift L (neg A) = neg (shift L A) := by
 
 theorem instantiate_neg : ∀ L A t, instantiate L (neg A) t = neg (instantiate L A t) := by
   intro L A t
-  rw [neg, neg, instantiate_eq_reindex L (imp A falsum) t, instantiate_eq_reindex L A t,
-    reindex_imp (FOL.consSubst t (FOL.shiftSubst L 0)),
-    reindex_falsum (FOL.consSubst t (FOL.shiftSubst L 0))]
+  rw [neg, neg, instantiate_eq_subst L (imp A falsum) t, instantiate_eq_subst L A t,
+    subst_imp (FOL.consSubst t (FOL.shiftSubst L 0)),
+    subst_falsum (FOL.consSubst t (FOL.shiftSubst L 0))]
 
 end Formula
 
@@ -212,22 +212,22 @@ theorem all_elim (L : Nat) (T : Nat → Nat) : ∀ Γ A t,
     (lift L T Γ (imp (all A) (instantiate L A t)) (Provable.instantiate L T A t)) h
 
 /-- Instantiate a universal quantifier, with the instance written as a substitution. -/
-theorem reindex_consSubst_of_all (L : Nat) (T : Nat → Nat) : ∀ Γ A t,
+theorem subst_consSubst_of_all (L : Nat) (T : Nat → Nat) : ∀ Γ A t,
     Sequent L T Γ (all A) →
-      Sequent L T Γ (reindex (FOL.consSubst t (FOL.shiftSubst L 0)) L A) := by
+      Sequent L T Γ (subst (FOL.consSubst t (FOL.shiftSubst L 0)) L A) := by
   intro Γ A t h
-  rw [← instantiate_eq_reindex L A t]
+  rw [← instantiate_eq_subst L A t]
   exact all_elim L T Γ A t h
 
 /-- Instantiate the next quantifier beneath a substitution: the term is placed in front of the
 substitution. Several quantifiers are instantiated this way before the formula is calculated. -/
-theorem reindex_consSubst_of_reindex_all (L : Nat) (T : Nat → Nat) (f : Nat → Nat) : ∀ Γ A t,
-    Sequent L T Γ (reindex f L (all A)) →
-      Sequent L T Γ (reindex (FOL.consSubst t f) L A) := by
+theorem subst_consSubst_of_subst_all (L : Nat) (T : Nat → Nat) (f : Nat → Nat) : ∀ Γ A t,
+    Sequent L T Γ (subst f L (all A)) →
+      Sequent L T Γ (subst (FOL.consSubst t f) L A) := by
   intro Γ A t h
-  rw [reindex_all f L A] at h
-  rw [← instantiate_reindex_liftSubst f L A t]
-  exact all_elim L T Γ (reindex (FOL.liftSubst f L 1) L A) t h
+  rw [subst_all f L A] at h
+  rw [← instantiate_subst_liftSubst f L A t]
+  exact all_elim L T Γ (subst (FOL.liftSubst f L 1) L A) t h
 
 /-- Introduce an existential quantifier from an instance. -/
 theorem ex_intro (L : Nat) (T : Nat → Nat) : ∀ Γ A t,
@@ -280,7 +280,7 @@ theorem ex_elim_of_all_imp (L : Nat) (T : Nat → Nat) : ∀ Γ A B,
   rw [shift_all L (imp A (shift L B))] at branch
   have instantiated := all_elim L T
     (Sequence.cons A (Sequence.map (shift L) (Sequence.cons (all (imp A (shift L B))) Γ)))
-    (reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L (imp A (shift L B)))
+    (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L (imp A (shift L B)))
     (FOL.Term.var L 0) branch
   rw [instantiate_lifted L (imp A (shift L B))] at instantiated
   have inner := mp L T
@@ -297,7 +297,7 @@ end Sequent
 
 end FOL
 
-extract_witness FOL.Sequent.all_elim FOL.Sequent.reindex_consSubst_of_reindex_all
+extract_witness FOL.Sequent.all_elim FOL.Sequent.subst_consSubst_of_subst_all
   FOL.Sequent.all_intro FOL.Sequent.neg_neg_elim FOL.Sequent.ex_elim_of_all_imp FOL.Sequent.ex_elim
   FOL.Sequent.ex_intro FOL.Sequent.head FOL.Sequent.lift FOL.Sequent.mp FOL.Sequent.weaken
 

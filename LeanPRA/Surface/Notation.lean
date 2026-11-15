@@ -56,6 +56,14 @@ structure PraNotation where
 initialize praNotations : SimpleScopedEnvExtension PraNotation (Array PraNotation) ←
   registerSimpleScopedEnvExtension { initial := #[], addEntry := Array.push }
 
+/-- An expression expander transforms syntax before ordinary PRA elaboration, and may resolve
+imported declarations. -/
+abbrev ExpressionExpander := Syntax → CommandElabM Syntax
+
+unsafe initialize expressionExpanderAttribute : KeyedDeclsAttribute ExpressionExpander ←
+  mkElabAttribute ExpressionExpander `builtin_pra_expander `pra_expander
+    `LeanPRA.Surface `LeanPRA.Surface.ExpressionExpander "PRA expression expander"
+
 private def notationArguments (rule : PraNotation) (stx : Syntax) : Array Syntax :=
   rule.parts.zipIdx.foldl (fun args (part, position) =>
     match part with
@@ -87,6 +95,8 @@ private partial def substitute (rule : PraNotation) (args : Array Syntax)
 Expansion is bounded by Lean's recursion limit. -/
 partial def expandPraSyntax (stx : Syntax) : CommandElabM Syntax := withRef stx do
   withIncRecDepth do
+    for entry in expressionExpanderAttribute.getEntries (← getEnv) stx.getKind do
+      return ← expandPraSyntax (← entry.value stx)
     if stx.isOfKind choiceKind then
       let rules := praNotations.getState (← getEnv)
       let env ← getEnv

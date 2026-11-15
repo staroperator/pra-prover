@@ -27,7 +27,7 @@ open Formula
 /-- Open a shifted universal formula at the new variable. -/
 theorem shift_all_imp (L : Nat) (T : Nat → Nat) (A : Nat) :
     Provable L T (imp (shift L (all A)) A) := by
-  have hinst := instantiate L T (reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
+  have hinst := instantiate L T (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
     (Term.var L 0)
   rw [instantiate_lifted, ← shift_all] at hinst
   exact hinst
@@ -146,9 +146,9 @@ theorem imp_congr_under (L : Nat) (T : Nat → Nat) (E A B C D : Nat) :
 under the quantifier so that the quantified variable is fresh for it. -/
 theorem all_congr_under (L : Nat) (T : Nat → Nat) (E A B : Nat) :
     Provable L T (imp
-      (all (imp (reindex (FOL.shiftSubst L 1) L E) (conj (imp A B) (imp B A))))
+      (all (imp (subst (FOL.shiftSubst L 1) L E) (conj (imp A B) (imp B A))))
       (imp E (conj (imp (all A) (all B)) (imp (all B) (all A))))) := by
-  rw [← shift_eq_reindex L E]
+  rw [← shift_eq_subst L E]
   have forward := imp_trans_of_provable L T
     (all_mono L T (conj_left L T (imp A B) (imp B A))) (all_imp L T A B)
   have backward := imp_trans_of_provable L T

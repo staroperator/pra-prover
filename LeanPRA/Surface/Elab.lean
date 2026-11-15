@@ -303,6 +303,14 @@ private def Scope.addAlias (s : Scope) (n : Name) (value : Metavariable.Term)
     aliases := (n, value) :: s.aliases.filter (·.1 != n)
     predicateAliases := s.predicateAliases.filter (·.1 != n) }
 
+/-- Define `n` again. The goal display then lists only the new definition, where `addAlias`
+would also list the earlier one as a shadowed name. -/
+private def Scope.replaceAlias (s : Scope) (n : Name) (value : Metavariable.Term) : Scope :=
+  let s := s.addAlias n value
+  { s with bindings := .termAlias n value :: s.bindings.tail.filter fun
+      | .termAlias m _ => m != n
+      | _ => true }
+
 private def Scope.addPredicateAlias (s : Scope) (n : Name) (value : Predicate)
     (ref : Syntax := .missing) : Scope :=
   { s with
@@ -1045,7 +1053,7 @@ private def attemptObject (action : ObjectElabM α) : ObjectElabM (Attempt α) :
         return .failed (.error (← getRef) m!"cannot infer this expression; add a type annotation")
     return .failed ex
 
-/-- Create a tactic goal for `type` in the current scope extended by `bindings`, in order, and
+/-- Create a tactic goal for `type` in the current scope changed by `bindings`, in order, and
 return it with the proof metavariable that stands for it. A defined value must be a number. -/
 private def openTacticGoal (type : Predicate) :
     List Tactic.Binding → ObjectElabM (Nat × Proof)
@@ -1064,6 +1072,57 @@ private def openTacticGoal (type : Predicate) :
       openTacticGoal type rest
   | .hypothesis name hypothesis ref :: rest =>
     withProof ref name hypothesis (openTacticGoal type rest)
+  | .redefinition name value :: rest => do
+    let s ← currentScope
+    checked (← getRef) (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment
+      (← currentContext) value 0)
+    withReader (·.replaceAlias name value) (openTacticGoal type rest)
+  | .renaming oldName newName :: rest => do
+    let s ← currentScope
+    let used := s.names.used ++ s.aliases.map (·.1) ++ s.predicateAliases.map (·.1)
+    unless used.contains oldName do throwError "unknown local name {oldName}"
+    if newName.isAnonymous || used.contains newName then
+      throwError "local name {newName} is already used or anonymous"
+    let rename (name : Name) := if name == oldName then newName else name
+    let renameEntry {α} (entry : Name × α) := (rename entry.1, entry.2)
+    let bindings := s.bindings.map fun
+      | .local n i => .local (rename n) i
+      | .functionParameter n i => .functionParameter (rename n) i
+      | .predicateParameter n i => .predicateParameter (rename n) i
+      | .proof n i => .proof (rename n) i
+      | .termAlias n value => .termAlias (rename n) value
+      | .predicateAlias n value => .predicateAlias (rename n) value
+    withReader (fun s => { s with
+        names := { s.names with
+          locals := s.names.locals.map rename
+          functions := s.names.functions.map rename
+          predicates := s.names.predicates.map rename
+          proofs := s.names.proofs.map rename
+          termAliases := s.names.termAliases.map renameEntry
+          predicateAliases := s.names.predicateAliases.map renameEntry }
+        bindings
+        aliases := s.aliases.map renameEntry
+        predicateAliases := s.predicateAliases.map renameEntry
+        references := s.references.map renameEntry }) (openTacticGoal type rest)
+  | .replacement index hypothesis ref :: rest => do
+    unless index < (← read).context.proofs.length do throwError "unknown PRA hypothesis"
+    withReader (fun s => { s with
+        context := { s.context with proofs := s.context.proofs.set index hypothesis } }) do
+      remember ref (.proof (.hyp index))
+      openTacticGoal type rest
+  | .removal index :: rest => do
+    let s ← read
+    unless index < s.context.proofs.length do throwError "unknown PRA hypothesis"
+    let name := s.names.proofs[index]!
+    let bindings := s.bindings.filterMap fun
+      | .proof n i =>
+        if i == index then none else some (.proof n (if i < index then i else i - 1))
+      | binding => some binding
+    withReader (fun s => { s with
+        context := { s.context with proofs := s.context.proofs.eraseIdx index }
+        names := { s.names with proofs := s.names.proofs.eraseIdx index }
+        bindings
+        references := s.references.eraseP (·.1 == name) }) (openTacticGoal type rest)
 
 private def scheduleProof (ref : Syntax) (type : Predicate)
     (status : TaskStatus := .ready) : ObjectElabM ProofResult := do
@@ -1209,7 +1268,14 @@ private partial def proofBy (seq : TSyntax ``praTacticSeq) (type : Predicate) :
   let unsolved (goals : List Nat) (ref : Syntax) : CommandElabM Unit := do
     let first :: _ := goals | return
     run (← goalScope first) do
-      let target ← showPredicate (← displayNames) (← goalType first)
+      -- Print with the goal's local definitions, as the goal view does.
+      let view ← projection
+      let aliases ← (← read).aliases.mapM fun (name, value) => do
+        return (name, view.encodeTerm (← resolvedTerm value))
+      let predicateAliases ← (← read).predicateAliases.mapM fun (name, value) => do
+        return (name, view.encodePredicate (← resolvedPredicate value))
+      let names := { (← displayNames) with termAliases := aliases, predicateAliases }
+      let target ← showPredicate names (← goalType first)
       throwErrorAt ref "unsolved PRA goals ({goals.length})\n⊢ {← formatSyntax `praExpr target}"
   let ctx : Tactic.Context := {
     inspect := fun id => do
@@ -1919,8 +1985,9 @@ private inductive DraftDeclaration where
   | theoremE (type : Predicate) (body : Proof)
 
 /-- Elaborate a `def` or `theorem` declaration, check it with `Core.checkDeclaration`,
-and publish it. -/
-def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := do
+and publish it. The goal displays of the declaration are stored for the editor, including when a
+library command calls this function with a generated declaration. -/
+def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := withDeferredDisplays do
   let stx ← expandPraSyntax stx
   let (doc?, stx) ← match stx with
     | `(praDecl| $doc:docComment $decl:praDecl) =>

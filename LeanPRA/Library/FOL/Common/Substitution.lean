@@ -14,8 +14,9 @@ their application to arbitrary syntax codes.
 - `FOL.liftSubst` extends a substitution beneath bound variables.
 - `FOL.consSubst` adds a replacement at position zero.
 - `FOL.shiftSubst` maps each variable index to a variable term at a fixed offset.
-- `Formula.subst_congr`, `Formula.subst_comp`, and `Formula.subst_id` describe formula substitution.
-- `Formula.reindex` substitutes surrounding variables while preserving internal binders.
+- `Formula.substWithDepth_congr`, `Formula.substWithDepth_comp`, and `Formula.substWithDepth_id`
+  describe substitutions whose replacement terms depend on binder depth.
+- `Formula.subst` substitutes surrounding variables while preserving internal binders.
 -/
 
 @[expose] public section
@@ -412,106 +413,108 @@ theorem liftSubst_comp (f g : Nat → Nat) : ∀ L d i,
 namespace Formula
 
 /-- Formula substitution respects pointwise equality at each binder depth and variable index. -/
-theorem subst_congr (f g : Nat → Nat → Nat) : ∀ L,
-    (∀ d i, f d i = g d i) → ∀ A d, subst f L A d = subst g L A d := by
+theorem substWithDepth_congr (f g : Nat → Nat → Nat) : ∀ L,
+    (∀ d i, f d i = g d i) → ∀ A d, substWithDepth f L A d = substWithDepth g L A d := by
   intro L h
-  apply induction_eq (subst f L) (subst g L) L
+  apply induction_eq (substWithDepth f L) (substWithDepth g L) L
   · intro d
-    exact eq_trans (subst_falsum f L d) (eq_symm (subst_falsum g L d))
+    exact eq_trans (substWithDepth_falsum f L d) (eq_symm (substWithDepth_falsum g L d))
   · intro t u d
-    exact eq_trans (subst_equal f L t u d)
+    exact eq_trans (substWithDepth_equal f L t u d)
       (eq_trans (eq_congr₂ (equal L)
         (Term.subst_congr (f d) (g d) L (h d) t)
         (Term.subst_congr (f d) (g d) L (h d) u))
-        (eq_symm (subst_equal g L t u d)))
+        (eq_symm (substWithDepth_equal g L t u d)))
   · intro j xs d hj
-    exact eq_trans (subst_rel f L j xs d hj)
+    exact eq_trans (substWithDepth_rel f L j xs d hj)
       (eq_trans (eq_congr (rel L j)
         (Tuple.map_congr (Term.subst (f d) L) (Term.subst (g d) L)
           (Term.subst_congr (f d) (g d) L (h d)) (Language.relationArity L j) xs))
-        (eq_symm (subst_rel g L j xs d hj)))
+        (eq_symm (substWithDepth_rel g L j xs d hj)))
   · intro A B d hA hB
-    exact eq_trans (subst_imp f L A B d)
-      (eq_trans (eq_congr₂ imp hA hB) (eq_symm (subst_imp g L A B d)))
+    exact eq_trans (substWithDepth_imp f L A B d)
+      (eq_trans (eq_congr₂ imp hA hB) (eq_symm (substWithDepth_imp g L A B d)))
   · intro A d hA
-    exact eq_trans (subst_all f L A d)
-      (eq_trans (eq_congr all hA) (eq_symm (subst_all g L A d)))
+    exact eq_trans (substWithDepth_all f L A d)
+      (eq_trans (eq_congr all hA) (eq_symm (substWithDepth_all g L A d)))
 
 /-- Nested substitutions compose their replacement terms at the same quantifier depth. -/
-theorem subst_comp (f g : Nat → Nat → Nat) : ∀ L A d,
-    subst f L (subst g L A d) d =
-      subst (fun e i => Term.subst (f e) L (g e i)) L A d := by
+theorem substWithDepth_comp (f g : Nat → Nat → Nat) : ∀ L A d,
+    substWithDepth f L (substWithDepth g L A d) d =
+      substWithDepth (fun e i => Term.subst (f e) L (g e i)) L A d := by
   intro L
   let h := fun e i => Term.subst (f e) L (g e i)
-  apply induction_eq (fun A d => subst f L (subst g L A d) d) (subst h L) L
+  apply induction_eq (fun A d => substWithDepth f L (substWithDepth g L A d) d)
+    (substWithDepth h L) L
   · intro d
-    exact eq_trans (eq_congr (fun A => subst f L A d) (subst_falsum g L d))
-      (eq_trans (subst_falsum f L d) (eq_symm (subst_falsum h L d)))
+    exact eq_trans (eq_congr (fun A => substWithDepth f L A d) (substWithDepth_falsum g L d))
+      (eq_trans (substWithDepth_falsum f L d) (eq_symm (substWithDepth_falsum h L d)))
   · intro t u d
-    exact eq_trans (eq_congr (fun A => subst f L A d) (subst_equal g L t u d))
-      (eq_trans (subst_equal f L (Term.subst (g d) L t) (Term.subst (g d) L u) d)
+    exact eq_trans (eq_congr (fun A => substWithDepth f L A d) (substWithDepth_equal g L t u d))
+      (eq_trans (substWithDepth_equal f L (Term.subst (g d) L t) (Term.subst (g d) L u) d)
         (eq_trans (eq_congr₂ (equal L)
           (Term.subst_comp (f d) (g d) L t) (Term.subst_comp (f d) (g d) L u))
-          (eq_symm (subst_equal h L t u d))))
+          (eq_symm (substWithDepth_equal h L t u d))))
   · intro j xs d hj
     have entries := Tuple.map_congr (fun t => Term.subst (f d) L (Term.subst (g d) L t))
       (Term.subst (h d) L) (Term.subst_comp (f d) (g d) L)
       (Language.relationArity L j) xs
-    exact eq_trans (eq_congr (fun A => subst f L A d) (subst_rel g L j xs d hj))
-      (eq_trans (subst_rel f L j
+    exact eq_trans (eq_congr (fun A => substWithDepth f L A d) (substWithDepth_rel g L j xs d hj))
+      (eq_trans (substWithDepth_rel f L j
         (Tuple.map (Term.subst (g d) L) (Language.relationArity L j) xs) d hj)
         (eq_trans (eq_congr (rel L j)
           (eq_trans (Tuple.map_map (Term.subst (f d) L) (Term.subst (g d) L)
             (Language.relationArity L j) xs) entries))
-          (eq_symm (subst_rel h L j xs d hj))))
+          (eq_symm (substWithDepth_rel h L j xs d hj))))
   · intro A B d hA hB
-    exact eq_trans (eq_congr (fun C => subst f L C d) (subst_imp g L A B d))
-      (eq_trans (subst_imp f L (subst g L A d) (subst g L B d) d)
-        (eq_trans (eq_congr₂ imp hA hB) (eq_symm (subst_imp h L A B d))))
+    exact eq_trans (eq_congr (fun C => substWithDepth f L C d) (substWithDepth_imp g L A B d))
+      (eq_trans (substWithDepth_imp f L (substWithDepth g L A d) (substWithDepth g L B d) d)
+        (eq_trans (eq_congr₂ imp hA hB) (eq_symm (substWithDepth_imp h L A B d))))
   · intro A d hA
-    exact eq_trans (eq_congr (fun C => subst f L C d) (subst_all g L A d))
-      (eq_trans (subst_all f L (subst g L A (S d)) d)
-        (eq_trans (eq_congr all hA) (eq_symm (subst_all h L A d))))
+    exact eq_trans (eq_congr (fun C => substWithDepth f L C d) (substWithDepth_all g L A d))
+      (eq_trans (substWithDepth_all f L (substWithDepth g L A (S d)) d)
+        (eq_trans (eq_congr all hA) (eq_symm (substWithDepth_all h L A d))))
 
 /-- A substitution that preserves every variable index preserves every formula code. -/
-theorem subst_id : ∀ L A d, subst (fun _ i => Term.var L i) L A d = A := by
+theorem substWithDepth_id : ∀ L A d, substWithDepth (fun _ i => Term.var L i) L A d = A := by
   intro L
   let f := fun _ i => Term.var L i
-  apply induction_eq (subst f L) (fun A _ => A) L
+  apply induction_eq (substWithDepth f L) (fun A _ => A) L
   · intro d
-    exact subst_falsum f L d
+    exact substWithDepth_falsum f L d
   · intro t u d
-    exact eq_trans (subst_equal f L t u d)
+    exact eq_trans (substWithDepth_equal f L t u d)
       (eq_congr₂ (equal L) (Term.subst_id L t) (Term.subst_id L u))
   · intro j xs d hj
-    rw [subst_rel f L j xs d hj]
+    rw [substWithDepth_rel f L j xs d hj]
     apply eq_congr (rel L j)
     have h := Tuple.map_congr (Term.subst (Term.var L) L) (fun t => t)
       (Term.subst_id L) (Language.relationArity L j) xs
     exact eq_trans h (Tuple.map_id (Sequence.get (Language.relations L) j) xs)
   · intro A B d hA hB
-    rw [subst_imp f, hA, hB]
+    rw [substWithDepth_imp f, hA, hB]
   · intro A d hA
-    rw [subst_all f, hA]
+    rw [substWithDepth_all f, hA]
 
-/-- Replace surrounding variables simultaneously while preserving variables bound inside the
-formula. -/
-def reindex (f : Nat → Nat) : Nat → Nat → Nat := fun L A =>
-  subst (FOL.liftSubst f L) L A 0
+/-- `Formula.subst f L A` simultaneously replaces each free variable `i` in formula code `A`
+with the term code `f i`. Beneath quantifiers, bound variables stay fixed and replacement terms
+are shifted to avoid capture. -/
+def subst (f : Nat → Nat) : Nat → Nat → Nat := fun L A =>
+  substWithDepth (FOL.liftSubst f L) L A 0
 
-theorem reindex_comp (f g : Nat → Nat) : ∀ L A,
-    reindex f L (reindex g L A) = reindex (fun i => Term.subst f L (g i)) L A := by
+theorem subst_comp (f g : Nat → Nat) : ∀ L A,
+    subst f L (subst g L A) = subst (fun i => Term.subst f L (g i)) L A := by
   intro L A
-  exact eq_trans (subst_comp (FOL.liftSubst f L) (FOL.liftSubst g L) L A 0)
-    (subst_congr
+  exact eq_trans (substWithDepth_comp (FOL.liftSubst f L) (FOL.liftSubst g L) L A 0)
+    (substWithDepth_congr
       (fun d i => Term.subst (FOL.liftSubst f L d) L (FOL.liftSubst g L d i))
       (FOL.liftSubst (fun i => Term.subst f L (g i)) L) L
       (FOL.liftSubst_comp f g L) A 0)
 
-theorem reindex_id : ∀ L A, reindex (Term.var L) L A = A := by
+theorem subst_id : ∀ L A, subst (Term.var L) L A = A := by
   intro L A
-  exact eq_trans (subst_congr (FOL.liftSubst (Term.var L) L) (fun _ i => Term.var L i)
-    L (FOL.liftSubst_id L) A 0) (subst_id L A 0)
+  exact eq_trans (substWithDepth_congr (FOL.liftSubst (Term.var L) L) (fun _ i => Term.var L i)
+    L (FOL.liftSubst_id L) A 0) (substWithDepth_id L A 0)
 
 /-- Substituting for a newly inserted position leaves the original formula unchanged. -/
 theorem instantiate_shift : ∀ L A t, instantiate L (shift L A) t = A := by
@@ -528,25 +531,25 @@ theorem instantiate_shift : ∀ L A t, instantiate L (shift L A) t = A := by
     · have hle := le_of_not_lt d i h
       rw [ltb_eq_zero_of_ge i d hle, ite_zero]
       exact FOL.Term.instantiateAt_above L t d i hle
-  exact eq_trans (subst_comp f g L A 0)
-    (eq_trans (subst_congr (fun d i => FOL.Term.subst (f d) L (g d i))
-      (fun _ i => FOL.Term.var L i) L pointwise A 0) (subst_id L A 0))
+  exact eq_trans (substWithDepth_comp f g L A 0)
+    (eq_trans (substWithDepth_congr (fun d i => FOL.Term.subst (f d) L (g d i))
+      (fun _ i => FOL.Term.var L i) L pointwise A 0) (substWithDepth_id L A 0))
 
-theorem reindex_congr (f g : Nat → Nat) : ∀ L,
-    (∀ i, f i = g i) → ∀ A, reindex f L A = reindex g L A := by
+theorem subst_congr (f g : Nat → Nat) : ∀ L,
+    (∀ i, f i = g i) → ∀ A, subst f L A = subst g L A := by
   intro L h A
-  apply subst_congr (FOL.liftSubst f L) (FOL.liftSubst g L) L
+  apply substWithDepth_congr (FOL.liftSubst f L) (FOL.liftSubst g L) L
   intro d i
   change ite (ltb i d) (FOL.Term.var L i) (FOL.Term.shift L d (f (i - d))) =
     ite (ltb i d) (FOL.Term.var L i) (FOL.Term.shift L d (g (i - d)))
   rw [h]
 
-theorem reindex_shiftSubst_zero : ∀ L A, reindex (FOL.shiftSubst L 0) L A = A := by
+theorem subst_shiftSubst_zero : ∀ L A, subst (FOL.shiftSubst L 0) L A = A := by
   intro L A
-  exact eq_trans (reindex_congr (FOL.shiftSubst L 0) (FOL.Term.var L) L
-    (FOL.shiftSubst_zero L) A) (reindex_id L A)
+  exact eq_trans (subst_congr (FOL.shiftSubst L 0) (FOL.Term.var L) L
+    (FOL.shiftSubst_zero L) A) (subst_id L A)
 
-theorem shift_eq_reindex : ∀ L A, shift L A = reindex (FOL.shiftSubst L 1) L A := by
+theorem shift_eq_subst : ∀ L A, shift L A = subst (FOL.shiftSubst L 1) L A := by
   intro L A
   let f := fun d i => FOL.Term.var L (ite (ltb i d) i (S i))
   let g := FOL.liftSubst (FOL.shiftSubst L 1) L
@@ -560,69 +563,69 @@ theorem shift_eq_reindex : ∀ L A, shift L A = reindex (FOL.shiftSubst L 1) L A
         FOL.liftSubst_of_le (FOL.shiftSubst L 1) L d i hd,
         FOL.shiftSubst, FOL.Term.shift_var, add_succ, add_zero, succ_add,
         sub_add_cancel_of_le i d hd]
-  exact subst_congr f g L h A 0
+  exact substWithDepth_congr f g L h A 0
 
-theorem instantiate_eq_reindex : ∀ L A t,
-    instantiate L A t = reindex (FOL.consSubst t (FOL.shiftSubst L 0)) L A := by
+theorem instantiate_eq_subst : ∀ L A t,
+    instantiate L A t = subst (FOL.consSubst t (FOL.shiftSubst L 0)) L A := by
   intro L A t
-  exact subst_congr (FOL.Term.instantiateAt L 0 t)
+  exact substWithDepth_congr (FOL.Term.instantiateAt L 0 t)
     (FOL.liftSubst (FOL.consSubst t (FOL.shiftSubst L 0)) L) L
     (FOL.Term.instantiateAt_eq_liftSubst L t) A 0
 
-theorem subst_offset (f : Nat → Nat → Nat) : ∀ L e A d,
-    subst f L A (d + e) = subst (fun k i => f (k + e) i) L A d := by
+theorem substWithDepth_offset (f : Nat → Nat → Nat) : ∀ L e A d,
+    substWithDepth f L A (d + e) = substWithDepth (fun k i => f (k + e) i) L A d := by
   intro L e
   let g := fun k i => f (k + e) i
-  exact induction_eq (fun A d => subst f L A (d + e)) (subst g L) L
-    (fun d => eq_trans (subst_falsum f L (d + e)) (eq_symm (subst_falsum g L d)))
-    (fun t u d => eq_trans (subst_equal f L t u (d + e))
-      (eq_symm (subst_equal g L t u d)))
-    (fun j xs d hj => eq_trans (subst_rel f L j xs (d + e) hj)
-      (eq_symm (subst_rel g L j xs d hj)))
-    (fun A B d hA hB => eq_trans (subst_imp f L A B (d + e))
-      (eq_trans (eq_congr₂ imp hA hB) (eq_symm (subst_imp g L A B d))))
-    (fun A d hA => eq_trans (subst_all f L A (d + e))
+  exact induction_eq (fun A d => substWithDepth f L A (d + e)) (substWithDepth g L) L
+    (fun d => eq_trans (substWithDepth_falsum f L (d + e)) (eq_symm (substWithDepth_falsum g L d)))
+    (fun t u d => eq_trans (substWithDepth_equal f L t u (d + e))
+      (eq_symm (substWithDepth_equal g L t u d)))
+    (fun j xs d hj => eq_trans (substWithDepth_rel f L j xs (d + e) hj)
+      (eq_symm (substWithDepth_rel g L j xs d hj)))
+    (fun A B d hA hB => eq_trans (substWithDepth_imp f L A B (d + e))
+      (eq_trans (eq_congr₂ imp hA hB) (eq_symm (substWithDepth_imp g L A B d))))
+    (fun A d hA => eq_trans (substWithDepth_all f L A (d + e))
       (eq_trans (eq_congr all
-        (eq_trans (eq_congr (subst f L A) (eq_symm (succ_add d e))) hA))
-        (eq_symm (subst_all g L A d))))
+        (eq_trans (eq_congr (substWithDepth f L A) (eq_symm (succ_add d e))) hA))
+        (eq_symm (substWithDepth_all g L A d))))
 
-theorem reindex_falsum (f : Nat → Nat) : ∀ L,
-    reindex f L falsum = falsum := fun L => subst_falsum (FOL.liftSubst f L) L 0
+theorem subst_falsum (f : Nat → Nat) : ∀ L,
+    subst f L falsum = falsum := fun L => substWithDepth_falsum (FOL.liftSubst f L) L 0
 
-theorem reindex_equal (f : Nat → Nat) : ∀ L t u,
-    reindex f L (equal L t u) = equal L (Term.subst f L t) (Term.subst f L u) := by
+theorem subst_equal (f : Nat → Nat) : ∀ L t u,
+    subst f L (equal L t u) = equal L (Term.subst f L t) (Term.subst f L u) := by
   intro L t u
-  rw [reindex, subst_equal (FOL.liftSubst f L)]
+  rw [subst, substWithDepth_equal (FOL.liftSubst f L)]
   exact eq_congr₂ (equal L)
     (Term.subst_congr (FOL.liftSubst f L 0) f L (FOL.liftSubst_zero f L) t)
     (Term.subst_congr (FOL.liftSubst f L 0) f L (FOL.liftSubst_zero f L) u)
 
-theorem reindex_imp (f : Nat → Nat) : ∀ L A B,
-    reindex f L (imp A B) = imp (reindex f L A) (reindex f L B) :=
-  fun L A B => subst_imp (FOL.liftSubst f L) L A B 0
+theorem subst_imp (f : Nat → Nat) : ∀ L A B,
+    subst f L (imp A B) = imp (subst f L A) (subst f L B) :=
+  fun L A B => substWithDepth_imp (FOL.liftSubst f L) L A B 0
 
-theorem reindex_all (f : Nat → Nat) : ∀ L A,
-    reindex f L (all A) = all (reindex (FOL.liftSubst f L 1) L A) := by
+theorem subst_all (f : Nat → Nat) : ∀ L A,
+    subst f L (all A) = all (subst (FOL.liftSubst f L 1) L A) := by
   intro L A
   let g := FOL.liftSubst f L
   let h := FOL.liftSubst (FOL.liftSubst f L 1) L
   have pointwise : ∀ d i, g (d + 1) i = h d i :=
     fun d i => eq_symm (FOL.liftSubst_liftSubst f L d 1 i)
-  rw [reindex, subst_all g, reindex]
-  exact eq_congr all (eq_trans (subst_offset g L 1 A 0)
-    (subst_congr (fun d i => g (d + 1) i) h L pointwise A 0))
+  rw [subst, substWithDepth_all g, subst]
+  exact eq_congr all (eq_trans (substWithDepth_offset g L 1 A 0)
+    (substWithDepth_congr (fun d i => g (d + 1) i) h L pointwise A 0))
 
 /-- Shifting a quantified formula shifts its body beneath the quantifier. -/
 theorem shift_all : ∀ L A,
-    shift L (all A) = all (reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A) := by
+    shift L (all A) = all (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A) := by
   intro L A
-  rw [shift_eq_reindex L (all A)]
-  exact reindex_all (FOL.shiftSubst L 1) L A
+  rw [shift_eq_subst L (all A)]
+  exact subst_all (FOL.shiftSubst L 1) L A
 
 /-- Instantiating beneath a lifted substitution puts the term in front of the substitution. -/
-theorem instantiate_reindex_liftSubst (f : Nat → Nat) : ∀ L A t,
-    instantiate L (reindex (FOL.liftSubst f L 1) L A) t =
-      reindex (FOL.consSubst t f) L A := by
+theorem instantiate_subst_liftSubst (f : Nat → Nat) : ∀ L A t,
+    instantiate L (subst (FOL.liftSubst f L 1) L A) t =
+      subst (FOL.consSubst t f) L A := by
   intro L A t
   have pointwise : ∀ i,
       FOL.Term.subst (FOL.consSubst t (FOL.shiftSubst L 0)) L (FOL.liftSubst f L 1 i) =
@@ -635,16 +638,16 @@ theorem instantiate_reindex_liftSubst (f : Nat → Nat) : ∀ L A t,
       rfl
     · rw [h, FOL.consSubst_succ (FOL.Term.var L 0) (fun j => FOL.Term.shift L 1 (f j))]
       exact FOL.Term.subst_consSubst_shift t L (f (pred i))
-  rw [instantiate_eq_reindex L (reindex (FOL.liftSubst f L 1) L A) t,
-    reindex_comp (FOL.consSubst t (FOL.shiftSubst L 0)) (FOL.liftSubst f L 1) L A]
-  exact reindex_congr
+  rw [instantiate_eq_subst L (subst (FOL.liftSubst f L 1) L A) t,
+    subst_comp (FOL.consSubst t (FOL.shiftSubst L 0)) (FOL.liftSubst f L 1) L A]
+  exact subst_congr
     (fun i => FOL.Term.subst (FOL.consSubst t (FOL.shiftSubst L 0)) L
       (FOL.liftSubst f L 1 i))
     (FOL.consSubst t f) L pointwise A
 
 /-- Instantiating the shifted body of a quantifier at the new variable gives the body back. -/
 theorem instantiate_lifted : ∀ L A,
-    instantiate L (reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
+    instantiate L (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
       (FOL.Term.var L 0) = A := by
   intro L A
   have pointwise : ∀ i,
@@ -665,66 +668,158 @@ theorem instantiate_lifted : ∀ L A,
         FOL.Term.subst_var (FOL.consSubst (FOL.Term.var L 0) (FOL.shiftSubst L 0))]
       change FOL.shiftSubst L 0 (S (pred i)) = FOL.Term.var L (S (pred i))
       exact FOL.shiftSubst_zero L (S (pred i))
-  rw [instantiate_eq_reindex L
-      (reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A) (FOL.Term.var L 0),
-    reindex_comp (FOL.consSubst (FOL.Term.var L 0) (FOL.shiftSubst L 0))
+  rw [instantiate_eq_subst L
+      (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A) (FOL.Term.var L 0),
+    subst_comp (FOL.consSubst (FOL.Term.var L 0) (FOL.shiftSubst L 0))
       (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A]
   exact eq_trans
-    (reindex_congr
+    (subst_congr
       (fun i => FOL.Term.subst (FOL.consSubst (FOL.Term.var L 0) (FOL.shiftSubst L 0)) L
         (FOL.liftSubst (FOL.shiftSubst L 1) L 1 i))
       (FOL.Term.var L) L pointwise A)
-    (reindex_id L A)
+    (subst_id L A)
 
-/-- Substituting with a lifted substitution at depth `k` reindexes with the lift past `k`
-binders. -/
-theorem subst_liftSubst (f : Nat → Nat) : ∀ L A k,
-    subst (FOL.liftSubst f L) L A k = reindex (FOL.liftSubst f L k) L A := by
+/-- Applying a lifted substitution at depth `k` equals ordinary formula substitution with
+the substitution lifted past `k` binders. -/
+theorem substWithDepth_liftSubst (f : Nat → Nat) : ∀ L A k,
+    substWithDepth (FOL.liftSubst f L) L A k = subst (FOL.liftSubst f L k) L A := by
   intro L A k
   let g := FOL.liftSubst f L
   let h := FOL.liftSubst (FOL.liftSubst f L k) L
   have pointwise : ∀ d i, g (d + k) i = h d i :=
     fun d i => eq_symm (FOL.liftSubst_liftSubst f L d k i)
-  have start : subst g L A k = subst g L A (0 + k) :=
-    eq_congr (subst g L A) (eq_symm (zero_add k))
-  exact eq_trans start (eq_trans (subst_offset g L k A 0)
-    (subst_congr (fun d i => g (d + k) i) h L pointwise A 0))
+  have start : substWithDepth g L A k = substWithDepth g L A (0 + k) :=
+    eq_congr (substWithDepth g L A) (eq_symm (zero_add k))
+  exact eq_trans start (eq_trans (substWithDepth_offset g L k A 0)
+    (substWithDepth_congr (fun d i => g (d + k) i) h L pointwise A 0))
 
 /-- Shifting `n` times raises every position by `n`. -/
-theorem iter_shift_eq_reindex : ∀ L n A,
-    iter (shift L) n A = reindex (FOL.shiftSubst L n) L A := by
+theorem iter_shift_eq_subst : ∀ L n A,
+    iter (shift L) n A = subst (FOL.shiftSubst L n) L A := by
   intro L n A
   induction n with k ih
-  · exact eq_symm (reindex_shiftSubst_zero L A)
-  · rw [iter_succ (shift L), ih, shift_eq_reindex L (reindex (FOL.shiftSubst L k) L A),
-      reindex_comp (FOL.shiftSubst L 1) (FOL.shiftSubst L k) L A]
-    exact reindex_congr (fun i => Term.subst (FOL.shiftSubst L 1) L (FOL.shiftSubst L k i))
+  · exact eq_symm (subst_shiftSubst_zero L A)
+  · rw [iter_succ (shift L), ih, shift_eq_subst L (subst (FOL.shiftSubst L k) L A),
+      subst_comp (FOL.shiftSubst L 1) (FOL.shiftSubst L k) L A]
+    exact subst_congr (fun i => Term.subst (FOL.shiftSubst L 1) L (FOL.shiftSubst L k i))
       (FOL.shiftSubst L (S k)) L (fun i => Term.subst_shiftSubst_shiftSubst L 1 k i) A
 
 /-- A formula written outside `d` binders and raised past them and `k` more is raised past
 `e + k` binders after a substitution that sends the positions from `d` on to those from `e`
 on. -/
-theorem subst_liftSubst_outer (f : Nat → Nat) : ∀ L d e, (∀ i, f (i + d) = Term.var L (i + e)) →
-    ∀ k A, subst (FOL.liftSubst f L) L (iter (shift L) (d + k) A) k =
+theorem substWithDepth_liftSubst_outer (f : Nat → Nat) :
+    ∀ L d e, (∀ i, f (i + d) = Term.var L (i + e)) →
+    ∀ k A, substWithDepth (FOL.liftSubst f L) L (iter (shift L) (d + k) A) k =
       iter (shift L) (e + k) A := by
   intro L d e h k A
-  rw [iter_shift_eq_reindex L (d + k) A, iter_shift_eq_reindex L (e + k) A,
-    subst_liftSubst f L (reindex (FOL.shiftSubst L (d + k)) L A) k,
-    reindex_comp (FOL.liftSubst f L k) (FOL.shiftSubst L (d + k)) L A]
-  exact reindex_congr
+  rw [iter_shift_eq_subst L (d + k) A, iter_shift_eq_subst L (e + k) A,
+    substWithDepth_liftSubst f L (subst (FOL.shiftSubst L (d + k)) L A) k,
+    subst_comp (FOL.liftSubst f L k) (FOL.shiftSubst L (d + k)) L A]
+  exact subst_congr
     (fun i => Term.subst (FOL.liftSubst f L k) L (FOL.shiftSubst L (d + k) i))
     (FOL.shiftSubst L (e + k)) L (Term.subst_liftSubst_shiftSubst f L d e h k) A
 
-/-- Substituting beneath `k` binders into a reindexed formula reindexes the original formula
-with the substituted values. -/
-theorem subst_liftSubst_reindex (f g g' : Nat → Nat) : ∀ L k,
+/-- Successive formula substitutions compose by substituting into the replacement terms,
+with the outer substitution lifted past `k` binders. -/
+theorem substWithDepth_liftSubst_subst (f g g' : Nat → Nat) : ∀ L k,
     (∀ i, Term.subst (FOL.liftSubst f L k) L (g i) = g' i) →
-    ∀ A, subst (FOL.liftSubst f L) L (reindex g L A) k = reindex g' L A := by
+    ∀ A, substWithDepth (FOL.liftSubst f L) L (subst g L A) k = subst g' L A := by
   intro L k h A
-  rw [subst_liftSubst f L (reindex g L A) k, reindex_comp (FOL.liftSubst f L k) g L A]
-  exact reindex_congr (fun i => Term.subst (FOL.liftSubst f L k) L (g i)) g' L h A
+  rw [substWithDepth_liftSubst f L (subst g L A) k, subst_comp (FOL.liftSubst f L k) g L A]
+  exact subst_congr (fun i => Term.subst (FOL.liftSubst f L k) L (g i)) g' L h A
 
 end Formula
+
+theorem liftSubst_succ (f : Nat → Nat) : ∀ L n i,
+    liftSubst f L (S n) (S i) = Term.shift L 1 (liftSubst f L n i) := by
+  intro L n i
+  have h := liftSubst_liftSubst f L 1 n (S i)
+  rw [one_add] at h
+  rw [← h]
+  exact liftSubst_add (liftSubst f L n) L 1 i
+
+namespace Term
+
+theorem subst_consSubst_shift_eq (g : Nat → Nat) : ∀ L t u,
+    subst (consSubst t g) L (shift L 1 u) = subst g L u := by
+  intro L t u
+  exact eq_trans (subst_comp (consSubst t g) (shiftSubst L 1) L u)
+    (subst_congr (fun i => subst (consSubst t g) L (shiftSubst L 1 i)) g L
+      (fun i => eq_trans (subst_shiftSubst (consSubst t g) L 1 i) (consSubst_succ t g i)) u)
+
+theorem subst_liftSubst_shiftSubst_comm (f : Nat → Nat) : ∀ L k i,
+    subst (liftSubst f L k) L (shiftSubst L k i) =
+      subst (shiftSubst L k) L (liftSubst f L 0 i) := by
+  intro L k i
+  rw [subst_shiftSubst (liftSubst f L k), liftSubst_add f, liftSubst_zero f]
+  rfl
+
+theorem subst_consSubst_liftSubst (f g a b : Nat → Nat) : ∀ L n t u,
+    subst f L t = u →
+    (∀ i, subst f L (a i) = subst b L (liftSubst g L n i)) → ∀ i,
+      subst f L (consSubst t a i) = subst (consSubst u b) L (liftSubst g L (S n) i) := by
+  intro L n t u ht h i
+  by_cases hz : i = 0
+  · rw [hz, consSubst_zero t a, ht,
+      liftSubst_of_lt g L (S n) 0 (lt_of_le_of_lt 0 n (S n) (zero_le n) (lt_succ_self n)),
+      subst_var (consSubst u b),
+      consSubst_zero u b]
+  · rw [← succ_pred i hz, consSubst_succ t a, liftSubst_succ g,
+      subst_consSubst_shift_eq b]
+    exact h (pred i)
+
+theorem subst_subst_of_eq (f g h j : Nat → Nat) : ∀ L,
+    (∀ i, subst f L (g i) = subst h L (j i)) → ∀ t,
+      subst f L (subst g L t) = subst h L (subst j L t) := by
+  intro L same t
+  exact eq_trans (subst_comp f g L t)
+    (eq_trans (subst_congr (fun i => subst f L (g i)) (fun i => subst h L (j i)) L same t)
+      (eq_symm (subst_comp h j L t)))
+
+end Term
+
+namespace Formula
+
+theorem subst_subst_of_eq (f g h j : Nat → Nat) : ∀ L,
+    (∀ i, Term.subst f L (g i) = Term.subst h L (j i)) → ∀ A,
+      subst f L (subst g L A) = subst h L (subst j L A) := by
+  intro L same A
+  exact eq_trans (subst_comp f g L A)
+    (eq_trans (subst_congr (fun i => Term.subst f L (g i))
+      (fun i => Term.subst h L (j i)) L same A) (eq_symm (subst_comp h j L A)))
+
+end Formula
+
+theorem liftSubst_congr (f g : Nat → Nat) : ∀ L n,
+    (∀ i, f i = g i) → ∀ i, liftSubst f L n i = liftSubst g L n i := by
+  intro L n h i
+  by_cases hn : i < n
+  · rw [liftSubst_of_lt f L n i hn, liftSubst_of_lt g L n i hn]
+  · have hi := le_of_not_lt n i hn
+    rw [liftSubst_of_le f L n i hi, liftSubst_of_le g L n i hi, h (i - n)]
+
+theorem liftSubst_shift_comm (f : Nat → Nat) : ∀ L n k i,
+    Term.subst (liftSubst f L (n + k)) L (liftSubst (shiftSubst L k) L n i) =
+      Term.subst (liftSubst (shiftSubst L k) L n) L (liftSubst f L n i) := by
+  intro L n k i
+  have raised : ∀ j,
+      Term.subst (liftSubst f L (n + k)) L (liftSubst (shiftSubst L k) L n j) =
+        Term.subst (liftSubst (liftSubst f L k) L n) L
+          (liftSubst (shiftSubst L k) L n j) :=
+    fun j => Term.subst_congr (liftSubst f L (n + k)) (liftSubst (liftSubst f L k) L n) L
+      (fun z => eq_symm (liftSubst_liftSubst f L n k z))
+      (liftSubst (shiftSubst L k) L n j)
+  have pointwise : ∀ j, Term.subst (liftSubst f L k) L (shiftSubst L k j) =
+      Term.subst (shiftSubst L k) L (f j) := by
+    intro j
+    rw [Term.subst_shiftSubst (liftSubst f L k), liftSubst_add f]
+    rfl
+  exact eq_trans (raised i)
+    (eq_trans (liftSubst_comp (liftSubst f L k) (shiftSubst L k) L n i)
+      (eq_trans (liftSubst_congr
+        (fun j => Term.subst (liftSubst f L k) L (shiftSubst L k j))
+        (fun j => Term.subst (shiftSubst L k) L (f j)) L n pointwise i)
+        (eq_symm (liftSubst_comp (shiftSubst L k) f L n i))))
 
 end FOL
 

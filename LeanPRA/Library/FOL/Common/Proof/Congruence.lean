@@ -388,11 +388,11 @@ theorem implicationRecord_valid (L : Nat) (T : Nat → Nat) : ∀ e a b c d r q,
     (fun e a b c d => FOL.Provable.imp_congr_under.witness_correct L T e a b c d)
 
 theorem antecedent_shift (L : Nat) (T : Nat → Nat) : ∀ s t d,
-    FOL.Formula.reindex (FOL.shiftSubst L 1) L
+    FOL.Formula.subst (FOL.shiftSubst L 1) L
       (antecedent L T s t d) = antecedent L T s t (S d) := by
   intro s t d
   rw [antecedent, antecedent, equation, equation,
-    FOL.Formula.reindex_equal (FOL.shiftSubst L 1),
+    FOL.Formula.subst_equal (FOL.shiftSubst L 1),
     ← FOL.Term.shift_eq_subst_shiftSubst, ← FOL.Term.shift_eq_subst_shiftSubst,
     FOL.Term.shift_shift, FOL.Term.shift_shift, add_one]
 
@@ -548,21 +548,21 @@ theorem formulaRecord_all (L : Nat) (T : Nat → Nat) : ∀ s t A d,
 
 def formulaTest (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat → Nat := fun s t A d =>
   recordTest L T equivalenceFormula (antecedent L T s t d)
-    (FOL.Formula.subst (FOL.Term.instantiateAt L 0 s) L A d)
-    (FOL.Formula.subst (FOL.Term.instantiateAt L 0 t) L A d)
+    (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 s) L A d)
+    (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 t) L A d)
     (formulaRecord L T s t A d)
 
 theorem formulaTest_eq (L : Nat) (T : Nat → Nat) : ∀ s t A d, formulaTest L T s t A d =
     recordTest L T equivalenceFormula (antecedent L T s t d)
-      (FOL.Formula.subst (FOL.Term.instantiateAt L 0 s) L A d)
-      (FOL.Formula.subst (FOL.Term.instantiateAt L 0 t) L A d)
+      (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 s) L A d)
+      (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 t) L A d)
       (formulaRecord L T s t A d) := fun s t A d => rfl
 
 /-- Every formula traversal produces a checked proof of the required equivalence. -/
 theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
     Record L T equivalenceFormula (antecedent L T s t d)
-      (FOL.Formula.subst (FOL.Term.instantiateAt L 0 s) L A d)
-      (FOL.Formula.subst (FOL.Term.instantiateAt L 0 t) L A d)
+      (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 s) L A d)
+      (FOL.Formula.substWithDepth (FOL.Term.instantiateAt L 0 t) L A d)
       (formulaRecord L T s t A d) := by
   have good : ∀ A d, formulaTest L T s t A d = 1 := by
     apply FOL.Formula.induction_eq (formulaTest L T s t) (fun _ _ => 1) L
@@ -570,18 +570,18 @@ theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
       rw [formulaTest_eq L T]
       apply and_right (recordTest_iff L T equivalenceFormula _ _ _ _)
       rw [formulaRecord_falsum L T,
-        FOL.Formula.subst_falsum (FOL.Term.instantiateAt L 0 s)
+        FOL.Formula.substWithDepth_falsum (FOL.Term.instantiateAt L 0 s)
           L d,
-        FOL.Formula.subst_falsum (FOL.Term.instantiateAt L 0 t)
+        FOL.Formula.substWithDepth_falsum (FOL.Term.instantiateAt L 0 t)
           L d]
       exact falsumRecord_valid L T _
     · intro a b d
       rw [formulaTest_eq L T]
       apply and_right (recordTest_iff L T equivalenceFormula _ _ _ _)
       rw [formulaRecord_equal L T,
-        FOL.Formula.subst_equal (FOL.Term.instantiateAt L 0 s)
+        FOL.Formula.substWithDepth_equal (FOL.Term.instantiateAt L 0 s)
           L a b d,
-        FOL.Formula.subst_equal (FOL.Term.instantiateAt L 0 t)
+        FOL.Formula.substWithDepth_equal (FOL.Term.instantiateAt L 0 t)
           L a b d]
       exact equalityRecord_valid L T _ _ _ _ _ _ _
         (termRecord_valid L T s t d a) (termRecord_valid L T s t d b)
@@ -604,8 +604,8 @@ theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
       rw [formulaTest_eq L T]
       apply and_right (recordTest_iff L T equivalenceFormula _ _ _ _)
       rw [formulaRecord_rel L T s t j xs d hj,
-        FOL.Formula.subst_rel (FOL.Term.instantiateAt L 0 s) L j xs d hj,
-        FOL.Formula.subst_rel (FOL.Term.instantiateAt L 0 t) L j xs d hj]
+        FOL.Formula.substWithDepth_rel (FOL.Term.instantiateAt L 0 s) L j xs d hj,
+        FOL.Formula.substWithDepth_rel (FOL.Term.instantiateAt L 0 t) L j xs d hj]
       exact h
     · intro A B d hA hB
       rw [formulaTest_eq L T] at hA
@@ -613,9 +613,9 @@ theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
       rw [formulaTest_eq L T]
       apply and_right (recordTest_iff L T equivalenceFormula _ _ _ _)
       rw [formulaRecord_imp L T,
-        FOL.Formula.subst_imp (FOL.Term.instantiateAt L 0 s)
+        FOL.Formula.substWithDepth_imp (FOL.Term.instantiateAt L 0 s)
           L A B d,
-        FOL.Formula.subst_imp (FOL.Term.instantiateAt L 0 t)
+        FOL.Formula.substWithDepth_imp (FOL.Term.instantiateAt L 0 t)
           L A B d]
       exact implicationRecord_valid L T _ _ _ _ _ _ _
         (and_left (recordTest_iff L T equivalenceFormula _ _ _ _) hA)
@@ -625,9 +625,9 @@ theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
       rw [formulaTest_eq L T]
       apply and_right (recordTest_iff L T equivalenceFormula _ _ _ _)
       rw [formulaRecord_all L T,
-        FOL.Formula.subst_all (FOL.Term.instantiateAt L 0 s)
+        FOL.Formula.substWithDepth_all (FOL.Term.instantiateAt L 0 s)
           L A d,
-        FOL.Formula.subst_all (FOL.Term.instantiateAt L 0 t)
+        FOL.Formula.substWithDepth_all (FOL.Term.instantiateAt L 0 t)
           L A d]
       exact universalRecord_valid L T s t d _ _ _
         (and_left (recordTest_iff L T equivalenceFormula _ _ _ _) hA)
@@ -654,15 +654,15 @@ theorem replace (L : Nat) (T : Nat → Nat) (s t A : Nat) : FOL.Provable L T
     (FOL.Formula.imp (FOL.Formula.equal L s t)
       (FOL.Formula.conj
         (FOL.Formula.imp
-          (FOL.Formula.reindex (FOL.consSubst s (FOL.shiftSubst L 1)) L A)
-          (FOL.Formula.reindex (FOL.consSubst t (FOL.shiftSubst L 1)) L A))
+          (FOL.Formula.subst (FOL.consSubst s (FOL.shiftSubst L 1)) L A)
+          (FOL.Formula.subst (FOL.consSubst t (FOL.shiftSubst L 1)) L A))
         (FOL.Formula.imp
-          (FOL.Formula.reindex (FOL.consSubst t (FOL.shiftSubst L 1)) L A)
-          (FOL.Formula.reindex (FOL.consSubst s (FOL.shiftSubst L 1)) L A)))) := by
+          (FOL.Formula.subst (FOL.consSubst t (FOL.shiftSubst L 1)) L A)
+          (FOL.Formula.subst (FOL.consSubst s (FOL.shiftSubst L 1)) L A)))) := by
   have h := substitution_congruence L T s t
-    (FOL.Formula.reindex (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
-  rw [FOL.Formula.instantiate_reindex_liftSubst (FOL.shiftSubst L 1) L A s,
-    FOL.Formula.instantiate_reindex_liftSubst (FOL.shiftSubst L 1) L A t] at h
+    (FOL.Formula.subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A)
+  rw [FOL.Formula.instantiate_subst_liftSubst (FOL.shiftSubst L 1) L A s,
+    FOL.Formula.instantiate_subst_liftSubst (FOL.shiftSubst L 1) L A t] at h
   exact h
 
 end FOL.Equality

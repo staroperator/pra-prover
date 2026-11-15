@@ -12,7 +12,8 @@ public import LeanPRA.Library.Logic
 - `rintro` introduces names and destructures nested tuple and disjunction patterns, as in
   `rintro n (hp, hq)` or `rintro (hp | hq)`. Later patterns are introduced in every branch.
 - `rcases h with pat` destructures a proof with the same patterns as `rintro`, including
-  `((hp, hq) | hr)` and `(n, (hp | hq))`.
+  `((hp, hq) | hr)` and `(n, (hp | hq))`. A local source hypothesis is removed from each branch.
+  Tuples also accept angle brackets, as in `⟨hp, hq⟩`.
 - `constructor`, `left`, `right`, and `exists` build logical introductions.
 - `assumption`, `rfl`, and `exfalso` use hypotheses, equality reflexivity, and falsity elimination.
 - `by_contra h` applies `dne` to the goal `P`, introducing `h : ¬ P` with goal `False`.
@@ -39,6 +40,7 @@ syntax:max ident : praCasesPattern
 syntax:max "_" : praCasesPattern
 syntax:max "(" praCasesPattern ")" : praCasesPattern
 syntax:max "(" praCasesPattern ", " praCasesPattern,+ ")" : praCasesPattern
+syntax:max "⟨" praCasesPattern ", " praCasesPattern,+ "⟩" : praCasesPattern
 syntax:30 praCasesPattern:31 atomic(" | " praCasesPattern:30) : praCasesPattern
 syntax (name := rintroTac) "rintro" (ppSpace colGt praCasesPattern:arg)+ : praTactic
 syntax (name := rcasesTac) "rcases" praExpr " with " praCasesPattern : praTactic
@@ -87,6 +89,8 @@ private partial def patternBinder (pat : TSyntax `praCasesPattern) :
     let binder ← `(praFunBinder| _)
     return (⟨binder.raw.setInfo pat.raw.getHeadInfo⟩, [])
   | `(praCasesPattern| ($p:praCasesPattern)) => patternBinder p
+  | `(praCasesPattern| ⟨$p:praCasesPattern, $ps:praCasesPattern,*⟩) =>
+    patternBinder (← `(praCasesPattern| ($p:praCasesPattern, $ps:praCasesPattern,*)))
   | `(praCasesPattern| ($p:praCasesPattern, $ps:praCasesPattern,*)) =>
     let (firstBinder, splits) ← patternBinder p
     let mut binders := #[]
@@ -105,22 +109,37 @@ private partial def patternBinder (pat : TSyntax `praCasesPattern) :
     return (← `(praFunBinder| $id:ident), [(id, a, b)])
   | _ => throwUnsupportedSyntax
 
-private partial def patternSplits (used : List Name) (splits : List PatternSplit) :
-    TacticM Unit := do
+-- Tuple elaboration introduces unnamed intermediate proofs. Only named components remain.
+private def clearPatternTemporaries (outerCount : Nat) : TacticM Unit := do
+  let names := (← getGoal).names.proofs
+  for i in (List.range (names.length - outerCount)).reverse do
+    if names[i]!.isAnonymous then Tactic.clearHypothesis i
+
+private def clearNamedHypothesis (name : Name) : TacticM Unit := do
+  let names := (← getGoal).names.proofs
+  let some index := names.idxOf? name | throwError "unknown PRA hypothesis {name}"
+  Tactic.clearHypothesis index
+
+private partial def patternSplits (used : List Name) (splits : List PatternSplit)
+    (consumeSources : Bool) : TacticM Unit := do
   for (id, a, b) in splits do
     onAllGoals do
       let ((leftBinder, leftSplits), (rightBinder, rightSplits)) ← (do
         let leftResult ← patternBinder a
         let rightResult ← patternBinder b
         pure (leftResult, rightResult)).run' (used ++ (← getGoal).names.used)
+      let outerCount := (← getGoal).context.proofs.length
       Tactic.refine (← `(praExpr| or_elim $id:ident
         (fun $leftBinder:praFunBinder => ?_) (fun $rightBinder:praFunBinder => ?_)))
+      if consumeSources then onAllGoals do
+        clearPatternTemporaries outerCount
+        clearNamedHypothesis id.getId
       let [leftGoal, rightGoal] ← get | throwError "pattern split expected two disjunction branches"
       set [leftGoal]
-      patternSplits used leftSplits
+      patternSplits used leftSplits consumeSources
       let leftGoals ← get
       set [rightGoal]
-      patternSplits used rightSplits
+      patternSplits used rightSplits consumeSources
       modify (leftGoals ++ ·)
 
 /-- Elaborate elementary logical tactics into checked PRA proof refinements. -/
@@ -150,7 +169,7 @@ def evalLogical : Tactic := fun stx => do
       onAllGoals do
         let (binder, splits) ← (patternBinder pat).run' (used ++ (← getGoal).names.used)
         Tactic.refine (← `(praExpr| fun $binder:praFunBinder => ?_))
-        patternSplits used splits
+        patternSplits used splits false
     modify (· ++ rest)
   | `(praTactic| rcases $p:praExpr with $pat:praCasesPattern) =>
     let main ← mainGoal
@@ -161,8 +180,11 @@ def evalLogical : Tactic := fun stx => do
     let used := patternNames stx
     let (binder, splits) ← (patternBinder pat).run' (used ++ goal.names.used)
     Tactic.assertPremise type proof
+    if let .hyp index := proof then Tactic.clearHypothesis index
+    let outerCount := (← getGoal).context.proofs.length
     Tactic.refine (← `(praExpr| fun $binder:praFunBinder => ?_))
-    patternSplits used splits
+    clearPatternTemporaries outerCount
+    patternSplits used splits true
     modify (· ++ rest)
   | `(praTactic| constructor) =>
     let goal ← getGoal
