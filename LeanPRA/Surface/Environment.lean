@@ -12,6 +12,7 @@ Environment extensions for PRA declarations across Lean modules:
 - `importModuleExports` loads cached declarations and checks module metadata.
 - `checkModuleExports` rechecks all imported declarations over the empty Core environment.
 - `CoreEnvironment.getState` reads the Core declaration map.
+- `CoreEnvironment.hasModuleDeclarations` inspects a compiled module's own PRA export.
 - `CoreEnvironment.isLocal` checks whether the current module introduced a declaration.
 - `publishDeclaration` records an accepted declaration in the environment extension.
 - `registerNamespaceParents` registers PRA namespaces in Lean's scope table.
@@ -158,6 +159,23 @@ def setState (env : Lean.Environment) (environment : Core.Environment) : Lean.En
 /-- Get the exported `ModuleExport` array for a module index. -/
 def getModuleEntries (env : Lean.Environment) (index : Lean.ModuleIdx) : Array ModuleExport :=
   moduleEnvironment.getModuleEntries env index
+
+/-- Check whether compiled module data contains PRA declarations owned by `owner`.
+The data must come from a compatible `.olean` file. Its extension entries have erased types;
+matching this extension's name identifies the `ModuleExport` payload. Private dependency bundles
+are separate from the module's own declarations. -/
+unsafe def hasModuleDeclarations (data : Lean.ModuleData) (owner : Lean.Name) :
+    Except String Bool := do
+  let some (_, entries) := data.entries.find? (·.1 == moduleEnvironment.name) | return false
+  let exports : Array ModuleExport := unsafeCast entries
+  unless exports.size ≤ 1 do
+    throw s!"PRA import `{owner}`: expected at most one module export"
+  let mut found := false
+  for entry in exports do
+    unless entry.owner == owner do
+      throw s!"PRA import `{owner}`: wrong owner `{entry.owner}`"
+    found := !entry.declarations.isEmpty
+  return found
 
 /-- Number of imported declarations rechecked via `pra.recheckImports`. -/
 def checkedDeclarations (env : Lean.Environment) : Nat :=

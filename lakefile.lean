@@ -3,11 +3,12 @@ import Lake
 open Lake DSL
 
 /-!
-# PRA builds and exports
+# PRA builds, exports, and documentation
 
 - The module facet `pra` writes a module's specification and object file after its imports are
   built.
 - The library facet `pra` collects exports in dependency order and writes `modules.txt`.
+- The optional `docs` facet documents PRA declarations in the library's root modules and imports.
 
 The default `LeanPRA` build runs its `pra` facet and builds all Library source modules.
 -/
@@ -120,3 +121,53 @@ library_facet pra (lib) : System.FilePath := do
       IO.FS.writeFile temporary (String.intercalate "\n" owners.toList ++ "\n")
       IO.FS.rename temporary marker
     return marker
+
+lean_lib PRADocGen where
+  roots := #[`LeanPRA.DocGen.Pretty, `LeanPRA.DocGen.Writer,
+    `LeanPRA.DocGen.Site, `LeanPRA.DocGen.Driver]
+
+lean_exe praDocGen where
+  root := `LeanPRA.DocGen.Main
+  supportInterpreter := true
+
+private def docgenExecutable : FetchM (Job System.FilePath) := do
+  let some exe ← findLeanExe? `praDocGen | error "docgen executable missing"
+  exe.exe.fetch
+
+private def docgen (args : Array String) (deps : Job Unit) : FetchM (Job Unit) := do
+  let native ← docgenExecutable
+  let deps := deps.zipWith (fun _ p => p) native
+  deps.mapM fun path => do
+    proc { cmd := path.toString
+           env := ← getAugmentedEnv
+           args }
+
+module_facet docs (mod) : System.FilePath := do
+  let pkg ← getRootPackage
+  let arts ← mod.leanArts.fetch
+  let directory := pkg.buildDir / "doc-data"
+  let path := directory / s!"{mod.name}.json"
+  let native ← docgenExecutable
+  let config ← inputTextFile (pkg.dir / "lakefile.lean")
+  let deps := (arts.mix config).zipWith (fun _ path => path) native
+  deps.mapM fun executable => do
+    buildFileUnlessUpToDate' path do
+      proc { cmd := executable.toString
+             env := ← getAugmentedEnv
+             args := #["module", directory.toString, mod.name.toString] }
+    return path
+
+library_facet docs (lib) : System.FilePath := do
+  let pkg ← getRootPackage
+  let modules := (← (← lib.modules.fetch).await).qsort
+    (fun a b => a.name.toString < b.name.toString)
+  let names := modules.map (·.name)
+  let jobs ← modules.mapM fun mod => fetch <| mod.facet `docs
+  let mut deps := (Job.mixArray jobs)
+  for file in ["style.css", "search.js"] do
+    deps := deps.mix (← inputTextFile (pkg.dir / "LeanPRA/DocGen" / file))
+  let directory := pkg.buildDir / "doc"
+  -- Site assembly checks its cache and removes pages outside the current import graph.
+  let job ← docgen (#["site", (pkg.buildDir / "doc-data").toString, directory.toString,
+    (pkg.dir / "LeanPRA/DocGen").toString] ++ names.map (·.toString)) deps
+  return job.map fun _ => directory / "index.html"
