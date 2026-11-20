@@ -305,80 +305,142 @@ theorem isInstantiation_iff : ∀ L F,
 /-- `isFunctionCongruence L F` tests whether formula code `F` in language code `L` has the form
 `s₁ = t₁ → ⋯ → sₙ = tₙ → f(s₁, …, sₙ) = f(t₁, …, tₙ)` for a function symbol `f` of `L`. -/
 def isFunctionCongruence : Nat → Nat → Nat := fun L F =>
-  anyBelow (fun j =>
-    let conclusion := iter (fun B => unpairRight (Formula.arg L B)) (Language.functionArity L j) F;
-    let xs := Term.arg L (unpairLeft (Formula.arg L conclusion));
-    let ys := Term.arg L (unpairRight (Formula.arg L conclusion));
-    eqb F (Formula.equalPremises L (Language.functionArity L j) xs ys
-      (Formula.equal L (Term.app L j xs) (Term.app L j ys)))) (Language.functionCount L)
+  let p := Language.functionCount L;
+  let f := Language.functionFamilyCount L;
+  let count := p + f;
+  anyBelow (fun b =>
+    let conclusion := iter (fun B => unpairRight (Formula.arg L B))
+      (Language.functionSymbolArity L b) F;
+    let lhs := unpairLeft (Formula.arg L conclusion);
+    let rhs := unpairRight (Formula.arg L conclusion);
+    let j := pred (Term.head L lhs);
+    let xs := Term.arg L lhs;
+    let ys := Term.arg L rhs;
+    let entry := ite (ltb j p) j (p + ((j - p) % f));
+    band (ltb entry count)
+      (eqb F (Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
+        (Formula.equal L (Term.app L j xs) (Term.app L j ys))))) count
 
 theorem isFunctionCongruence_bool : ∀ L F, IsBool (isFunctionCongruence L F) :=
-  fun L F => anyBelow_bool _ (Language.functionCount L)
+  fun L F => anyBelow_bool _ _
 
 theorem isFunctionCongruence_iff : ∀ L F,
-    isFunctionCongruence L F = 1 ↔ ∃ j xs ys, j < Language.functionCount L ∧
-      F = Formula.equalPremises L (Language.functionArity L j) xs ys
+    isFunctionCongruence L F = 1 ↔ ∃ j xs ys, Language.IsFunction L j ∧
+      F = Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
         (Formula.equal L (Term.app L j xs) (Term.app L j ys)) := by
   intro L F
+  let p := Language.functionCount L
+  let f := Language.functionFamilyCount L
+  let count := p + f
   constructor
   · intro h
-    rcases and_left (anyBelow_eq_one _ (Language.functionCount L)) h with (j, hj, he)
-    exact (j,
-      Term.arg L (unpairLeft (Formula.arg L
-        (iter (fun B => unpairRight (Formula.arg L B)) (Language.functionArity L j) F))),
-      Term.arg L (unpairRight (Formula.arg L
-        (iter (fun B => unpairRight (Formula.arg L B)) (Language.functionArity L j) F))),
-      hj, and_left (eqb_eq_one F _) (and_right (bool_eq_one _ (eqb_bool F _)) he))
+    rcases and_left (anyBelow_eq_one _ count) h with (b, hb, he)
+    let conclusion := iter (fun B => unpairRight (Formula.arg L B))
+      (Language.functionSymbolArity L b) F
+    let lhs := unpairLeft (Formula.arg L conclusion)
+    let rhs := unpairRight (Formula.arg L conclusion)
+    let j := pred (Term.head L lhs)
+    let xs := Term.arg L lhs
+    let ys := Term.arg L rhs
+    let shape := Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
+      (Formula.equal L (Term.app L j xs) (Term.app L j ys))
+    let entry := ite (ltb j p) j (p + ((j - p) % f))
+    have ht := and_left (band_eq_one_of_bool (ltb entry count) (eqb F shape)
+      (ltb_bool entry count) (eqb_bool F shape))
+      (and_right (bool_eq_one _ (band_bool (ltb entry count) (eqb F shape))) he)
+    exact (j, xs, ys, and_left (ltb_eq_one entry count) (and_left ht),
+      and_left (eqb_eq_one F shape) (and_right ht))
   · rintro (j, xs, ys, hj, he)
     rw [isFunctionCongruence]
-    apply and_right (anyBelow_eq_one _ (Language.functionCount L))
-    exists j
+    apply and_right (anyBelow_eq_one _ count)
+    let entry := ite (ltb j p) j (p + ((j - p) % f))
+    exists entry
     constructor
     · exact hj
-    apply and_left (bool_eq_one _ (eqb_bool F _))
-    apply and_right (eqb_eq_one F _)
-    rw [he, Formula.equalPremises_consequent,
-      Formula.arg_equal, unpairLeft_pair, unpairRight_pair,
+    have hc : iter (fun B => unpairRight (Formula.arg L B))
+        (Language.functionSymbolArity L entry) F =
+        Formula.equal L (Term.app L j xs) (Term.app L j ys) := by
+      rw [Language.functionSymbolArity_ite_ltb_mod, he, Formula.equalPremises_consequent]
+    rw [hc]
+    change ¬ band _ _ = 0
+    rw [Formula.arg_equal, unpairLeft_pair, unpairRight_pair,
+      Term.head_app L j xs hj, pred_succ,
       Term.arg_app L j xs hj, Term.arg_app L j ys hj]
+    apply and_left (bool_eq_one _ (band_bool _ _))
+    apply band_eq_one_of_eq_one
+    · exact and_right (ltb_eq_one _ _) hj
+    apply and_right (eqb_eq_one _ _)
+    exact he
 
 /-- `isRelationCongruence L F` tests whether formula code `F` in language code `L` has the form
 `s₁ = t₁ → ⋯ → sₙ = tₙ → (R(s₁, …, sₙ) → R(t₁, …, tₙ))` for a relation symbol `R` of `L`. -/
 def isRelationCongruence : Nat → Nat → Nat := fun L F =>
-  anyBelow (fun j =>
-    let conclusion := iter (fun B => unpairRight (Formula.arg L B)) (Language.relationArity L j) F;
-    let xs := Formula.arg L (unpairLeft (Formula.arg L conclusion));
-    let ys := Formula.arg L (unpairRight (Formula.arg L conclusion));
-    eqb F (Formula.equalPremises L (Language.relationArity L j) xs ys
-      (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys)))) (Language.relationCount L)
+  let p := Language.relationCount L;
+  let f := Language.relationFamilyCount L;
+  let count := p + f;
+  anyBelow (fun b =>
+    let conclusion := iter (fun B => unpairRight (Formula.arg L B))
+      (Language.relationSymbolArity L b) F;
+    let lhs := unpairLeft (Formula.arg L conclusion);
+    let rhs := unpairRight (Formula.arg L conclusion);
+    let j := Formula.relationIndex L lhs;
+    let xs := Formula.arg L lhs;
+    let ys := Formula.arg L rhs;
+    let entry := ite (ltb j p) j (p + ((j - p) % f));
+    band (ltb entry count)
+      (eqb F (Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
+        (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))))) count
 
 theorem isRelationCongruence_bool : ∀ L F, IsBool (isRelationCongruence L F) :=
-  fun L F => anyBelow_bool _ (Language.relationCount L)
+  fun L F => anyBelow_bool _ _
 
 theorem isRelationCongruence_iff : ∀ L F,
-    isRelationCongruence L F = 1 ↔ ∃ j xs ys, j < Language.relationCount L ∧
-      F = Formula.equalPremises L (Language.relationArity L j) xs ys
+    isRelationCongruence L F = 1 ↔ ∃ j xs ys, Language.IsRelation L j ∧
+      F = Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
         (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys)) := by
   intro L F
+  let p := Language.relationCount L
+  let f := Language.relationFamilyCount L
+  let count := p + f
   constructor
   · intro h
-    rcases and_left (anyBelow_eq_one _ (Language.relationCount L)) h with (j, hj, he)
-    exact (j,
-      Formula.arg L (unpairLeft (Formula.arg L
-        (iter (fun B => unpairRight (Formula.arg L B)) (Language.relationArity L j) F))),
-      Formula.arg L (unpairRight (Formula.arg L
-        (iter (fun B => unpairRight (Formula.arg L B)) (Language.relationArity L j) F))),
-      hj, and_left (eqb_eq_one F _) (and_right (bool_eq_one _ (eqb_bool F _)) he))
+    rcases and_left (anyBelow_eq_one _ count) h with (b, hb, he)
+    let conclusion := iter (fun B => unpairRight (Formula.arg L B))
+      (Language.relationSymbolArity L b) F
+    let lhs := unpairLeft (Formula.arg L conclusion)
+    let rhs := unpairRight (Formula.arg L conclusion)
+    let j := Formula.relationIndex L lhs
+    let xs := Formula.arg L lhs
+    let ys := Formula.arg L rhs
+    let shape := Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
+      (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))
+    let entry := ite (ltb j p) j (p + ((j - p) % f))
+    have ht := and_left (band_eq_one_of_bool (ltb entry count) (eqb F shape)
+      (ltb_bool entry count) (eqb_bool F shape))
+      (and_right (bool_eq_one _ (band_bool (ltb entry count) (eqb F shape))) he)
+    exact (j, xs, ys, and_left (ltb_eq_one entry count) (and_left ht),
+      and_left (eqb_eq_one F shape) (and_right ht))
   · rintro (j, xs, ys, hj, he)
     rw [isRelationCongruence]
-    apply and_right (anyBelow_eq_one _ (Language.relationCount L))
-    exists j
+    apply and_right (anyBelow_eq_one _ count)
+    let entry := ite (ltb j p) j (p + ((j - p) % f))
+    exists entry
     constructor
     · exact hj
-    apply and_left (bool_eq_one _ (eqb_bool F _))
-    apply and_right (eqb_eq_one F _)
-    rw [he, Formula.equalPremises_consequent,
-      Formula.arg_imp, unpairLeft_pair, unpairRight_pair,
+    have hc : iter (fun B => unpairRight (Formula.arg L B))
+        (Language.relationSymbolArity L entry) F =
+        Formula.imp (Formula.rel L j xs) (Formula.rel L j ys) := by
+      rw [Language.relationSymbolArity_ite_ltb_mod, he, Formula.equalPremises_consequent]
+    rw [hc]
+    change ¬ band _ _ = 0
+    rw [Formula.arg_imp, unpairLeft_pair, unpairRight_pair,
+      Formula.relationIndex_rel L j xs hj,
       Formula.arg_rel L j xs hj, Formula.arg_rel L j ys hj]
+    apply and_left (bool_eq_one _ (band_bool _ _))
+    apply band_eq_one_of_eq_one
+    · exact and_right (ltb_eq_one _ _) hj
+    apply and_right (eqb_eq_one _ _)
+    exact he
 
 end LogicalAxiom
 
@@ -415,11 +477,11 @@ theorem isLogicalAxiom_iff : ∀ L F, isLogicalAxiom L F = 1 ↔
     (∃ s t, F = Formula.imp (Formula.equal L s t) (Formula.equal L t s)) ∨
     (∃ s t u, F = Formula.imp (Formula.equal L s t)
       (Formula.imp (Formula.equal L t u) (Formula.equal L s u))) ∨
-    (∃ j xs ys, j < Language.functionCount L ∧
-      F = Formula.equalPremises L (Language.functionArity L j) xs ys
+    (∃ j xs ys, Language.IsFunction L j ∧
+      F = Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
         (Formula.equal L (Term.app L j xs) (Term.app L j ys))) ∨
-    (∃ j xs ys, j < Language.relationCount L ∧
-      F = Formula.equalPremises L (Language.relationArity L j) xs ys
+    (∃ j xs ys, Language.IsRelation L j ∧
+      F = Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
         (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))) := by
   intro L F
   apply iff_trans (bor_eq_one_of_bool _ _ (LogicalAxiom.isImplication_bool L F)
@@ -518,11 +580,13 @@ theorem isLogicalAxiom_all : ∀ L body, isLogicalAxiom L (Formula.all body) = 0
     exact succ_ne_zero 0 (succ_inj hh)
   · rcases h8 with (j, xs, ys, hj, he)
     have hh := eq_congr (Formula.head L) he
-    rw [Formula.head_all, Language.functionArity, Formula.head_equalPremises_succ] at hh
+    rw [Formula.head_all, Language.functionSymbolArity,
+      Formula.head_equalPremises_succ] at hh
     exact succ_ne_zero 0 (succ_inj hh)
   · rcases h9 with (j, xs, ys, hj, he)
     have hh := eq_congr (Formula.head L) he
-    rw [Formula.head_all, Language.relationArity, Formula.head_equalPremises_succ] at hh
+    rw [Formula.head_all, Language.relationSymbolArity,
+      Formula.head_equalPremises_succ] at hh
     exact succ_ne_zero 0 (succ_inj hh)
 
 theorem isLogicalAxiom_of_implication : ∀ L A B,
@@ -615,8 +679,8 @@ theorem isLogicalAxiom_of_transitivity : ∀ L s t u,
   exact (s, t, u, rfl)
 
 theorem isLogicalAxiom_of_functionCongruence : ∀ L j xs ys,
-    j < Language.functionCount L →
-    isLogicalAxiom L (Formula.equalPremises L (Language.functionArity L j) xs ys
+    Language.IsFunction L j →
+    isLogicalAxiom L (Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
       (Formula.equal L (Term.app L j xs) (Term.app L j ys))) = 1 := by
   intro L j xs ys h
   apply and_right (isLogicalAxiom_iff L _)
@@ -632,8 +696,8 @@ theorem isLogicalAxiom_of_functionCongruence : ∀ L j xs ys,
   exact (j, xs, ys, h, rfl)
 
 theorem isLogicalAxiom_of_relationCongruence : ∀ L j xs ys,
-    j < Language.relationCount L →
-    isLogicalAxiom L (Formula.equalPremises L (Language.relationArity L j) xs ys
+    Language.IsRelation L j →
+    isLogicalAxiom L (Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
       (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))) = 1 := by
   intro L j xs ys h
   apply and_right (isLogicalAxiom_iff L _)

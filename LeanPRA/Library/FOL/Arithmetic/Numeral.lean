@@ -30,35 +30,51 @@ namespace Arithmetic
 fol_def num over Arithmetic (n : Nat) : term :=
   ${primrec (FOL.Term.const language 0) (fun _ t => FOL.Term.app language 0 t) n}
 
-theorem num_zero : num 0 = FOL.Term.const language 0 := rfl
+theorem num_zero : num 0 = FOL.Term.const language 0 := by
+  have h : ∀ n, num n =
+      primrec (FOL.Term.const language 0) (fun _ t => FOL.Term.app language 0 t) n :=
+    fun n => rfl
+  exact eq_trans (h 0)
+    (primrec_zero (fun _ t => FOL.Term.app language 0 t) (FOL.Term.const language 0))
 
-theorem num_succ : ∀ n, num («S» n) = FOL.Term.app language 0 (num n) :=
-  fun n => rfl
+theorem num_succ : ∀ n, num («S» n) = FOL.Term.app language 0 (num n) := by
+  intro n
+  exact primrec_succ (fun _ t => FOL.Term.app language 0 t) (FOL.Term.const language 0) n
 
 theorem bound_num : ∀ n, FOL.Term.bound language (num n) = 0 := by
-  have hc : 0 < FOL.Language.constants language := by
+  have hc : FOL.Language.IsConstant language 0 := by
+    apply FOL.Language.isConstant_of_lt
     rw [constants_language]
     exact lt_succ_self 0
   have hs : 0 < FOL.Language.functionCount language := by
     rw [functionCount_language]
     exact pos_of_ne_zero 3 (succ_ne_zero 2)
+  have h := FOL.Language.isFunction_of_lt language 0 hs
+  have ha : FOL.Language.functionSymbolArity language 0 = 1 := by
+    rw [FOL.Language.functionSymbolArity_of_lt language 0 hs, succ_arity]
   intro n
   induction n with k ih
-  · exact FOL.Term.bound_const language 0 hc
-  · rw [num_succ, FOL.Term.bound_app_one language 0 (num k) hs succ_arity]
+  · rw [num_zero]
+    exact FOL.Term.bound_const language 0 hc
+  · rw [num_succ, FOL.Term.bound_app_one language 0 (num k) h ha]
     exact ih
 
 theorem subst_num (f : Nat → Nat) : ∀ n, FOL.Term.subst f language (num n) = num n := by
-  have hc : 0 < FOL.Language.constants language := by
+  have hc : FOL.Language.IsConstant language 0 := by
+    apply FOL.Language.isConstant_of_lt
     rw [constants_language]
     exact lt_succ_self 0
   have hs : 0 < FOL.Language.functionCount language := by
     rw [functionCount_language]
     exact pos_of_ne_zero 3 (succ_ne_zero 2)
+  have h := FOL.Language.isFunction_of_lt language 0 hs
+  have ha : FOL.Language.functionSymbolArity language 0 = 1 := by
+    rw [FOL.Language.functionSymbolArity_of_lt language 0 hs, succ_arity]
   intro n
   induction n with k ih
-  · exact FOL.Term.subst_const f language 0 hc
-  · rw [num_succ, FOL.Term.subst_app_one f language 0 (num k) hs succ_arity, ih]
+  · rw [num_zero]
+    exact FOL.Term.subst_const f language 0 hc
+  · rw [num_succ, FOL.Term.subst_app_one f language 0 (num k) h ha, ih]
 
 end Arithmetic
 

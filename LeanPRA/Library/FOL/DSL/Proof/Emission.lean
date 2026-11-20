@@ -28,13 +28,17 @@ def SchemaArg.variables : SchemaArg → List Name
   | .formula A bs => A.variables.filter (!bs.contains ·)
   | .term t => t.variables
   | .tuple ts => ts.flatMap TermView.variables
-  | .number _ => []
+  | .number _ | .member .. => []
 
 def SchemaArg.encode (L : Term) (bound fvars : List Name) : SchemaArg → CommandElabM Term
   | .formula A bs => A.encode L (bs ++ bound) fvars
   | .term t => t.encode L bound fvars
   | .tuple ts => return tupleCode (← ts.mapM (TermView.encode L bound fvars))
   | .number n => pure (numeral n)
+  | .member b k isRelation =>
+    let member := if isRelation then `FOL.Language.relationFamilyMember
+      else `FOL.Language.functionFamilyMember
+    pure (applyDefinition member [L, numeral b, k])
 
 private partial def schedule (nodes : Array Node) (root : Nat) (positions : List Name) :
     StateM (Array (Node × List Name) × Std.HashMap (Nat × List Name) Nat) Nat := do
@@ -143,22 +147,18 @@ def derivationProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
               | 8 => pure (imp (eq a b) (imp (eq b c) (eq a c)),
                   `FOL.Provable.transitivity, [L, a, b, c])
               | 9 => pure (applyDefinition `FOL.Formula.equalPremises
-                  [L, applyDefinition `FOL.Language.functionArity [L, a], b, c,
+                  [L, applyDefinition `FOL.Language.functionSymbolArity [L, a], b, c,
                    eq (applyDefinition `FOL.Term.app [L, a, b])
                       (applyDefinition `FOL.Term.app [L, a, c])],
                   `FOL.Provable.functionCongruence, [L, a, b, c])
               | 10 => pure (applyDefinition `FOL.Formula.equalPremises
-                  [L, applyDefinition `FOL.Language.relationArity [L, a], b, c,
+                  [L, applyDefinition `FOL.Language.relationSymbolArity [L, a], b, c,
                    imp (applyDefinition `FOL.Formula.rel [L, a, b])
                        (applyDefinition `FOL.Formula.rel [L, a, c])],
                   `FOL.Provable.relationCongruence, [L, a, b, c])
               | _ => throwError "unknown logical axiom family"
             let conditions ← if tag == 9 || tag == 10 then do
-                let count := applyDefinition
-                  (if tag == 9 then `FOL.Language.functionCount else `FOL.Language.relationCount)
-                  [L]
-                let h ← calculateClosedEquality (applyDefinition `ltb [a, count]) (numeral 1)
-                pure [.impElim (← projectTheorem false `ltb_eq_one [a, count]) h]
+                pure [← (symbolProof L a (tag == 10)).run' {}]
               else pure []
             let proof := applyTheorem lemma [] (L :: theory :: params.tail) conditions
             transportProvable L theory schema A proof
@@ -173,7 +173,7 @@ def derivationProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
             let axiomName := owner.name ++ info.name
             let values ← actuals.toList.mapM fun actual =>
               actual.encode L [] (parameters.reverse ++ localPositions)
-            let mut instanceCode := applyDefinition (axiomName ++ `formula) values
+            let mut instanceCode := applyDefinition (info.formulaName owner.name) values
             let mut membership := applyTheorem (axiomName ++ `isAxiom_of_instance) values
             for _ in parameters do
               membership := applyTheorem (axiomName ++ `isAxiom_of_all)

@@ -26,6 +26,7 @@ public import LeanPRA.Library.FOL.Arithmetic.Representation.Minimization
 public import LeanPRA.Library.FOL.Arithmetic.Representation.Recursion
 public import LeanPRA.Library.FOL.Arithmetic.Representation.Theorems
 public import LeanPRA.Library.FOL.Arithmetic.Tactic.Ring
+public import LeanPRA.Library.FOL.Common.Bound
 public import LeanPRA.Library.FOL.Common.Language
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
 public import LeanPRA.Library.FOL.Common.Proof
@@ -34,6 +35,7 @@ public import LeanPRA.Library.FOL.Common.Proof.Equality
 public import LeanPRA.Library.FOL.Common.Proof.Propositional
 public import LeanPRA.Library.FOL.Common.Sequent
 public import LeanPRA.Library.FOL.Common.Substitution
+public import LeanPRA.Library.FOL.Common.Subtheory
 public import LeanPRA.Library.FOL.Common.Syntax
 public import LeanPRA.Library.FOL.Common.Theory
 public import LeanPRA.Library.FOL.DSL.Declaration

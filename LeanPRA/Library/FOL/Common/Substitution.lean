@@ -59,19 +59,19 @@ theorem subst_comp (f g : Nat → Nat) : ∀ L t,
       (eq_symm (subst_var (fun i => subst f L (g i)) L i))
   · intro j args hj ih
     have entries : Tuple.map (fun t => subst f L (subst g L t))
-        (Language.functionArity L j) args =
+        (Language.functionSymbolArity L j) args =
         Tuple.map (subst (fun i => subst f L (g i)) L)
-          (Language.functionArity L j) args := by
+          (Language.functionSymbolArity L j) args := by
       apply Tuple.map_congr_of_get_eq
         (fun t => subst f L (subst g L t)) (subst (fun i => subst f L (g i)) L)
       intro i hi
       exact ih i hi
     exact eq_trans (eq_congr (subst f L) (subst_app g L j args hj))
       (eq_trans (subst_app f L j
-        (Tuple.map (subst g L) (Language.functionArity L j) args) hj)
+        (Tuple.map (subst g L) (Language.functionSymbolArity L j) args) hj)
         (eq_trans (eq_congr (app L j)
           (eq_trans (Tuple.map_map (subst f L) (subst g L)
-            (Language.functionArity L j) args) entries))
+            (Language.functionSymbolArity L j) args) entries))
           (eq_symm (subst_app (fun i => subst f L (g i)) L j args hj))))
 
 /-- Replacing each variable by itself preserves every term code. -/
@@ -85,12 +85,14 @@ theorem subst_id : ∀ L t, subst (var L) L t = t := by
   · intro j args hj ih
     rw [subst_app (var L) L j args hj]
     apply eq_congr (app L j)
-    have h : Tuple.map (subst (var L) L) (Language.functionArity L j) args =
-        Tuple.map (fun t => t) (Language.functionArity L j) args := by
+    have h : Tuple.map (subst (var L) L) (Language.functionSymbolArity L j) args =
+        Tuple.map (fun t => t) (Language.functionSymbolArity L j) args := by
       apply Tuple.map_congr_of_get_eq (subst (var L) L) (fun t => t)
       intro i hi
       exact ih i hi
-    exact eq_trans h (Tuple.map_id (Sequence.get (Language.functions L) j) args)
+    have hi : Tuple.map (fun t => t) (Language.functionSymbolArity L j) args = args := by
+      rw [Language.functionSymbolArity, Tuple.map_id]
+    exact eq_trans h hi
 
 theorem shift_var : ∀ L d i, shift L d (var L i) = var L (i + d) :=
   fun L d i => subst_var (fun j => var L (j + d)) L i
@@ -116,11 +118,13 @@ theorem le_subst (h : Nat → Nat) : ∀ L, (∀ n, var L n ≤ h n) → ∀ s, 
     exact hv i
   · intro j args hj ih
     rw [subst_app h L j args hj]
-    apply app_mono L j args (Tuple.map (subst h L) (Language.functionArity L j) args)
-    have hm := Tuple.map_mono (fun t => t) (subst h L) (Language.functionArity L j) args
+    apply app_mono L j args (Tuple.map (subst h L) (Language.functionSymbolArity L j) args)
+    have hm := Tuple.map_mono (fun t => t) (subst h L) (Language.functionSymbolArity L j) args
       (fun i hi => ih i hi)
-    exact eq_subst (fun z => z ≤ Tuple.map (subst h L) (Language.functionArity L j) args)
-      (Tuple.map_id (Sequence.get (Language.functions L) j) args) hm
+    have he : Tuple.map (fun t => t) (Language.functionSymbolArity L j) args = args := by
+      rw [Language.functionSymbolArity, Tuple.map_id]
+    exact eq_subst (fun z => z ≤ Tuple.map (subst h L) (Language.functionSymbolArity L j) args)
+      he hm
 
 /-- Shifting a term never decreases its code. -/
 theorem le_shift : ∀ L d t, t ≤ shift L d t :=
@@ -429,7 +433,7 @@ theorem substWithDepth_congr (f g : Nat → Nat → Nat) : ∀ L,
     exact eq_trans (substWithDepth_rel f L j xs d hj)
       (eq_trans (eq_congr (rel L j)
         (Tuple.map_congr (Term.subst (f d) L) (Term.subst (g d) L)
-          (Term.subst_congr (f d) (g d) L (h d)) (Language.relationArity L j) xs))
+          (Term.subst_congr (f d) (g d) L (h d)) (Language.relationSymbolArity L j) xs))
         (eq_symm (substWithDepth_rel g L j xs d hj)))
   · intro A B d hA hB
     exact eq_trans (substWithDepth_imp f L A B d)
@@ -458,13 +462,13 @@ theorem substWithDepth_comp (f g : Nat → Nat → Nat) : ∀ L A d,
   · intro j xs d hj
     have entries := Tuple.map_congr (fun t => Term.subst (f d) L (Term.subst (g d) L t))
       (Term.subst (h d) L) (Term.subst_comp (f d) (g d) L)
-      (Language.relationArity L j) xs
+      (Language.relationSymbolArity L j) xs
     exact eq_trans (eq_congr (fun A => substWithDepth f L A d) (substWithDepth_rel g L j xs d hj))
       (eq_trans (substWithDepth_rel f L j
-        (Tuple.map (Term.subst (g d) L) (Language.relationArity L j) xs) d hj)
+        (Tuple.map (Term.subst (g d) L) (Language.relationSymbolArity L j) xs) d hj)
         (eq_trans (eq_congr (rel L j)
           (eq_trans (Tuple.map_map (Term.subst (f d) L) (Term.subst (g d) L)
-            (Language.relationArity L j) xs) entries))
+            (Language.relationSymbolArity L j) xs) entries))
           (eq_symm (substWithDepth_rel h L j xs d hj))))
   · intro A B d hA hB
     exact eq_trans (eq_congr (fun C => substWithDepth f L C d) (substWithDepth_imp g L A B d))
@@ -489,8 +493,8 @@ theorem substWithDepth_id : ∀ L A d, substWithDepth (fun _ i => Term.var L i) 
     rw [substWithDepth_rel f L j xs d hj]
     apply eq_congr (rel L j)
     have h := Tuple.map_congr (Term.subst (Term.var L) L) (fun t => t)
-      (Term.subst_id L) (Language.relationArity L j) xs
-    exact eq_trans h (Tuple.map_id (Sequence.get (Language.relations L) j) xs)
+      (Term.subst_id L) (Language.relationSymbolArity L j) xs
+    exact eq_trans h (Tuple.map_id _ xs)
   · intro A B d hA hB
     rw [substWithDepth_imp f, hA, hB]
   · intro A d hA

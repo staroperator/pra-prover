@@ -35,7 +35,9 @@ open LeanPRA.Surface
 inductive TermView where
   | var (name : Name)
   | constant (index : Nat)
+  | indexedConst (family : Nat) (member : Core.Term)
   | app (index : Nat) (args : List TermView)
+  | indexedApp (family : Nat) (member : Core.Term) (args : List TermView)
   | parameter (index : Nat) (args : List TermView)
   | code (language value : Core.Term) (arguments : List TermView)
   deriving BEq, Hashable, Repr, Inhabited
@@ -44,6 +46,7 @@ inductive FormulaView where
   | falsum
   | equal (lhs rhs : TermView)
   | relation (index : Nat) (args : List TermView)
+  | indexedRelation (family : Nat) (member : Core.Term) (args : List TermView)
   | parameter (index : Nat) (args : List TermView)
   | imp (lhs rhs : FormulaView)
   | all (name : Name) (body : FormulaView)
@@ -163,7 +166,9 @@ partial def TermView.replace (target : TermView) (x : Name) (t : TermView) : Ter
   match target with
   | .var y => if x == y then t else .var y
   | .constant i => .constant i
+  | .indexedConst i k => .indexedConst i k
   | .app i args => .app i (args.map (fun a => replace a x t))
+  | .indexedApp i k args => .indexedApp i k (args.map (fun a => replace a x t))
   | .parameter i args => .parameter i (args.map (fun a => replace a x t))
   | .code L value args => .code L value (args.map (fun a => replace a x t))
 
@@ -172,6 +177,7 @@ def FormulaView.replace (x : Name) (t : TermView) : FormulaView → FormulaView
   | .code L value args => .code L value (args.map (·.replace x t))
   | .equal a b => .equal (a.replace x t) (b.replace x t)
   | .relation i args => .relation i (args.map (·.replace x t))
+  | .indexedRelation i k args => .indexedRelation i k (args.map (·.replace x t))
   | .parameter i args => .parameter i (args.map (·.replace x t))
   | .imp a b => .imp (replace x t a) (replace x t b)
   | .all y a => if x == y then .all y a else .all y (replace x t a)
@@ -180,7 +186,9 @@ def FormulaView.replace (x : Name) (t : TermView) : FormulaView → FormulaView
 partial def TermView.substitute (values : List (Name × TermView)) : TermView → TermView
   | .var x => (values.lookup x).getD (.var x)
   | .constant i => .constant i
+  | .indexedConst i k => .indexedConst i k
   | .app i args => .app i (args.map (substitute values))
+  | .indexedApp i k args => .indexedApp i k (args.map (substitute values))
   | .parameter i args => .parameter i (args.map (substitute values))
   | .code L value args => .code L value (args.map (substitute values))
 
@@ -188,6 +196,7 @@ def FormulaView.substitute (values : List (Name × TermView)) : FormulaView → 
   | .falsum => .falsum
   | .equal t u => .equal (t.substitute values) (u.substitute values)
   | .relation i args => .relation i (args.map (·.substitute values))
+  | .indexedRelation i k args => .indexedRelation i k (args.map (·.substitute values))
   | .parameter i args => .parameter i (args.map (·.substitute values))
   | .code L value args => .code L value (args.map (·.substitute values))
   | .imp a b => .imp (substitute values a) (substitute values b)
@@ -195,14 +204,16 @@ def FormulaView.substitute (values : List (Name × TermView)) : FormulaView → 
 
 partial def TermView.variables : TermView → List Name
   | .var n => [n]
-  | .constant _ => []
-  | .app _ args | .parameter _ args | .code _ _ args => args.flatMap variables
+  | .constant _ | .indexedConst .. => []
+  | .app _ args | .indexedApp _ _ args | .parameter _ args | .code _ _ args =>
+    args.flatMap variables
 
 def FormulaView.variables : FormulaView → List Name
   | .falsum => []
   | .code _ _ args => args.flatMap TermView.variables
   | .equal a b => a.variables ++ b.variables
-  | .relation _ args | .parameter _ args => args.flatMap TermView.variables
+  | .relation _ args | .indexedRelation _ _ args | .parameter _ args =>
+    args.flatMap TermView.variables
   | .imp a b => a.variables ++ b.variables
   | .all x a => a.variables.filter (· != x)
 
@@ -214,12 +225,29 @@ private def replacementFunction (L : Term) (values : List Term) (targetSize : Na
     [applyDefinition `eqb [.bvar 0, numeral i], value.shift, rest]) tail
   .lam `i body
 
+/-- Rebuild a closed definition from the explicit term arguments in its view. -/
+private def definitionCode? (formula : Bool) (L value : Term) (values : List Term) :
+    CommandElabM (Option Term) := do
+  let .definition name parameters := value | return none
+  let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
+  if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
+  unless L == applyDefinition (d.language ++ `language) && d.isFormula == formula do return none
+  let positions := if d.template.isSome then List.range d.arguments.size else d.termPositions
+  unless (d.template.isSome || d.substitution.isSome) && values.length == positions.length do
+    return none
+  unless positions.zipIdx.all (fun (position, i) =>
+      parameters[position]? == some (applyDefinition `FOL.Term.var [L, numeral i])) do
+    return none
+  return some (.definition name (positions.zipIdx.foldl (fun parameters (position, i) =>
+    parameters.set position values[i]!) parameters))
+
 partial def TermView.encode (L : Term) (bound fvars : List Name) : TermView → CommandElabM Term
   | .parameter _ _ => throwError "a term parameter requires a schema instance"
   | .code _ value args => do
     let scope := bound ++ fvars
     if args == scope.map TermView.var then return value
     let values ← args.mapM (encode L bound fvars)
+    if let some applied ← definitionCode? false L value values then return applied
     return applyDefinition `FOL.Term.subst [L, value]
       [replacementFunction L values scope.length]
   | .var n => do
@@ -228,30 +256,22 @@ partial def TermView.encode (L : Term) (bound fvars : List Name) : TermView → 
       return applyDefinition `FOL.Term.var [L, numeral (bound.length + i)]
     throwError "unbound first-order variable `{n}`"
   | .constant i => pure (applyDefinition `FOL.Term.const [L, numeral i])
+  | .indexedConst i k => pure (applyDefinition `FOL.Term.const
+      [L, applyDefinition `FOL.Language.constantFamilyMember [L, numeral i, k]])
   | .app i args => do
     return applyDefinition `FOL.Term.app
       [L, numeral i, tupleCode (← args.mapM (encode L bound fvars))]
-
-/-- Rebuild a closed definition from the explicit term arguments in its view. -/
-private def definitionCode? (L value : Term) (values : List Term) :
-    CommandElabM (Option Term) := do
-  let .definition name parameters := value | return none
-  let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
-  if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
-  unless d.isFormula && d.substitution.isSome && values.length == d.termPositions.length do
-    return none
-  unless d.termPositions.zipIdx.all (fun (position, i) =>
-      parameters[position]? == some (applyDefinition `FOL.Term.var [L, numeral i])) do
-    return none
-  return some (.definition name (d.termPositions.zipIdx.foldl (fun parameters (position, i) =>
-    parameters.set position values[i]!) parameters))
+  | .indexedApp i k args => do
+    return applyDefinition `FOL.Term.app
+      [L, applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, k],
+       tupleCode (← args.mapM (encode L bound fvars))]
 
 def FormulaView.encode (L : Term) (bound fvars : List Name) : FormulaView → CommandElabM Term
   | .code _ value args => do
     let scope := bound ++ fvars
     if args == scope.map TermView.var then return value
     let values ← args.mapM (TermView.encode L bound fvars)
-    if let some applied ← definitionCode? L value values then return applied
+    if let some applied ← definitionCode? true L value values then return applied
     return applyDefinition `FOL.Formula.subst [L, value]
       [SubstitutionView.encode L ⟨values, scope.length⟩]
   | .parameter _ _ => throwError "a formula parameter requires a schema instance"
@@ -262,6 +282,10 @@ def FormulaView.encode (L : Term) (bound fvars : List Name) : FormulaView → Co
   | .relation i args => do
     return applyDefinition `FOL.Formula.rel
       [L, numeral i, tupleCode (← args.mapM (TermView.encode L bound fvars))]
+  | .indexedRelation i k args => do
+    return applyDefinition `FOL.Formula.rel
+      [L, applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, k],
+       tupleCode (← args.mapM (TermView.encode L bound fvars))]
   | .imp a b => do
     return applyDefinition `FOL.Formula.imp [← a.encode L bound fvars, ← b.encode L bound fvars]
   | .all x a => do
@@ -272,95 +296,134 @@ def functionIndex (L : LanguageInfo) (n : Name) (arity : Nat) : CommandElabM Nat
   | some i => pure i
   | none => throwError "unknown function `{n}` of arity {arity} in `{L.name}`"
 
-private def abbreviation (L : LanguageInfo) (d : DefinitionInfo) (values : List TermView) :
+/-- Theory axioms can use named definitions directly. Static templates for later expansion
+keep their full syntax so schemas can recover parameters inside an abbreviation. -/
+private structure TemplateContext where
+  parameters : List SyntaxParameter := []
+  useDefinitions : Bool := false
+
+private partial def containsParameter : TermView → Bool
+  | .parameter .. => true
+  | .app _ args | .indexedApp _ _ args | .code _ _ args => args.any containsParameter
+  | _ => false
+
+private def abbreviation (L : LanguageInfo) (ctx : TemplateContext) (d : DefinitionInfo)
+    (values : List TermView) :
     CommandElabM (Sum TermView FormulaView) := do
   unless d.language == L.name do throwError "FOL definition `{d.name}` uses another language"
   let some (arguments, body) := d.template |
     throwError "axiom templates require FOL definitions without PRA parameters or splices"
   unless arguments.size == values.length do
     throwError "FOL definition `{d.name}` expects {arguments.size} term arguments"
+  if ctx.useDefinitions && !values.any containsParameter then
+    let language := languageTerm L
+    let slots := (List.range values.length).map (fun i =>
+      applyDefinition `FOL.Term.var [language, numeral i])
+    let code := Term.definition d.name slots
+    return if d.isFormula then .inr (.code language code values)
+      else .inl (.code language code values)
   return match body with
     | .inl t => .inl (t.substitute (arguments.toList.zip values))
     | .inr a => .inr (a.substitute (arguments.toList.zip values))
 
-partial def parseTerm (L : LanguageInfo) (vars : List (Name × Name))
-    (s : TSyntax `folTerm) (parameters : List SyntaxParameter := []) :
+private def templateMember (indices : Array (TSyntax `praExpr)) : CommandElabM Term := do
+  let values ← indices.toList.mapM fun (index : TSyntax `praExpr) => do
+    let `(praExpr| $value:num) := index |
+      throwErrorAt index "a family index in an axiom template must be a natural number literal"
+    return numeral value.getNat
+  return tupleCode values
+
+private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageInfo)
+    (vars : List (Name × Name))
+    (s : TSyntax `folTerm) :
     CommandElabM TermView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
-    return ← parseTerm L vars ⟨expanded⟩ parameters
+    return ← ctx.term L vars ⟨expanded⟩
   if s.raw.isOfKind ``termSplice || s.raw.isOfKind ``termDefinedApplication then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
-  | `(folTerm| ($t:folTerm)) => parseTerm L vars t parameters
+  | `(folTerm| ($t:folTerm)) => ctx.term L vars t
+  | `(folTerm| $n:ident[$indices:praExpr,*]) => do
+    let i ← withRef n <|
+      familyIndex L.constantFamilies n.getId.eraseMacroScopes indices.getElems.size 0
+    return .indexedConst i (← templateMember indices.getElems)
+  | `(folTerm| $n:ident[$indices:praExpr,*]($args:folTerm,*)) => do
+    let i ← withRef n <|
+      familyIndex L.functionFamilies n.getId.eraseMacroScopes indices.getElems.size
+        args.getElems.size
+    return .indexedApp i (← templateMember indices.getElems)
+      (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folTerm| $n:ident($args:folTerm,*)) =>
-    let values ← args.getElems.toList.mapM (fun t => parseTerm L vars t parameters)
-    if let some i := parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
-      let p := parameters[i]!
+    let values ← args.getElems.toList.mapM (fun t => ctx.term L vars t)
+    if let some i := ctx.parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
+      let p := ctx.parameters[i]!
       unless !p.isFormula && p.arity == values.length do
         throwError "term parameter kind or arity mismatch"
       return .parameter i values
     if values.isEmpty then
       if let some i := L.constants.toList.idxOf? n.getId.eraseMacroScopes then return .constant i
     if let some d ← findDefinition n.getId.eraseMacroScopes then
-      let .inl t ← abbreviation L d values | throwError "expected a term definition"
+      let .inl t ← abbreviation L ctx d values | throwError "expected a term definition"
       return t
     return .app (← functionIndex L n.getId.eraseMacroScopes values.length) values
   | `(folTerm| $n:ident) =>
     if let some (_, v) := vars.find? (fun (k, _) => k == n.getId.eraseMacroScopes) then
       return .var v
-    if let some i := parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
-      let p := parameters[i]!
+    if let some i := ctx.parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
+      let p := ctx.parameters[i]!
       unless !p.isFormula && p.arity == 0 do throwError "expected a term of arity zero"
       return .parameter i []
     if let some i := L.constants.toList.idxOf? n.getId.eraseMacroScopes then return .constant i
     if let some d ← findDefinition n.getId.eraseMacroScopes then
-      let .inl t ← abbreviation L d [] | throwError "expected a term definition"
+      let .inl t ← abbreviation L ctx d [] | throwError "expected a term definition"
       return t
     throwError "unknown variable or constant `{n.getId.eraseMacroScopes}`"
   | _ => throwUnsupportedSyntax
 
-private def parseFormulaApplication (L : LanguageInfo) (vars : List (Name × Name))
-    (parameters : List SyntaxParameter) (name : Name) (args : List (TSyntax `folTerm)) :
+private def TemplateContext.formulaApplication (ctx : TemplateContext) (L : LanguageInfo)
+    (vars : List (Name × Name))
+    (name : Name) (args : List (TSyntax `folTerm)) :
     CommandElabM FormulaView := do
-  let values ← args.mapM (fun t => parseTerm L vars t parameters)
-  if let some i := parameters.findIdx? (·.name == name) then
-    let arity := parameters[i]!.arity
-    unless parameters[i]!.isFormula && values.length == arity do
+  let values ← args.mapM (fun t => ctx.term L vars t)
+  if let some i := ctx.parameters.findIdx? (·.name == name) then
+    let arity := ctx.parameters[i]!.arity
+    unless ctx.parameters[i]!.isFormula && values.length == arity do
       throwError "formula parameter `{name.eraseMacroScopes}` expects {arity} arguments, \
         got {values.length}"
     return .parameter i values
   if let some d ← findDefinition name then
-    let .inr a ← abbreviation L d values | throwError "expected a formula definition"
+    let .inr a ← abbreviation L ctx d values | throwError "expected a formula definition"
     return a
   let some i := L.relations.toList.findIdx? (fun (m, k) => m == name && k == values.length)
     | throwError "unknown relation `{name}` of arity {values.length}"
   return .relation i values
 
-partial def parseFormula (L : LanguageInfo) (vars : List (Name × Name))
-    (s : TSyntax `folFormula) (parameters : List SyntaxParameter := []) :
+private partial def TemplateContext.formula (ctx : TemplateContext) (L : LanguageInfo)
+    (vars : List (Name × Name))
+    (s : TSyntax `folFormula) :
     CommandElabM FormulaView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
-    return ← parseFormula L vars ⟨expanded⟩ parameters
+    return ← ctx.formula L vars ⟨expanded⟩
   if s.raw.isOfKind ``formulaSplice || s.raw.isOfKind ``formulaDefinedApplication then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
-  | `(folFormula| ($a:folFormula)) => parseFormula L vars a parameters
+  | `(folFormula| ($a:folFormula)) => ctx.formula L vars a
   | `(folFormula| ⊥) => pure .falsum
   | `(folFormula| $a:folTerm = $b:folTerm) =>
-    return .equal (← parseTerm L vars a parameters) (← parseTerm L vars b parameters)
+    return .equal (← ctx.term L vars a) (← ctx.term L vars b)
   | `(folFormula| $a:folTerm ≠ $b:folTerm) =>
-    return (FormulaView.equal (← parseTerm L vars a parameters)
-      (← parseTerm L vars b parameters)).neg
-  | `(folFormula| ¬ $a:folFormula) => return (← parseFormula L vars a parameters).neg
+    return (FormulaView.equal (← ctx.term L vars a)
+      (← ctx.term L vars b)).neg
+  | `(folFormula| ¬ $a:folFormula) => return (← ctx.formula L vars a).neg
   | `(folFormula| $a:folFormula → $b:folFormula) =>
-    return .imp (← parseFormula L vars a parameters) (← parseFormula L vars b parameters)
+    return .imp (← ctx.formula L vars a) (← ctx.formula L vars b)
   | `(folFormula| $a:folFormula ∧ $b:folFormula) =>
-    return (← parseFormula L vars a parameters).conj (← parseFormula L vars b parameters)
+    return (← ctx.formula L vars a).conj (← ctx.formula L vars b)
   | `(folFormula| $a:folFormula ∨ $b:folFormula) =>
-    return (← parseFormula L vars a parameters).disj (← parseFormula L vars b parameters)
+    return (← ctx.formula L vars a).disj (← ctx.formula L vars b)
   | `(folFormula| $a:folFormula ↔ $b:folFormula) =>
-    let a ← parseFormula L vars a parameters
-    let b ← parseFormula L vars b parameters
+    let a ← ctx.formula L vars a
+    let b ← ctx.formula L vars b
     return (FormulaView.imp a b).conj (.imp b a)
   | `(folFormula| ∀ $xs:ident* , $a:folFormula)
   | `(folFormula| ∃ $xs:ident* , $a:folFormula) =>
@@ -370,14 +433,29 @@ partial def parseFormula (L : LanguageInfo) (vars : List (Name × Name))
       let fresh ← liftCoreM (mkFreshUserName x.getId.eraseMacroScopes)
       names := names.push fresh
       env := (x.getId.eraseMacroScopes, fresh) :: env
-    let body ← parseFormula L env a parameters
+    let body ← ctx.formula L env a
     let existential := s.raw[0].getAtomVal.trimAscii.toString == "∃"
     return names.toList.foldr (fun x b => if existential then .ex x b else .all x b) body
+  | `(folFormula| $n:ident[$indices:praExpr,*]($args:folTerm,*)) => do
+    let i ← withRef n <|
+      familyIndex L.relationFamilies n.getId.eraseMacroScopes indices.getElems.size
+        args.getElems.size
+    return .indexedRelation i (← templateMember indices.getElems)
+      (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folFormula| $n:ident($args:folTerm,*)) =>
-    parseFormulaApplication L vars parameters n.getId.eraseMacroScopes args.getElems.toList
+    ctx.formulaApplication L vars n.getId.eraseMacroScopes args.getElems.toList
   | `(folFormula| $n:ident $args:folTerm*) =>
-    parseFormulaApplication L vars parameters n.getId.eraseMacroScopes args.toList
-  | `(folFormula| $n:ident) => parseFormulaApplication L vars parameters n.getId.eraseMacroScopes []
+    ctx.formulaApplication L vars n.getId.eraseMacroScopes args.toList
+  | `(folFormula| $n:ident) => ctx.formulaApplication L vars n.getId.eraseMacroScopes []
   | _ => throwUnsupportedSyntax
+
+def parseTerm (L : LanguageInfo) (vars : List (Name × Name)) (s : TSyntax `folTerm)
+    (parameters : List SyntaxParameter := []) : CommandElabM TermView :=
+  TemplateContext.term { parameters } L vars s
+
+def parseFormula (L : LanguageInfo) (vars : List (Name × Name)) (s : TSyntax `folFormula)
+    (parameters : List SyntaxParameter := []) (useDefinitions : Bool := false) :
+    CommandElabM FormulaView :=
+  TemplateContext.formula { parameters, useDefinitions } L vars s
 
 end LeanPRA.Library.FOL.DSL

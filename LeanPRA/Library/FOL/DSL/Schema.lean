@@ -42,6 +42,16 @@ structure AxiomInfo where
   template : FormulaView
   deriving Inhabited
 
+private def AxiomInfo.sentenceName? (info : AxiomInfo) : Option Name :=
+  match info.parameters.isEmpty, info.template with
+  | true, .code _ (.definition name []) [] => some name
+  | _, _ => none
+
+/-- The PRA declaration used when constructing an axiom instance. A named sentence already
+has a declaration of its own. -/
+def AxiomInfo.formulaName (info : AxiomInfo) (theory : Name) : Name :=
+  info.sentenceName?.getD (theory ++ info.name ++ `formula)
+
 structure FormulaActual where
   body : FormulaView
   binders : List Name
@@ -60,6 +70,7 @@ private partial def instantiateTerm (actuals : Array FormulaActual) : TermView �
     let values := args.map (instantiateTerm actuals)
     (actual.termBody.getD (.constant 0)).substitute (actual.binders.zip values)
   | .app i args => .app i (args.map (instantiateTerm actuals))
+  | .indexedApp i k args => .indexedApp i k (args.map (instantiateTerm actuals))
   | t => t
 
 def instantiateSchema (actuals : Array FormulaActual) : FormulaView → FormulaView
@@ -68,6 +79,7 @@ def instantiateSchema (actuals : Array FormulaActual) : FormulaView → FormulaV
     actual.body.substitute (actual.binders.zip (args.map (instantiateTerm actuals)))
   | .equal t u => .equal (instantiateTerm actuals t) (instantiateTerm actuals u)
   | .relation i args => .relation i (args.map (instantiateTerm actuals))
+  | .indexedRelation i k args => .indexedRelation i k (args.map (instantiateTerm actuals))
   | .imp a b => .imp (instantiateSchema actuals a) (instantiateSchema actuals b)
   | .all x a => .all x (instantiateSchema actuals a)
   | a => a
@@ -107,6 +119,10 @@ private partial def encodeTemplateTerm (L : Term) (actuals : Array Term) (bound 
   | .app i args => do
     return applyDefinition `FOL.Term.app
       [L, numeral i, tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
+  | .indexedApp i k args => do
+    return applyDefinition `FOL.Term.app
+      [L, applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, k],
+       tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | t => t.encode L bound []
 
 private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name) :
@@ -129,6 +145,10 @@ private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name)
   | .relation i args => do
     return applyDefinition `FOL.Formula.rel
       [L, numeral i, tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
+  | .indexedRelation i k args => do
+    return applyDefinition `FOL.Formula.rel
+      [L, applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, k],
+       tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | a => a.encode L bound []
 
 private def projectFormula (L A : Term) (step : Nat) : Term :=
@@ -197,13 +217,14 @@ private def quantifyProof (names : List Name) (type : Predicate) (proof : Proof)
 def compileAxiom (theory : Name) (L : Term) (info : AxiomInfo) (source : Syntax) :
     CommandElabM Unit := do
   let name := theory ++ info.name
-  let formulaName := name ++ `formula
+  let formulaName := info.formulaName theory
   let testName := name ++ `isAxiom
   let n := info.parameters.size
   let actuals := (List.range n).map (fun i => Term.bvar (n - i - 1))
-  let body ← encodeTemplate L actuals.toArray [] info.template
-  let body := info.parameters.toList.foldr (fun p body => Term.lam p.name body) body
-  publishChecked (.function ⟨formulaName, [], n, body⟩) source
+  if info.sentenceName?.isNone then
+    let body ← encodeTemplate L actuals.toArray [] info.template
+    let body := info.parameters.toList.foldr (fun p body => Term.lam p.name body) body
+    publishChecked (.function ⟨formulaName, [], n, body⟩) source
   if n == 0 then
     publishChecked (.function ⟨testName, [], 1,
       .lam `A (applyDefinition `eqb [.bvar 0, applyDefinition formulaName])⟩) source

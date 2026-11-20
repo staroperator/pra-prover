@@ -344,8 +344,9 @@ private def transparent (n : Name) : Bool :=
     `FOL.Formula.isClosed,
     `FOL.Formula.equalPremises, `Tuple.get, `Tuple.map, `Tuple.max, `FOL.Language.functionCount,
     `FOL.Formula.successorInstance,
-    `FOL.Language.relationCount,
-    `FOL.Language.functionArity, `FOL.Language.relationArity
+    `FOL.Language.relationCount, `FOL.Language.functionFamilyCount,
+    `FOL.Language.relationFamilyCount,
+    `FOL.Language.functionSymbolArity, `FOL.Language.relationSymbolArity
   ].contains n
 
 private partial def differingTerms (a b : Term) : Term × Term :=
@@ -369,6 +370,12 @@ private partial def differingTerms (a b : Term) : Term × Term :=
 equality is the result and no transitivity step is written. -/
 private def joinEqualities (a b c : Term) (ab bc : Proof) : Proof :=
   if a == b then bc else if b == c then ab else mkEqTrans a b c ab bc
+
+private def familyMemberParts? (isRelation : Bool) (j : Term) : Option (Term × Term) := do
+  let symbol :=
+    if isRelation then `FOL.Language.relationFamilyMember else `FOL.Language.functionFamilyMember
+  let (_, [_, b, k]) ← named j symbol | none
+  return (b, k)
 
 mutual
 
@@ -397,6 +404,27 @@ mutual
   private partial def lessProof (a b : Term) : CalculationM Proof := do
     let h ← calculateEquality (applyDefinition `ltb [a, b]) (numeral 1)
     return .impElim (← projectTheorem false `ltb_eq_one [a, b]) h
+
+  partial def constantProof (L j : Term) : CalculationM Proof := do
+    let count := applyDefinition `FOL.Language.constantFamilyCount [L]
+    if let some (Nat.succ _) := numeralValue? (← calculate count).value then
+      let h ← lessProof (numeral 0) count
+      return applyTheorem `FOL.Language.isConstant_of_constantFamilyCount_pos [L, j] [] [h]
+    let h ← lessProof j (applyDefinition `FOL.Language.constants [L])
+    return applyTheorem `FOL.Language.isConstant_of_lt [L, j] [] [h]
+
+  /-- Prove that an ordinary symbol or a family member belongs to the given language. -/
+  partial def symbolProof (L j : Term) (isRelation : Bool := false) : CalculationM Proof := do
+    let language := `FOL.Language
+    let kind := if isRelation then "relation" else "function"
+    let predicate := if isRelation then "isRelation" else "isFunction"
+    if let some (b, k) := familyMemberParts? isRelation j then
+      let count := applyDefinition (language ++ Name.mkSimple (kind ++ "FamilyCount")) [L]
+      return applyTheorem (language ++ Name.mkSimple (predicate ++ "_familyMember"))
+        [L, b, k] [] [← lessProof b count]
+    let count := applyDefinition (language ++ Name.mkSimple (kind ++ "Count")) [L]
+    return applyTheorem (language ++ Name.mkSimple (predicate ++ "_of_lt"))
+      [L, j] [] [← lessProof j count]
 
   private partial def calculateFresh (input : Term) : CalculationM Calculation := do
     if fol.preserveDisplayNames.get (← getOptions) then
@@ -632,12 +660,12 @@ mutual
             if let some (_, [x, y]) := named xs `pair then
               return ← follow t (applyDefinition `pair [.app f x, .app f y])
                 (applyTheorem `Tuple.map_two [x, y] [f])
-          if numeralValue? n == some 3 then
-            if let some (_, [x, yz]) := named xs `pair then
-              if let some (_, [y, z]) := named yz `pair then
-                return ← follow t
-                  (applyDefinition `pair [.app f x, applyDefinition `pair [.app f y, .app f z]])
-                  (applyTheorem `Tuple.map_three [x, y, z] [f])
+          if let some k := numeralValue? n then
+            if k > 2 then
+              if let some (_, [x, rest]) := named xs `pair then
+                return ← follow t (applyDefinition `pair
+                  [.app f x, applyDefinition `Tuple.map [numeral (k - 1), rest] [f]])
+                  (applyTheorem `Tuple.map_pair_succ [numeral (k - 2), x, rest] [f])
     if name == `Tuple.max then
       if let [n, xs] := args then
         if numeralValue? n == some 1 then
@@ -677,18 +705,37 @@ mutual
             if k == 0 then return ⟨x, applyTheorem `Sequence.get_cons_zero [x, rest]⟩
             return ← follow t (applyDefinition `Sequence.get [rest, numeral (k - 1)])
               (applyTheorem `Sequence.get_cons_succ [x, rest, numeral (k - 1)])
-    if [`FOL.Language.constants, `FOL.Language.functions,
-        `FOL.Language.relations].contains name then
+    let fields := [`FOL.Language.constants, `FOL.Language.functions, `FOL.Language.relations,
+      `FOL.Language.constantFamilyCount, `FOL.Language.functionFamilies,
+      `FOL.Language.relationFamilies]
+    if let some i := fields.idxOf? name then
       if let [L] := args then
         let expanded := (← unfoldOnce L).getD L
-        if let some (_, fields) := named expanded `FOL.Language.make then
-          if fields.length == 3 then
-            let idx := if name == `FOL.Language.constants then 0 else
-              if name == `FOL.Language.functions then 1 else 2
+        if let some (_, values) := named expanded `FOL.Language.make then
+          if let some value := values[i]? then
             let lemma := name.getPrefix ++ Name.mkSimple (name.getString! ++ "_make")
             let mid := applyDefinition name [expanded]
-            return ← follow t fields[idx]! (mkEqTrans t mid fields[idx]! (.forallElim .eqRefl t)
-              (applyTheorem lemma fields))
+            return ← follow t value (mkEqTrans t mid value (.forallElim .eqRefl t)
+              (applyTheorem lemma values))
+    if name == `FOL.Language.functionSymbolArity || name == `FOL.Language.relationSymbolArity then
+      if let [L, j] := args then
+        let isRelation := name == `FOL.Language.relationSymbolArity
+        let language := `FOL.Language
+        let kind := if isRelation then "relation" else "function"
+        if let some (b, k) := familyMemberParts? isRelation j then
+          let families := applyDefinition (language ++ Name.mkSimple (kind ++ "Families")) [L]
+          let count := applyDefinition (language ++ Name.mkSimple (kind ++ "FamilyCount")) [L]
+          let arity := applyDefinition `Sequence.get [families, b]
+          let lemma := name.getPrefix ++ Name.mkSimple (name.getString! ++ "_familyMember")
+          return ← follow t (.app .succ arity)
+            (applyTheorem lemma [L, b, k] [] [← lessProof b count])
+        if (numeralValue? j).isSome then
+          let entries := applyDefinition
+            (if isRelation then `FOL.Language.relations else `FOL.Language.functions) [L]
+          let count := applyDefinition (language ++ Name.mkSimple (kind ++ "Count")) [L]
+          let lemma := name.getPrefix ++ Name.mkSimple (name.getString! ++ "_of_lt")
+          return ← follow t (.app .succ (applyDefinition `Sequence.get [entries, j]))
+            (applyTheorem lemma [L, j] [] [← lessProof j count])
     if name == `FOL.Formula.equalPremises then
       if let [L, n, xs, ys, A] := args then
         if numeralValue? n == some 1 then
@@ -715,10 +762,10 @@ mutual
             return ← follow t result
               (applyTheorem `FOL.Formula.substWithDepth_equal [L, x, y, d] [f])
           if let some (_, [_, j, xs]) := named A `FOL.Formula.rel then
-            let hj ← lessProof j (applyDefinition `FOL.Language.relationCount [L])
+            let hj ← symbolProof L j true
             let result := applyDefinition `FOL.Formula.rel [L, j,
               applyDefinition `Tuple.map
-                [applyDefinition `FOL.Language.relationArity [L, j], xs]
+                [applyDefinition `FOL.Language.relationSymbolArity [L, j], xs]
                 [applyDefinition `FOL.Term.subst [L] [.app f d]]]
             return ← follow t result
               (applyTheorem `FOL.Formula.substWithDepth_rel [L, j, xs, d] [f] [hj])
@@ -745,12 +792,12 @@ mutual
           if let some (_, [_, i]) := named a `FOL.Term.var then
             return ← follow t (.app f i) (applyTheorem `FOL.Term.subst_var [L, i] [f])
           if let some (_, [_, i]) := named a `FOL.Term.const then
-            let hi ← lessProof i (applyDefinition `FOL.Language.constants [L])
+            let hi ← constantProof L i
             return ⟨a, applyTheorem `FOL.Term.subst_const [L, i] [f] [hi]⟩
           if let some (_, [_, j, xs]) := named a `FOL.Term.app then
-            let arity := applyDefinition `FOL.Language.functionArity [L, j]
+            let arity := applyDefinition `FOL.Language.functionSymbolArity [L, j]
             let ar ← calculate arity
-            let hj ← lessProof j (applyDefinition `FOL.Language.functionCount [L])
+            let hj ← symbolProof L j
             if numeralValue? ar.value == some 1 then
               return ← follow t
                 (applyDefinition `FOL.Term.app [L, j, applyDefinition name [L, xs] [f]])
@@ -775,8 +822,8 @@ mutual
                 applyDefinition `FOL.Term.bound [L, y]])
             (applyTheorem `FOL.Formula.bound_equal [L, x, y])
         if let some (_, [_, j, xs]) := named A `FOL.Formula.rel then
-          let hj ← lessProof j (applyDefinition `FOL.Language.relationCount [L])
-          let arity := applyDefinition `FOL.Language.relationArity [L, j]
+          let hj ← symbolProof L j true
+          let arity := applyDefinition `FOL.Language.relationSymbolArity [L, j]
           return ← follow t (applyDefinition `Tuple.max [arity,
             applyDefinition `Tuple.map [arity, xs] [applyDefinition `FOL.Term.bound [L]]])
             (applyTheorem `FOL.Formula.bound_rel [L, j, xs] [] [hj])
@@ -793,13 +840,13 @@ mutual
     if name == `FOL.Term.bound then
       if let [L, a] := args then
         if let some (_, [_, j]) := named a `FOL.Term.const then
-          let hj ← lessProof j (applyDefinition `FOL.Language.constants [L])
+          let hj ← constantProof L j
           return ⟨numeral 0, applyTheorem `FOL.Term.bound_const [L, j] [] [hj]⟩
         if let some (_, [_, i]) := named a `FOL.Term.var then
           return ← follow t (.app .succ i) (applyTheorem `FOL.Term.bound_var [L, i])
         if let some (_, [_, j, xs]) := named a `FOL.Term.app then
-          let ar ← calculate (applyDefinition `FOL.Language.functionArity [L, j])
-          let hj ← lessProof j (applyDefinition `FOL.Language.functionCount [L])
+          let ar ← calculate (applyDefinition `FOL.Language.functionSymbolArity [L, j])
+          let hj ← symbolProof L j
           if numeralValue? ar.value == some 1 then
             return ← follow t (applyDefinition name [L, xs])
               (applyTheorem `FOL.Term.bound_app_one [L, j, xs] [] [hj, ar.proof])
@@ -809,7 +856,7 @@ mutual
                 (applyDefinition `max
                   [applyDefinition name [L, x], applyDefinition name [L, y]])
                 (applyTheorem `FOL.Term.bound_app_two [L, j, x, y] [] [hj, ar.proof])
-          let arity := applyDefinition `FOL.Language.functionArity [L, j]
+          let arity := applyDefinition `FOL.Language.functionSymbolArity [L, j]
           return ← follow t (applyDefinition `Tuple.max [arity,
             applyDefinition `Tuple.map [arity, xs] [applyDefinition name [L]]])
             (applyTheorem `FOL.Term.bound_app [L, j, xs] [] [hj])

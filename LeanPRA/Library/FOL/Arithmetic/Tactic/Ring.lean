@@ -57,12 +57,16 @@ private partial def codeOrder (a b : Core.Term) : Ordering :=
 private partial def termOrder (a b : TermView) : Ordering :=
   let rank : TermView → Nat
     | .app .. => 0 | .code .. => 1 | .constant _ => 2 | .var _ => 3 | .parameter .. => 4
+    | .indexedApp .. => 5 | .indexedConst .. => 6
   match a, b with
   | .app i xs, .app j ys | .parameter i xs, .parameter j ys =>
     (compare i j).then (lexicographic termOrder xs ys)
+  | .indexedApp i k xs, .indexedApp j l ys =>
+    (compare i j).then ((codeOrder k l).then (lexicographic termOrder xs ys))
   | .code l v xs, .code m w ys =>
     (codeOrder l m).then ((codeOrder v w).then (lexicographic termOrder xs ys))
   | .constant i, .constant j => compare i j
+  | .indexedConst i k, .indexedConst j l => (compare i j).then (codeOrder k l)
   | .var x, .var y => x.cmp y
   | a, b => compare (rank a) (rank b)
 

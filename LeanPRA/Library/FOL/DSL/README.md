@@ -49,6 +49,23 @@ fol_theory AddTheory over Arith extends Base where
 - `constant c` declares a constant symbol. `function f of n` and `relation R of n` declare function
   and relation symbols of arity `n` (relations require `n ≥ 1`). Elaboration produces the
   numerical language definition `Arith.language`.
+- `d (k : Nat) : constant` declares a family of constants. Write `d[k]` for member `k`.
+- `f (k : Nat) : function of n` and `R (k : Nat) : relation of n` (with `n ≥ 1`) declare
+  indexed function and relation families. Write `f[k](t₁, ..., tₙ)` or `R[k](t₁, ..., tₙ)` to
+  apply member `k`. Inside the brackets, ordinary quotations accept any numerical PRA expression.
+  Axiom templates require natural-number literals. Object-variable substitution leaves the member
+  indices unchanged.
+- A family may take multiple index parameters, such as `f (a b : Nat) : function of 3`,
+  applied as `f[a, b](x, y, z)`. Multiple indices are packed in declaration order using the
+  fixed-length tuple encoding (for example, `[a, b]` encodes as `pair a b`, while a single index
+  `[k]` is `k` itself).
+- The numerical language code is the right-nested tuple `(c, fs, rs, C, F, R)`. The counts `c`
+  and `C` give the number of ordinary constants and constant families. The sequences `fs`, `rs`,
+  `F`, and `R` store arities minus one for ordinary functions and relations and their families.
+  Member `k` of constant family `b` has symbol index `c + C * k + b`. All constant families
+  share one residue class in the term encoding when `C > 0`. With `C = 0`, term and formula
+  codes are unchanged. Function and relation family applications pair the member number with
+  the argument tuple.
 - `fol_theory T over L` compiles each `axiom` into a numerical instance constructor and boolean
   membership test, then combines them into `T.isAxiom : Nat → Nat`.
 - Adding `extends Parent` includes `Parent.isAxiom` in `T.isAxiom` and generates the theorem

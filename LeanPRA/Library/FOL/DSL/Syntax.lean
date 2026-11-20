@@ -25,6 +25,10 @@ declare_syntax_cat folSymbol
 syntax "constant " ident : folSymbol
 syntax "function " ident " of " num : folSymbol
 syntax "relation " ident " of " num : folSymbol
+syntax folFamilyIndex := "(" ident+ " : " &"Nat" ")"
+syntax ident folFamilyIndex+ " : " "constant" : folSymbol
+syntax ident folFamilyIndex+ " : " "function " "of " num : folSymbol
+syntax ident folFamilyIndex+ " : " "relation " "of " num : folSymbol
 syntax folSymbolSeq := sepBy1IndentSemicolon(folSymbol)
 syntax (name := languageDecl) "fol_language " ident " where" ppIndent(colGt folSymbolSeq) : praDecl
 
@@ -38,6 +42,8 @@ syntax atomic("(" ident " := ") praExpr ")" : folPraActual
 syntax:max (name := termDefinedApplication) ident folPraActual+ "(" folTerm,* ")" : folTerm
 syntax:max "(" folTerm ")" : folTerm
 syntax:max ident "(" folTerm,* ")" : folTerm
+syntax:max ident "[" praExpr,+ "]" : folTerm
+syntax:max ident "[" praExpr,+ "]" "(" folTerm,* ")" : folTerm
 
 declare_syntax_cat folFormula
 
@@ -51,6 +57,7 @@ syntax:max ident : folFormula
 syntax:max ident ppSpace folTerm:max+ : folFormula
 syntax:max "(" folFormula ")" : folFormula
 syntax:max (priority := high) ident "(" folTerm,* ")" : folFormula
+syntax:max (priority := high) ident "[" praExpr,+ "]" "(" folTerm,* ")" : folFormula
 syntax:50 folTerm " = " folTerm : folFormula
 syntax:50 folTerm " ≠ " folTerm : folFormula
 syntax:40 "¬ " folFormula:40 : folFormula

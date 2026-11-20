@@ -36,9 +36,9 @@ open LeanPRA.Library.Tactic.Construction
 
 private def findAxiomIndex? (T : TheoryInfo) (name : Name) : CommandElabM (Option Nat) := do
   if let some i := T.axioms.toList.findIdx? (fun info => info.name == name) then return some i
-  let declaration ← resolveDeclaration? (CoreEnvironment.getState (← getEnv)) (name ++ `formula)
+  let declaration ← resolveDeclaration? (CoreEnvironment.getState (← getEnv)) (name ++ `isAxiom)
   return T.axioms.toList.findIdx? fun info =>
-    declaration.any (·.name == T.name ++ info.name ++ `formula)
+    declaration.any (·.name == T.name ++ info.name ++ `isAxiom)
 
 /-- Resolve a declared axiom name within the selected theory and the current namespace scope. -/
 def axiomIndex (T : TheoryInfo) (name : Name) : CommandElabM Nat := do

@@ -33,7 +33,8 @@ private def unfoldCode (t : Term) : CommandElabM (Option Term) := do
       return some (Core.betaReduceTerm 2048 (args.foldl .app (d.body.instantiate actuals)))
   return none
 
-private partial def tupleEntries (n : Nat) (value : Term) : CommandElabM (List Term) := do
+/-- Read a fixed number of tuple components, using projections on an opaque tuple code. -/
+partial def tupleEntries (n : Nat) (value : Term) : CommandElabM (List Term) := do
   if n == 0 then return []
   if n == 1 then return [value]
   let (head, args) := getAppFnArgs value
@@ -90,8 +91,20 @@ partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
     if let some index := numeralValue? i then
       return .var ((bound ++ free)[index]?.getD (positionName (index - bound.length)))
   | .definition `FOL.Term.const _, [_, i] =>
-    if let some index := numeralValue? i then return .constant index
+    if let (.definition `FOL.Language.constantFamilyMember _, [_, b, k]) := getAppFnArgs i then
+      let some index := numeralValue? b | throwError "expected a literal family number"
+      return .indexedConst index k
+    if let some index := numeralValue? i then
+      if index < L.constants.size then return .constant index
+      if !L.constantFamilies.isEmpty then
+        let q := index - L.constants.size
+        return .indexedConst (q % L.constantFamilies.size) (numeral (q / L.constantFamilies.size))
   | .definition `FOL.Term.app _, [_, i, values] =>
+    if let (.definition `FOL.Language.functionFamilyMember _, [_, b, k]) := getAppFnArgs i then
+      let some index := numeralValue? b | throwError "expected a literal family number"
+      let some family := L.functionFamilies[index]? | throwError "invalid family number"
+      return .indexedApp index k
+        (← (← tupleEntries family.arity values).mapM (fun t => readTerm L bound free t (fuel - 1)))
     if let some index := numeralValue? i then
       let some (_, arity) := L.functions[index]? | throwError "invalid function index"
       return .app index (← (← tupleEntries arity values).mapM
@@ -117,6 +130,11 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
   | .definition `FOL.Formula.equal _, [_, a, b] =>
     return .equal (← readTerm L bound free a) (← readTerm L bound free b)
   | .definition `FOL.Formula.rel _, [_, i, values] =>
+    if let (.definition `FOL.Language.relationFamilyMember _, [_, b, k]) := getAppFnArgs i then
+      let some index := numeralValue? b | throwError "expected a literal family number"
+      let some family := L.relationFamilies[index]? | throwError "invalid family number"
+      return .indexedRelation index k
+        (← (← tupleEntries family.arity values).mapM (fun t => readTerm L bound free t (fuel - 1)))
     if let some index := numeralValue? i then
       let some (_, arity) := L.relations[index]? | throwError "invalid relation index"
       return .relation index (← (← tupleEntries arity values).mapM (readTerm L bound free ·))

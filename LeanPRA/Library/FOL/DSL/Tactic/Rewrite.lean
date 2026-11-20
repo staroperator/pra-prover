@@ -33,8 +33,12 @@ private partial def matchTerm (binders : List Name) (pattern target : TermView)
       | none => some ((x, t) :: env)
     else if pattern == target then some env else none
   | .constant i, .constant j => if i == j then some env else none
+  | .indexedConst i k, .indexedConst j l => if i == j && k == l then some env else none
   | .app i xs, .app j ys =>
     if i != j || xs.length != ys.length then none else
+      (xs.zip ys).foldlM (fun e (a, b) => matchTerm binders a b e) env
+  | .indexedApp i k xs, .indexedApp j l ys =>
+    if i != j || k != l || xs.length != ys.length then none else
       (xs.zip ys).foldlM (fun e (a, b) => matchTerm binders a b e) env
   | .code L a xs, .code M b ys =>
     if L != M || a != b || xs.length != ys.length then none else
@@ -63,6 +67,8 @@ private partial def rewriteTerm (rules : List Nat) (t : TermView) (fuel : Nat :=
   if fuel == 0 then throwError "first-order rewriting exceeded its step limit"
   let initial ← match t with
     | .app i args => eqCongr i (← args.mapM (fun a => rewriteTerm rules a (fuel - 1)))
+    | .indexedApp i k args =>
+      eqCongr i (← args.mapM (fun a => rewriteTerm rules a (fuel - 1))) (some k)
     | _ => eqRefl t
   let .equal _ u ← conclusion initial | throwError "invalid rewrite result"
   if let some step ← rewriteRoot rules u then
@@ -139,11 +145,17 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
       return ([.equal b a], fun ps => eqSymm ps[0]!)
   | `(praTactic| pcongr) =>
     let g ← currentGoalAs fun | .equal _ _ => true | _ => false
-    let .equal (.app i xs) (.app j ys) := g.formula |
-      throwError "pcongr expects applications of the same function"
-    unless i == j && xs.length == ys.length do throwError "function symbols or arities differ"
+    let (i, member, xs, ys) ← match g.formula with
+      | .equal (.app i xs) (.app j ys) =>
+        unless i == j do throwError "function symbols differ"
+        pure (i, none, xs, ys)
+      | .equal (.indexedApp i k xs) (.indexedApp j l ys) =>
+        unless i == j && k == l do throwError "function symbols differ"
+        pure (i, some k, xs, ys)
+      | _ => throwError "pcongr expects applications of the same function"
+    unless xs.length == ys.length do throwError "function arities differ"
     refineDerivation g do
-      return ((xs.zip ys).map (fun (a, b) => .equal a b), fun ps => eqCongr i ps)
+      return ((xs.zip ys).map (fun (a, b) => .equal a b), fun ps => eqCongr i ps member)
   | `(praTactic| prw $[[$rules:praExpr,*]]? $[at $location:ident]?) =>
     let some rules := rules | do
       if let some h := location then

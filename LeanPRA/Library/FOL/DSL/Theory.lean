@@ -8,6 +8,8 @@ public meta import LeanPRA.Library.FOL.DSL.Schema
 Source declarations produce numerical PRA definitions. Frontend metadata records symbol names,
 axiom templates and their syntax parameters for subsequent proof elaboration.
 Relation declarations require positive arity; `relation P of 0` is rejected.
+A fixed axiom given by a named sentence uses that sentence's PRA code directly. A compound
+axiom gets a `.formula` declaration whose body refers to the definitions used in the axiom.
 An extension tests the parent's membership function together with its new axioms.
 `T.isAxiom_of_parent` is a checked PRA proof of inclusion of the parent axiom set.
 
@@ -53,28 +55,54 @@ def findTheory (name : Name) : CommandElabM TheoryInfo := do
   | some T => pure T
   | none => throwError "unknown first-order theory `{name}`"
 
+private def familyIndexArity (indices : Array (TSyntax ``folFamilyIndex)) :
+    CommandElabM Nat := do
+  let mut seen : List Name := []
+  for index in indices do
+    let `(folFamilyIndex| ($ns:ident* : Nat)) := index | throwUnsupportedSyntax
+    for n in ns do
+      let name := n.getId.eraseMacroScopes
+      if seen.contains name then throwErrorAt n "duplicate index parameter `{name}`"
+      seen := name :: seen
+  return seen.length
+
 def declareLanguage (name : Name) (entries : Array Syntax) (source : Syntax) :
     CommandElabM Unit := do
   let mut L : LanguageInfo := { name := (← getCurrNamespace) ++ name }
   let mut used : List Name := []
   for s in entries do
-    let (n, k, isRelation) ← match s with
-      | `(folSymbol| constant $n:ident) => pure (n.getId.eraseMacroScopes, 0, false)
+    let (n, k, isRelation, indexArity) ← match s with
+      | `(folSymbol| constant $n:ident) => pure (n.getId.eraseMacroScopes, 0, false, 0)
       | `(folSymbol| function $n:ident of $k:num) =>
-        pure (n.getId.eraseMacroScopes, k.getNat, false)
-      | `(folSymbol| relation $n:ident of $k:num) => pure (n.getId.eraseMacroScopes, k.getNat, true)
+        pure (n.getId.eraseMacroScopes, k.getNat, false, 0)
+      | `(folSymbol| relation $n:ident of $k:num) =>
+        pure (n.getId.eraseMacroScopes, k.getNat, true, 0)
+      | `(folSymbol| $n:ident $indices:folFamilyIndex* : constant) =>
+        pure (n.getId.eraseMacroScopes, 0, false, ← familyIndexArity indices)
+      | `(folSymbol| $n:ident $indices:folFamilyIndex* : function of $k:num) =>
+        if k.getNat == 0 then throwErrorAt s "function families must have positive arity"
+        pure (n.getId.eraseMacroScopes, k.getNat, false, ← familyIndexArity indices)
+      | `(folSymbol| $n:ident $indices:folFamilyIndex* : relation of $k:num) =>
+        pure (n.getId.eraseMacroScopes, k.getNat, true, ← familyIndexArity indices)
       | _ => throwError "unexpected symbol syntax {repr s}"
     if used.contains n then throwErrorAt s "duplicate symbol `{n}`"
     used := n :: used
     if isRelation then
       if k == 0 then throwErrorAt s "relation symbols must have positive arity"
-      L := { L with relations := L.relations.push (n, k) }
-    else
-      if k == 0 then L := { L with constants := L.constants.push n }
-      else L := { L with functions := L.functions.push (n, k) }
+      if indexArity == 0 then L := { L with relations := L.relations.push (n, k) }
+      else L := { L with relationFamilies := L.relationFamilies.push ⟨n, k, indexArity⟩ }
+    else if indexArity != 0 && k == 0 then
+      L := { L with constantFamilies := L.constantFamilies.push ⟨n, 0, indexArity⟩ }
+    else if indexArity != 0 then
+      L := { L with functionFamilies := L.functionFamilies.push ⟨n, k, indexArity⟩ }
+    else if k == 0 then L := { L with constants := L.constants.push n }
+    else L := { L with functions := L.functions.push (n, k) }
   let body := applyDefinition `FOL.Language.make [numeral L.constants.size,
     sequenceCode (L.functions.toList.map (fun (_, k) => numeral (k - 1))),
-    sequenceCode (L.relations.toList.map (fun (_, k) => numeral (k - 1)))]
+    sequenceCode (L.relations.toList.map (fun (_, k) => numeral (k - 1))),
+    numeral L.constantFamilies.size,
+    sequenceCode (L.functionFamilies.toList.map (fun f => numeral (f.arity - 1))),
+    sequenceCode (L.relationFamilies.toList.map (fun f => numeral (f.arity - 1)))]
   publishChecked (.function ⟨L.name ++ `language, [], 0, body⟩) source
   modifyEnv (languages.addEntry · L)
 
@@ -101,7 +129,7 @@ def declareTheory (name lang : Name) (parent : Option Name) (entries : Array Syn
         let `(praParam| ($_:ident* : $type:praExpr)) := p | throwUnsupportedSyntax
         unless (syntaxParameterType? type).isSome do
           throwErrorAt p "an axiom parameter must have a term or formula type"
-      let template ← parseFormula L [] a parameters.toList
+      let template ← parseFormula L [] a parameters.toList (useDefinitions := true)
       T := { T with axioms := T.axioms.push ⟨axiomName, parameters, template⟩ }
     | _ => throwUnsupportedSyntax
   let Lt := languageTerm L

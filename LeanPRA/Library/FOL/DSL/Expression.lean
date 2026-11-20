@@ -121,6 +121,22 @@ partial def termExpression (L : LanguageInfo) (bound : List Name) (s : Syntax)
   let stx : TSyntax `folTerm := ⟨s⟩
   match stx with
   | `(folTerm| ($t:folTerm)) => termExpression L bound t parameters ambient
+  | `(folTerm| $n:ident[$indices:praExpr,*]) => do
+    let i ← withRef n <|
+      familyIndex L.constantFamilies n.getId.eraseMacroScopes indices.getElems.size 0
+    let symbol ← expressionCall `FOL.Language.constantFamilyMember
+      [language, ← numberExpression i, ← tupleExpression indices.getElems.toList]
+    expressionCall `FOL.Term.const [language, symbol]
+  | `(folTerm| $n:ident[$indices:praExpr,*]($args:folTerm,*)) => do
+    let index ← withRef n <|
+      familyIndex L.functionFamilies n.getId.eraseMacroScopes indices.getElems.size
+        args.getElems.size
+    let language ← languageExpression L
+    let symbol ← expressionCall `FOL.Language.functionFamilyMember
+      [language, ← numberExpression index, ← tupleExpression indices.getElems.toList]
+    let values ← args.getElems.toList.mapM
+      (fun t => termExpression L bound t.raw parameters ambient)
+    expressionCall `FOL.Term.app [language, symbol, ← tupleExpression values]
   | `(folTerm| $n:ident($args:folTerm,*)) =>
     functionApplication L bound n.getId.eraseMacroScopes args.getElems #[] parameters ambient
   | `(folTerm| $n:ident) =>
@@ -289,6 +305,16 @@ partial def formulaExpression (L : LanguageInfo) (bound : List Name) (s : Syntax
       `FOL.Formula.ex else `FOL.Formula.all
     for _ in xs do body ← expressionCall constructorName [body]
     return body
+  | `(folFormula| $n:ident[$indices:praExpr,*]($args:folTerm,*)) => do
+    let index ← withRef n <|
+      familyIndex L.relationFamilies n.getId.eraseMacroScopes indices.getElems.size
+        args.getElems.size
+    let language ← languageExpression L
+    let symbol ← expressionCall `FOL.Language.relationFamilyMember
+      [language, ← numberExpression index, ← tupleExpression indices.getElems.toList]
+    let values ← args.getElems.toList.mapM
+      (fun t => termExpression L bound t.raw parameters ambient)
+    expressionCall `FOL.Formula.rel [language, symbol, ← tupleExpression values]
   | `(folFormula| $n:ident($args:folTerm,*)) =>
     relationApplication L bound n.getId.eraseMacroScopes args.getElems #[] parameters ambient
   | `(folFormula| $n:ident $args:folTerm*) =>

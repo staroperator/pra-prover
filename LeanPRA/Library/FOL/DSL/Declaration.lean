@@ -8,7 +8,8 @@ public meta import LeanPRA.Library.Tactic.Construction
 Language metadata records source names and arities for quotation elaboration.
 The mathematical language is an ordinary numerical PRA definition.
 
-- `LanguageInfo` stores the source names and arities used by the frontend.
+- `FamilyInfo` stores a family name, object arity, and number of index parameters.
+- `LanguageInfo` stores the symbols and families used by the frontend.
 - `findLanguage` resolves a language name in the current namespace.
 - `languageTerm` refers to its numerical PRA definition.
 -/
@@ -27,11 +28,20 @@ open LeanPRA
 
 open Core
 
+structure FamilyInfo where
+  name : Name
+  arity : Nat
+  indexArity : Nat
+  deriving Inhabited
+
 structure LanguageInfo where
   name : Name
   constants : Array Name := #[]
   functions : Array (Name × Nat) := #[]
   relations : Array (Name × Nat) := #[]
+  constantFamilies : Array FamilyInfo := #[]
+  functionFamilies : Array FamilyInfo := #[]
+  relationFamilies : Array FamilyInfo := #[]
   deriving Inhabited
 
 initialize languages : SimplePersistentEnvExtension LanguageInfo (Array LanguageInfo) ←
@@ -39,6 +49,17 @@ initialize languages : SimplePersistentEnvExtension LanguageInfo (Array Language
     addEntryFn := Array.push
     addImportedFn := fun entries => entries.foldl (· ++ ·) #[]
   }
+
+/-- Resolve a family and check the numbers of indices and object arguments. -/
+def familyIndex (families : Array FamilyInfo) (name : Name) (indices arity : Nat) :
+    CommandElabM Nat := do
+  let some i := families.findIdx? (·.name == name) | throwError "unknown symbol family `{name}`"
+  let family := families[i]!
+  unless indices == family.indexArity do
+    throwError "symbol family `{name}` expects {family.indexArity} indices, got {indices}"
+  unless arity == family.arity do
+    throwError "symbol family `{name}` expects {family.arity} term arguments, got {arity}"
+  return i
 
 def languageTerm (L : LanguageInfo) : Term := applyDefinition (L.name ++ `language)
 

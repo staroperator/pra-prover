@@ -123,6 +123,7 @@ private partial def termTransport (x : Name) (p : Nat) (t : TermView) : DeriveM 
   match t with
   | .var y => if x == y then return p else eqRefl t
   | .app i ts => eqCongr i (← ts.mapM (termTransport x p))
+  | .indexedApp i k ts => eqCongr i (← ts.mapM (termTransport x p)) (some k)
   | .code _ _ args =>
     if args.any (fun t => t.variables.contains x) then
       throwError "substitution in an opaque term needs a substitution theorem"
@@ -136,13 +137,16 @@ partial def formulaTransport (x : Name) (p : Nat) (a : FormulaView) (q : Nat) :
   | .falsum => return q
   | .equal u v =>
     eqTrans (← eqSymm (← termTransport x p u)) (← eqTrans q (← termTransport x p v))
-  | .relation i ts =>
+  | .relation i ts | .indexedRelation i _ ts =>
+    let (rel, symbol) := match a with
+      | .indexedRelation _ k _ => (FormulaView.indexedRelation i k, SchemaArg.member i k true)
+      | _ => (FormulaView.relation i, SchemaArg.number i)
     let proofs ← ts.mapM (termTransport x p)
     let us := ts.map (·.replace x s)
     let vs := ts.map (·.replace x t)
-    let result := FormulaView.imp (.relation i us) (.relation i vs)
+    let result := FormulaView.imp (rel us) (rel vs)
     let schema := (us.zip vs).foldr (fun (u, v) r => .imp (.equal u v) r) result
-    let mut r ← logical schema 10 [.number i, .tuple us, .tuple vs]
+    let mut r ← logical schema 10 [symbol, .tuple us, .tuple vs]
     for h in proofs do r ← mp r h
     mp r q
   | .imp b c =>

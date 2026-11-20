@@ -1,63 +1,17 @@
 module
 
 public import LeanPRA.Library.FOL.Common.Language
-public import LeanPRA.Library.Nat.DivMod
 public import LeanPRA.Library.Nat.Tuple
 
 /-!
-# Numerical first-order syntax
+# First-order syntax
 
 Terms and formulas are encoded in `Nat`. For a fixed language `L`, every number has an
 interpretation as each kind of syntax. Symbol indices start at zero within each symbol group.
 
-For terms, let `c = Language.constants L` and `k = S (Language.functionCount L)`,
-one more than the number of positive-arity function symbols:
-
-- `Term.const L j` is encoded as `j`, for `j < c`.
-- `Term.var L i` is encoded as `c + k * i`.
-- `Term.app L j args` is encoded as `c + (k * args + S j)`.
-
-For formulas, let `m = S (Language.relationCount L)`:
-
-- `Formula.falsum` is encoded as `0`.
-- `Formula.equal L t u` is encoded as `S (3 * (m * pair t u))`.
-- `Formula.rel L j args` is encoded as `S (3 * (m * args + S j))`.
-- `Formula.imp A B` is encoded as `S (3 * pair A B + 1)`.
-- `Formula.all A` is encoded as `S (3 * A + 2)`.
-
-Here `t`, `u` are term codes, and `A`, `B` are formula codes. In function and relation
-applications, `j` is below the corresponding symbol count and `args` encodes a tuple of term
-codes of that symbol's arity: one argument `t` is encoded as `t`, and two as `pair t u`.
-`Term.head` and `Term.arg` recover a nonconstant term's constructor and arguments.
-
-For positive formulas, the predecessor's remainder modulo `3` distinguishes equality or relation
-application from implication and universal quantification. In the first case, division by `3`
-and then remainder modulo `m` distinguishes equality (`0`) from relation symbol `j` (`S j`).
-`Formula.head`, `Formula.arg`, and `Formula.relationIndex` recover the constructor and its
-arguments.
-
 Variables use de Bruijn indices: `0` refers to the nearest binder, with larger indices counting
 outward. Beneath `d` binders, an index `i ≥ d` refers to surrounding position `i - d`.
-Formulas have no fixed scope. The main operations and proof principles are:
-
-- `Term.cases` and `Formula.cases` recover the constructor represented by any code.
-- `Term.induction_of_bool` and `Formula.induction_of_bool` prove predicates represented by
-  numerical tests, using hypotheses for the immediate children.
-- `Formula.inductionWithDepth_of_bool` also tracks binder depth, allowing smaller child depths.
-- `Term.induction_eq` and `Formula.induction_eq` specialize these principles to equations;
-  the formula version tracks binder depth.
-- `Term.rec` processes variables, constants, and function applications by numerical recursion,
-  passing an exact-arity tuple of child results to the application handler.
-- `Formula.recWithDepth` makes the binder depth available to every formula handler.
-  Its paired recursion rank decreases when entering a quantified body, even though depth increases.
-- `Formula.rec` processes the same cases with handlers that ignore binder depth.
-- `Term.subst` and `Formula.substWithDepth` replace variables, tracking depth beneath quantifiers.
-- `Formula.instantiateAt` and `Formula.instantiate` substitute a term into a surrounding
-  variable position or quantifier body, lifting it beneath inner binders and lowering later indices.
-- `Term.bound` and `Formula.bound` give the number of surrounding variable positions
-  needed by the syntax.
-- `Formula.Closed` states that a formula has no free variable positions;
-  `Formula.isClosed` is its numerical test.
+Formulas have no fixed scope.
 -/
 
 @[expose] public section
@@ -66,183 +20,72 @@ pra
 
 namespace FOL
 
-/-! ## Syntax -/
+open Language
+
+/-! ## Constructors
+
+For terms, let `c = Language.constants L`, `p = Language.functionCount L`, and
+`s = S (p + Language.functionFamilyCount L)`. The stride `k` is `s` when there are no constant
+families and `s + 1` otherwise.
+
+- `Term.const L j` is encoded as `j` for an ordinary constant `j < c`. For member `i` of constant
+  family `b`, let `q = Language.constantFamilyCount L * i + b`. Its symbol index is `c + q`,
+  and its term code is `c + (k * q + s)`.
+- `Term.var L i` is encoded as `c + k * i`.
+- `Term.app L j args` is encoded as `c + (k * args + S j)` for an ordinary function `j < p`.
+  For `j = Language.functionFamilyMember L b i`, its code is `c + (k * pair i args + S (p + b))`.
+
+For formulas, let `q = Language.relationCount L` and `m = S (q + Language.relationFamilyCount L)`.
+
+- `Formula.falsum` is encoded as `0`.
+- `Formula.equal L t u` is encoded as `S (3 * (m * pair t u))`.
+- `Formula.rel L j args` is encoded as `S (3 * (m * args + S j))` for an ordinary relation `j < q`.
+  For `j = Language.relationFamilyMember L b i`, its code is
+  `S (3 * (m * pair i args + S (q + b)))`.
+- `Formula.imp A B` is encoded as `S (3 * pair A B + 1)`.
+- `Formula.all A` is encoded as `S (3 * A + 2)`.
+
+Here `t`, `u` are term codes, and `A`, `B` are formula codes. The tuple `args` contains one term
+code per argument. One argument has its own code, and a longer
+tuple pairs its first argument with the remaining tuple. When the language has no indexed families,
+these equations give the original finite-language codes.
+-/
 
 namespace Term
 
 /--
 `Term.const L j` encodes constant symbol `j` in language code `L`,
-for `j < Language.constants L`.
+for `Language.IsConstant L j`.
 -/
-def const : Nat → Nat → Nat := fun _ j => j
+def const : Nat → Nat → Nat := fun L j =>
+  let c := constants L;
+  let s := S (functionCount L + functionFamilyCount L);
+  ite (ltb j c) j (c + (S s * (j - c) + s))
+
+theorem const_of_lt : ∀ L j, j < constants L → const L j = j := by
+  intro L j hj
+  rw [const, and_right (ltb_eq_one j (constants L)) hj, ite_succ]
 
 /--
 `Term.var L i` encodes variable index `i` in language code `L`. Indices start at zero;
 under `d` surrounding binders, `i < d` refers to one of those binders and `i - d` otherwise
 identifies a position in the surrounding context. Indices count outward from the nearest binder.
 -/
-def var : Nat → Nat → Nat := fun L i => Language.constants L + S (Language.functionCount L) * i
+def var : Nat → Nat → Nat := fun L i =>
+  constants L + S (functionCount L + functionFamilyCount L + isPos (constantFamilyCount L)) * i
 
 /--
 `Term.app L j args` encodes an application of function symbol `j` in language code `L`,
-for `j < Language.functionCount L`. `args` is a tuple code of `Language.functionArity L j`
+for `Language.IsFunction L j`. The tuple `args` contains `Language.functionSymbolArity L j`
 term codes.
 -/
-def app : Nat → Nat → Nat → Nat :=
-  fun L j args => Language.constants L + (S (Language.functionCount L) * args + S j)
-
-/--
-`Term.head L t` reads the head code of a nonconstant term code `t` in language code `L`:
-`0` for a variable and `S j` for function symbol `j`. Use with `Language.constants L ≤ t`.
--/
-def head : Nat → Nat → Nat := fun L t => (t - Language.constants L) % S (Language.functionCount L)
-
-/--
-`Term.arg L t` reads the variable index or argument tuple from a nonconstant term code `t`
-in language code `L`. Use with `Language.constants L ≤ t`.
--/
-def arg : Nat → Nat → Nat := fun L t => (t - Language.constants L) / S (Language.functionCount L)
-
-theorem constants_le_var : ∀ L i, Language.constants L ≤ var L i := by
-  intro L i
-  exact le_add_right (Language.constants L) (S (Language.functionCount L) * i)
-
-theorem constants_le_app : ∀ L j args, Language.constants L ≤ app L j args := by
-  intro L j args
-  exact le_add_right (Language.constants L) (S (Language.functionCount L) * args + S j)
-
-theorem head_var : ∀ L i, head L (var L i) = 0 := by
-  intro L i
-  rw [head, var, add_sub_self_left]
-  exact mod_mul (S (Language.functionCount L)) i
-
-theorem arg_var : ∀ L i, arg L (var L i) = i := by
-  intro L i
-  rw [arg, var, add_sub_self_left]
-  exact div_mul (S (Language.functionCount L)) i (succ_ne_zero (Language.functionCount L))
-
-theorem head_app : ∀ L j args, j < Language.functionCount L → head L (app L j args) = S j := by
-  intro L j args hj
-  rw [head, app, add_sub_self_left]
-  exact mod_mul_add_of_lt (S (Language.functionCount L)) args (S j)
-    (succ_ne_zero (Language.functionCount L))
-    (and_right (succ_le_succ (S j) (Language.functionCount L)) hj)
-
-theorem arg_app : ∀ L j args, j < Language.functionCount L → arg L (app L j args) = args := by
-  intro L j args hj
-  rw [arg, app, add_sub_self_left]
-  exact div_mul_add_of_lt (S (Language.functionCount L)) args (S j)
-    (succ_ne_zero (Language.functionCount L))
-    (and_right (succ_le_succ (S j) (Language.functionCount L)) hj)
-
-theorem args_lt_app : ∀ L j args, args < app L j args := by
-  intro L j args
-  have h₁ := le_mul_of_pos args (S (Language.functionCount L))
-    (succ_ne_zero (Language.functionCount L))
-  have h₂ := le_add_right (S (Language.functionCount L) * args) j
-  have h₃ : args < S (Language.functionCount L) * args + S j :=
-    and_right (lt_succ args (S (Language.functionCount L) * args + j)) (le_trans _ _ _ h₁ h₂)
-  exact lt_of_lt_of_le _ _ _ h₃
-    (le_add_left (Language.constants L) (S (Language.functionCount L) * args + S j))
-
-theorem var_mono : ∀ L i d, var L i ≤ var L (i + d) := by
-  intro L i d
-  change Language.constants L + S (Language.functionCount L) * i ≤
-    Language.constants L + S (Language.functionCount L) * (i + d)
-  exact add_le_add_left _ _ (Language.constants L)
-    (mul_le_mul_left i (i + d) (S (Language.functionCount L)) (le_add_right i d))
-
-theorem app_mono : ∀ L j xs ys, xs ≤ ys → app L j xs ≤ app L j ys := by
-  intro L j xs ys h
-  change Language.constants L + (S (Language.functionCount L) * xs + S j) ≤
-    Language.constants L + (S (Language.functionCount L) * ys + S j)
-  exact add_le_add_left _ _ (Language.constants L)
-    (add_le_add_right _ _ (S j) (mul_le_mul_left xs ys (S (Language.functionCount L)) h))
-
-theorem head_lt : ∀ L t, head L t < S (Language.functionCount L) :=
-  fun L t => mod_lt (t - Language.constants L) (S (Language.functionCount L))
-    (succ_ne_zero (Language.functionCount L))
-
-theorem var_arg_of_head_eq_zero : ∀ L t, Language.constants L ≤ t → head L t = 0 →
-    var L (arg L t) = t := by
-  intro L t hc hh
-  have h : S (Language.functionCount L) * arg L t + head L t = t - Language.constants L :=
-    div_mod (t - Language.constants L) (S (Language.functionCount L))
-  rw [hh, add_zero] at h
-  rw [var, h, add_comm]
-  exact sub_add_cancel_of_le t (Language.constants L) hc
-
-theorem app_arg_of_head_ne_zero : ∀ L t,
-    Language.constants L ≤ t → ¬ head L t = 0 →
-    pred (head L t) < Language.functionCount L ∧
-      app L (pred (head L t)) (arg L t) = t := by
-  intro L t hc hh
-  constructor
-  · have h := and_left (lt_succ (head L t) (Language.functionCount L)) (head_lt L t)
-    rw [← succ_pred (head L t) hh] at h
-    exact h
-  · have h : S (Language.functionCount L) * arg L t + head L t = t - Language.constants L :=
-      div_mod (t - Language.constants L) (S (Language.functionCount L))
-    rw [app, succ_pred (head L t) hh, h, add_comm]
-    exact sub_add_cancel_of_le t (Language.constants L) hc
-
-/-- Every number denotes a constant, variable, or application with a valid symbol index. -/
-theorem cases (P : Nat → Prop) : ∀ L,
-    (∀ j, j < Language.constants L → P (const L j)) →
-    (∀ i, P (var L i)) →
-    (∀ j args, j < Language.functionCount L → P (app L j args)) → ∀ t, P t := by
-  intro L hc hv ha t
-  by_cases ht : t < Language.constants L
-  · exact hc t ht
-  · have hle := le_of_not_lt (Language.constants L) t ht
-    by_cases hh : head L t = 0
-    · rw [← var_arg_of_head_eq_zero L t hle hh]
-      exact hv (arg L t)
-    · have h := app_arg_of_head_ne_zero L t hle hh
-      rw [← and_right h]
-      exact ha (pred (head L t)) (arg L t) (and_left h)
-
-/-- Structural induction on term codes for a predicate represented by the numerical test `f`.
-The application case assumes the predicate for each component of its argument tuple. -/
-theorem induction_of_bool (P : Nat → Prop) (f : Nat → Nat) : ∀ L,
-    (∀ t, ¬ f t = 0 ↔ P t) →
-    (∀ j, j < Language.constants L → P (const L j)) →
-    (∀ i, P (var L i)) →
-    (∀ j args, j < Language.functionCount L →
-      (∀ i, i < Language.functionArity L j → P (Tuple.get (Language.functionArity L j) args i)) →
-      P (app L j args)) → ∀ t, P t := by
-  intro L spec hc hv ha
-  apply strong_induction_of_bool P f spec
-  apply cases (fun t => (∀ u, u < t → P u) → P t) L
-  · intro j hj ih
-    exact hc j hj
-  · intro i ih
-    exact hv i
-  · intro j args hj ih
-    apply ha j args hj
-    intro i hi
-    exact ih (Tuple.get (Language.functionArity L j) args i)
-      (lt_of_le_of_lt _ args _ (Tuple.get_le (Language.functionArity L j) args i)
-        (args_lt_app L j args))
-
-/-- Prove equations on term codes from their constant, variable, and application cases. -/
-theorem induction_eq (f g : Nat → Nat) : ∀ L,
-    (∀ j, j < Language.constants L → f (const L j) = g (const L j)) →
-    (∀ i, f (var L i) = g (var L i)) →
-    (∀ j args, j < Language.functionCount L →
-      (∀ i, i < Language.functionArity L j →
-        f (Tuple.get (Language.functionArity L j) args i) =
-          g (Tuple.get (Language.functionArity L j) args i)) →
-      f (app L j args) = g (app L j args)) → ∀ t, f t = g t := by
-  intro L
-  apply induction_of_bool (fun t => f t = g t) (fun t => eqb (f t) (g t)) L
-  intro t
-  constructor
-  · intro h
-    by_contra hn
-    exact h (and_right (eqb_eq_zero (f t) (g t)) hn)
-  · intro h hn
-    exact and_left (eqb_eq_zero (f t) (g t)) hn h
+def app : Nat → Nat → Nat → Nat := fun L j args =>
+  let p := functionCount L;
+  let f := functionFamilyCount L;
+  let b := ite (ltb j p) j (p + ((j - p) % f));
+  let k := (j - p) / f;
+  let xs := ite (ltb b p) args (pair k args);
+  constants L + (S (p + f + isPos (constantFamilyCount L)) * xs + S b)
 
 end Term
 
@@ -256,15 +99,20 @@ def falsum : Nat := 0
 in language code `L`.
 -/
 def equal : Nat → Nat → Nat → Nat :=
-  fun L t u => S (3 * (S (Language.relationCount L) * pair t u))
+  fun L t u => S (3 * (S (relationCount L + relationFamilyCount L) * pair t u))
 
 /--
-`Formula.rel L j args` encodes a relation formula in language code `L`,
-for `j < Language.relationCount L`. `args` is a tuple code of `Language.relationArity L j`
+`Formula.rel L j args` encodes the atomic formula for relation symbol `j` in language code `L`,
+for `Language.IsRelation L j`. The tuple `args` contains `Language.relationSymbolArity L j`
 term codes.
 -/
-def rel : Nat → Nat → Nat → Nat :=
-  fun L j args => S (3 * (S (Language.relationCount L) * args + S j))
+def rel : Nat → Nat → Nat → Nat := fun L j args =>
+  let p := relationCount L;
+  let f := relationFamilyCount L;
+  let b := ite (ltb j p) j (p + ((j - p) % f));
+  let k := (j - p) / f;
+  let xs := ite (ltb b p) args (pair k args);
+  S (3 * (S (p + f) * xs + S b))
 
 /-- `Formula.imp A B` encodes implication from formula code `A` to formula code `B`. -/
 def imp : Nat → Nat → Nat := fun A B => S (3 * pair A B + 1)
@@ -291,6 +139,250 @@ as `¬ ∀ ¬ A`. Variable indices follow the convention of `Formula.all`.
 -/
 def ex : Nat → Nat := fun A => neg (all (neg A))
 
+end Formula
+
+/-! ## Destructing terms
+
+`Term.head` and `Term.arg` recover a nonconstant term's constructor and arguments.
+
+- `Term.cases` recovers the constructor represented by any term code.
+- `Term.induction_of_bool` proves predicates represented by numerical tests, using hypotheses for
+  the immediate children.
+- `Term.induction_eq` specializes this principle to equations.
+-/
+
+namespace Term
+
+/--
+`Term.head L t` reads the head of a nonconstant term code `t` in language code `L`.
+It returns zero for a variable or `S j` for an application of function symbol `j`.
+-/
+def head : Nat → Nat → Nat := fun L t =>
+  let m := S (functionCount L + functionFamilyCount L + isPos (constantFamilyCount L));
+  let u := t - constants L;
+  let b := pred (u % m);
+  let xs := u / m;
+  let k := unpairLeft xs;
+  let j := ite (ltb b (functionCount L)) b (functionFamilyMember L (b - functionCount L) k);
+  ite (u % m) (S j) 0
+
+/--
+`Term.arg L t` reads the variable index or argument tuple from a nonconstant term code `t`
+in language code `L`.
+-/
+def arg : Nat → Nat → Nat := fun L t =>
+  let m := S (functionCount L + functionFamilyCount L + isPos (constantFamilyCount L));
+  let u := t - constants L;
+  let b := pred (u % m);
+  let xs := u / m;
+  let args := ite (ltb b (functionCount L)) xs (unpairRight xs);
+  ite (u % m) args xs
+
+theorem constants_le_var : ∀ L i, constants L ≤ var L i :=
+  fun L i => le_add_right (constants L) _
+
+theorem constants_le_app : ∀ L j args, constants L ≤ app L j args :=
+  fun L j args => le_add_right (constants L) _
+
+theorem head_var : ∀ L i, head L (var L i) = 0 := by
+  intro L i
+  rw [head, var, add_sub_self_left, mod_mul, ite_zero]
+
+theorem arg_var : ∀ L i, arg L (var L i) = i := by
+  intro L i
+  rw [arg, var, add_sub_self_left, mod_mul, ite_zero, div_mul _ _ (succ_ne_zero _)]
+
+theorem head_app : ∀ L j args, IsFunction L j → head L (app L j args) = S j := by
+  intro L j args hj
+  let p := functionCount L
+  let f := functionFamilyCount L
+  have hb := and_right (succ_le_succ _ _) (lt_of_lt_of_le _ _ _ hj
+    (le_add_right (p + f) (isPos (constantFamilyCount L))))
+  rw [head, app, add_sub_self_left, mod_mul_add_of_lt _ _ _ (succ_ne_zero _) hb,
+    div_mul_add_of_lt _ _ _ (succ_ne_zero _) hb, ite_succ, pred_succ]
+  by_cases ho : j < p
+  · rw [and_right (ltb_eq_one j p) ho, ite_succ, and_right (ltb_eq_one j p) ho, ite_succ]
+  · have hle := le_of_not_lt p j ho
+    rw [ltb_eq_zero_of_ge j p hle, ite_zero, ltb_eq_zero_of_ge _ _ (le_add_right p _),
+      ite_zero, ite_zero, add_sub_self_left]
+    rw [unpairLeft_pair]
+    change S (p + (f * ((j - p) / f) + (j - p) % f)) = S j
+    rw [div_mod, add_comm, sub_add_cancel_of_le j p hle]
+
+theorem arg_app : ∀ L j args, IsFunction L j →
+    arg L (app L j args) = args := by
+  intro L j args hj
+  let p := functionCount L
+  let f := functionFamilyCount L
+  have hb := and_right (succ_le_succ _ _) (lt_of_lt_of_le _ _ _ hj
+    (le_add_right (p + f) (isPos (constantFamilyCount L))))
+  rw [arg, app, add_sub_self_left, mod_mul_add_of_lt _ _ _ (succ_ne_zero _) hb,
+    div_mul_add_of_lt _ _ _ (succ_ne_zero _) hb, ite_succ, pred_succ]
+  let b := ite (ltb j p) j (p + ((j - p) % f))
+  by_cases ho : b < p
+  · rw [and_right (ltb_eq_one b p) ho, ite_succ, ite_succ]
+  · rw [ltb_eq_zero_of_ge b p (le_of_not_lt p b ho), ite_zero, ite_zero, unpairRight_pair]
+
+theorem args_lt_app : ∀ L j args, args < app L j args := by
+  intro L j args
+  let p := functionCount L
+  let f := functionFamilyCount L
+  let b := ite (ltb j p) j (p + ((j - p) % f))
+  let m := S (p + f + isPos (constantFamilyCount L))
+  let k := (j - p) / f
+  let xs := ite (ltb b p) args (pair k args)
+  have hp := le_ite (ltb b p) args args (pair k args) (le_refl args) (right_le_pair k args)
+  have hm := le_mul_of_pos xs m (succ_ne_zero _)
+  have h := le_trans _ _ _ (le_trans _ _ _ hp hm) (le_add_right (m * xs) b)
+  exact lt_of_lt_of_le _ _ _ (and_right (lt_succ _ _) h) (le_add_left (constants L) _)
+
+theorem var_mono : ∀ L i d, var L i ≤ var L (i + d) := by
+  intro L i d
+  exact add_le_add_left _ _ (constants L)
+    (mul_le_mul_left i (i + d) _ (le_add_right i d))
+
+theorem app_mono : ∀ L j xs ys, xs ≤ ys → app L j xs ≤ app L j ys := by
+  intro L j xs ys h
+  apply add_le_add_left
+  apply add_le_add_right
+  apply mul_le_mul_left
+  apply ite_mono
+  · exact h
+  exact pair_mono _ _ _ _ (le_refl _) h
+
+/-- Every number denotes a constant, variable, or application with a valid symbol index. -/
+theorem cases (P : Nat → Prop) : ∀ L,
+    (∀ j, IsConstant L j → P (const L j)) →
+    (∀ i, P (var L i)) →
+    (∀ j args, IsFunction L j → P (app L j args)) → ∀ t, P t := by
+  intro L hc hv ha t
+  by_cases ht : t < constants L
+  · rw [← const_of_lt L t ht]
+    exact hc t (isConstant_of_lt L t ht)
+  · have hle := le_of_not_lt (constants L) t ht
+    let p := functionCount L
+    let f := functionFamilyCount L
+    let m := S (p + f + isPos (constantFamilyCount L))
+    let u := t - constants L
+    have hdiv := div_mod u m
+    by_cases hh : u % m = 0
+    · have form : var L (u / m) = t := by
+        rw [hh, add_zero] at hdiv
+        rw [var, hdiv, add_comm, sub_add_cancel_of_le t (constants L) hle]
+      rw [← form]
+      exact hv (u / m)
+    · by_cases h : u % m < S (p + f)
+      · let b := pred (u % m)
+        let v := u / m
+        let k := unpairLeft v
+        let j := ite (ltb b p) b (functionFamilyMember L (b - p) k)
+        have hb : b < p + f := by
+          rw [← succ_pred (u % m) hh] at h
+          exact and_left (succ_le_succ _ _) h
+        have hentry : ite (ltb j p) j (p + ((j - p) % f)) = b :=
+          ite_ltb_mod_eq_self_of_lt_add p f b k hb
+        let xs := ite (ltb b p) v (unpairRight v)
+        have form : app L j xs = t := by
+          rw [app, hentry]
+          have hx : ite (ltb b p) xs (pair ((j - p) / f) xs) = v := by
+            by_cases ho : b < p
+            · rw [and_right (ltb_eq_one b p) ho, ite_succ, ite_succ]
+            · have hle := le_of_not_lt p b ho
+              have hf : b - p < f := and_right (sub_lt_iff b p f hle) hb
+              have hnz := ne_zero_of_pos f (lt_of_le_of_lt 0 _ f (zero_le _) hf)
+              rw [ltb_eq_zero_of_ge b p hle, ite_zero, ite_zero, functionFamilyMember,
+                add_sub_self_left, div_mul_add_of_lt f _ (b - p) hnz hf]
+              exact pair_unpair v
+          rw [hx, succ_pred (u % m) hh, hdiv, add_comm, sub_add_cancel_of_le t (constants L) hle]
+        rw [← form]
+        apply ha
+        rw [IsFunction, hentry]
+        exact hb
+      · have hm := mod_lt u m (succ_ne_zero _)
+        have hC : ¬ constantFamilyCount L = 0 := by
+          intro hz
+          have he : m = S (p + f) := by
+            change S (p + f + isPos (constantFamilyCount L)) = S (p + f)
+            rw [hz, isPos_zero, add_zero]
+          exact h (eq_subst (fun n => u % m < n) he hm)
+        have hp := and_right (isPos_eq_one _) hC
+        have hm' : m = S (S (p + f)) := by
+          change S (p + f + isPos (constantFamilyCount L)) = S (S (p + f))
+          rw [hp, add_succ, add_zero]
+        have hr : u % m = S (p + f) := by
+          have he := eq_subst (fun n => u % m < n) hm' hm
+          exact le_antisymm _ _ (and_left (lt_succ _ _) he) (le_of_not_lt _ _ h)
+        let j := constants L + u / m
+        have form : const L j = t := by
+          rw [const, ltb_eq_zero_of_ge _ _ (le_add_right (constants L) (u / m)), ite_zero,
+            add_sub_self_left]
+          have hd := hdiv
+          rw [hr] at hd
+          rw [← hm', hd, add_comm, sub_add_cancel_of_le t (constants L) hle]
+        rw [← form]
+        apply hc j
+        right
+        exact hC
+
+/-- Structural induction on term codes for a predicate represented by the numerical test `f`.
+The application case assumes the predicate for each component of its argument tuple. -/
+theorem induction_of_bool (P : Nat → Prop) (f : Nat → Nat) : ∀ L,
+    (∀ t, ¬ f t = 0 ↔ P t) →
+    (∀ j, IsConstant L j → P (const L j)) →
+    (∀ i, P (var L i)) →
+    (∀ j args, IsFunction L j →
+      (∀ i, i < functionSymbolArity L j → P (Tuple.get (functionSymbolArity L j) args i)) →
+      P (app L j args)) → ∀ t, P t := by
+  intro L spec hc hv ha
+  apply strong_induction_of_bool P f spec
+  apply cases (fun t => (∀ u, u < t → P u) → P t) L
+  · intro j hj ih
+    exact hc j hj
+  · intro i ih
+    exact hv i
+  · intro j args hj ih
+    apply ha j args hj
+    intro i hi
+    have h := args_lt_app L j args
+    exact ih (Tuple.get (functionSymbolArity L j) args i)
+      (lt_of_le_of_lt _ args _ (Tuple.get_le (functionSymbolArity L j) args i) h)
+
+/-- Prove equations on term codes from their constant, variable, and application cases. -/
+theorem induction_eq (f g : Nat → Nat) : ∀ L,
+    (∀ j, IsConstant L j → f (const L j) = g (const L j)) →
+    (∀ i, f (var L i) = g (var L i)) →
+    (∀ j args, IsFunction L j →
+      (∀ i, i < Language.functionSymbolArity L j →
+        f (Tuple.get (Language.functionSymbolArity L j) args i) =
+          g (Tuple.get (Language.functionSymbolArity L j) args i)) →
+      f (app L j args) = g (app L j args)) → ∀ t, f t = g t := by
+  intro L
+  apply induction_of_bool (fun t => f t = g t) (fun t => eqb (f t) (g t)) L
+  intro t
+  constructor
+  · intro h
+    by_contra hn
+    exact h (and_right (eqb_eq_zero (f t) (g t)) hn)
+  · intro h hn
+    exact and_left (eqb_eq_zero (f t) (g t)) hn h
+
+end Term
+
+/-! ## Destructing formulas
+
+For positive formulas, the predecessor's remainder modulo `3` distinguishes an atom from an
+implication or a universal quantifier. Let
+`m = S (Language.relationCount L + Language.relationFamilyCount L)`.
+For an atom, dividing the predecessor by `3` and taking the remainder modulo `m` gives zero for
+equality or the successor of the relation entry. For a relation family, unpairing the quotient
+recovers the member number and the argument tuple. `Formula.head`, `Formula.arg`, and
+`Formula.relationIndex` recover the constructor, arguments, and relation symbol.
+
+- `Formula.cases` recovers the constructor represented by any formula code.
+-/
+
+namespace Formula
+
 /--
 `Formula.head L A` reads the head code of positive formula code `A` in language code `L`:
 `0` for equality, `1` for implication, `2` for universal quantification, and `3` for a relation.
@@ -298,7 +390,7 @@ Falsity is recognized by `A = 0`.
 -/
 def head : Nat → Nat → Nat := fun L A =>
   ite (pred A % 3) (pred A % 3)
-    (ite ((pred A / 3) % S (Language.relationCount L)) 3 0)
+    (ite ((pred A / 3) % S (relationCount L + relationFamilyCount L)) 3 0)
 
 /--
 `Formula.arg L A` reads the arguments of positive formula code `A` in language code `L`:
@@ -306,20 +398,29 @@ a pair of term codes for equality, a tuple code of term codes for a relation, a 
 codes for implication, or the body formula code for universal quantification.
 -/
 def arg : Nat → Nat → Nat := fun L A =>
-  ite (pred A % 3) (pred A / 3) ((pred A / 3) / S (Language.relationCount L))
+  let u := pred A / 3;
+  let m := S (relationCount L + relationFamilyCount L);
+  let b := pred (u % m);
+  let xs := u / m;
+  ite (pred A % 3) u
+    (ite (u % m) (ite (ltb b (relationCount L)) xs (unpairRight xs)) xs)
 
 /--
 `Formula.relationIndex L A` reads the relation symbol index from relation formula code `A`
 in language code `L`. Use with `Formula.head L A = 3` and `0 < A`.
 -/
 def relationIndex : Nat → Nat → Nat := fun L A =>
-  pred ((pred A / 3) % S (Language.relationCount L))
+  let u := pred A / 3;
+  let m := S (relationCount L + relationFamilyCount L);
+  let b := pred (u % m);
+  ite (ltb b (relationCount L)) b
+    (relationFamilyMember L (b - relationCount L) (unpairLeft (u / m)))
 
 theorem equal_ne_zero : ∀ L t u, ¬ equal L t u = 0 :=
-  fun L t u => succ_ne_zero (3 * (S (Language.relationCount L) * pair t u))
+  fun L t u => succ_ne_zero _
 
 theorem rel_ne_zero : ∀ L j args, ¬ rel L j args = 0 :=
-  fun L j args => succ_ne_zero (3 * (S (Language.relationCount L) * args + S j))
+  fun L j args => succ_ne_zero _
 
 theorem imp_ne_zero : ∀ A B, ¬ imp A B = 0 := fun A B => succ_ne_zero (3 * pair A B + 1)
 
@@ -327,36 +428,50 @@ theorem all_ne_zero : ∀ A, ¬ all A = 0 := fun A => succ_ne_zero (3 * A + 2)
 
 theorem head_equal : ∀ L t u, head L (equal L t u) = 0 := by
   intro L t u
-  rw [head, equal, pred_succ, mod_mul, div_mul 3 _ (succ_ne_zero 2), mod_mul]
-  rfl
+  rw [head, equal, pred_succ, mod_mul, div_mul 3 _ (succ_ne_zero 2),
+    mod_mul, ite_zero, ite_zero]
 
 theorem arg_equal : ∀ L t u, arg L (equal L t u) = pair t u := by
   intro L t u
-  rw [arg, equal, pred_succ, mod_mul, div_mul 3 _ (succ_ne_zero 2),
-    div_mul _ _ (succ_ne_zero (Language.relationCount L))]
-  rfl
+  rw [arg, equal, pred_succ, mod_mul,
+    div_mul 3 _ (succ_ne_zero 2), mod_mul, div_mul _ _ (succ_ne_zero _),
+    ite_zero, ite_zero]
 
-theorem head_rel : ∀ L j args, j < Language.relationCount L → head L (rel L j args) = 3 := by
-  intro L j args hj
-  rw [head, rel, pred_succ, mod_mul, div_mul 3 _ (succ_ne_zero 2),
-    mod_mul_add_of_lt _ args (S j) (succ_ne_zero (Language.relationCount L))
-      (and_right (succ_le_succ (S j) (Language.relationCount L)) hj)]
-  rfl
+theorem head_rel : ∀ L j args, IsRelation L j → head L (rel L j args) = 3 := by
+  intro L j args h
+  rw [head, rel, pred_succ, mod_mul, ite_zero, div_mul 3 _ (succ_ne_zero 2),
+    mod_mul_add_of_lt _ _ _ (succ_ne_zero _) (and_right (succ_le_succ _ _) h), ite_succ]
 
-theorem arg_rel : ∀ L j args, j < Language.relationCount L → arg L (rel L j args) = args := by
-  intro L j args hj
-  rw [arg, rel, pred_succ, mod_mul, div_mul 3 _ (succ_ne_zero 2),
-    div_mul_add_of_lt _ args (S j) (succ_ne_zero (Language.relationCount L))
-      (and_right (succ_le_succ (S j) (Language.relationCount L)) hj)]
-  rfl
+theorem arg_rel : ∀ L j args, IsRelation L j → arg L (rel L j args) = args := by
+  intro L j args h
+  let p := relationCount L
+  let f := relationFamilyCount L
+  have hb := and_right (succ_le_succ _ _) h
+  rw [arg, rel, pred_succ, mod_mul, ite_zero, div_mul 3 _ (succ_ne_zero 2),
+    mod_mul_add_of_lt _ _ _ (succ_ne_zero _) hb, ite_succ, pred_succ,
+    div_mul_add_of_lt _ _ _ (succ_ne_zero _) hb]
+  let b := ite (ltb j p) j (p + ((j - p) % f))
+  by_cases ho : b < p
+  · rw [and_right (ltb_eq_one b p) ho, ite_succ, ite_succ]
+  · rw [ltb_eq_zero_of_ge b p (le_of_not_lt p b ho), ite_zero, ite_zero, unpairRight_pair]
 
-theorem relationIndex_rel : ∀ L j args, j < Language.relationCount L →
+theorem relationIndex_rel : ∀ L j args, IsRelation L j →
     relationIndex L (rel L j args) = j := by
-  intro L j args hj
+  intro L j args h
+  let p := relationCount L
+  let f := relationFamilyCount L
+  have hb := and_right (succ_le_succ _ _) h
   rw [relationIndex, rel, pred_succ, div_mul 3 _ (succ_ne_zero 2),
-    mod_mul_add_of_lt _ args (S j) (succ_ne_zero (Language.relationCount L))
-      (and_right (succ_le_succ (S j) (Language.relationCount L)) hj)]
-  rfl
+    mod_mul_add_of_lt _ _ _ (succ_ne_zero _) hb, pred_succ,
+    div_mul_add_of_lt _ _ _ (succ_ne_zero _) hb]
+  by_cases ho : j < p
+  · rw [and_right (ltb_eq_one j p) ho, ite_succ, and_right (ltb_eq_one j p) ho, ite_succ]
+  · have hle := le_of_not_lt p j ho
+    rw [ltb_eq_zero_of_ge j p hle, ite_zero, ltb_eq_zero_of_ge _ _ (le_add_right p _),
+      ite_zero, ite_zero, add_sub_self_left]
+    rw [unpairLeft_pair]
+    change p + (f * ((j - p) / f) + (j - p) % f) = j
+    rw [div_mod, add_comm, sub_add_cancel_of_le j p hle]
 
 theorem head_imp : ∀ L A B, head L (imp A B) = 1 := by
   intro L A B
@@ -401,70 +516,162 @@ theorem body_lt_all : ∀ A, A < all A := by
 
 theorem le_equal_left : ∀ L t u, t ≤ equal L t u := by
   intro L t u
-  change t ≤ S (3 * (S (Language.relationCount L) * pair t u))
+  let m := S (relationCount L + relationFamilyCount L)
+  change t ≤ S (3 * (m * pair t u))
   exact le_trans _ _ _ (left_le_pair t u)
     (le_trans _ _ _
-      (le_mul_of_pos (pair t u) (S (Language.relationCount L))
-        (succ_ne_zero (Language.relationCount L)))
+      (le_mul_of_pos (pair t u) m (succ_ne_zero _))
       (le_trans _ _ _
-        (le_mul_of_pos (S (Language.relationCount L) * pair t u) 3 (succ_ne_zero 2))
-        (le_succ_self (3 * (S (Language.relationCount L) * pair t u)))))
+        (le_mul_of_pos (m * pair t u) 3 (succ_ne_zero 2))
+        (le_succ_self (3 * (m * pair t u)))))
 
 theorem le_equal_right : ∀ L t u, u ≤ equal L t u := by
   intro L t u
-  change u ≤ S (3 * (S (Language.relationCount L) * pair t u))
+  let m := S (relationCount L + relationFamilyCount L)
+  change u ≤ S (3 * (m * pair t u))
   exact le_trans _ _ _ (right_le_pair t u)
     (le_trans _ _ _
-      (le_mul_of_pos (pair t u) (S (Language.relationCount L))
-        (succ_ne_zero (Language.relationCount L)))
+      (le_mul_of_pos (pair t u) m (succ_ne_zero _))
       (le_trans _ _ _
-        (le_mul_of_pos (S (Language.relationCount L) * pair t u) 3 (succ_ne_zero 2))
-        (le_succ_self (3 * (S (Language.relationCount L) * pair t u)))))
+        (le_mul_of_pos (m * pair t u) 3 (succ_ne_zero 2))
+        (le_succ_self (3 * (m * pair t u)))))
 
 theorem args_le_rel : ∀ L j xs, xs ≤ rel L j xs := by
   intro L j xs
-  change xs ≤ S (3 * (S (Language.relationCount L) * xs + S j))
-  exact le_trans _ _ _
-    (le_mul_of_pos xs (S (Language.relationCount L)) (succ_ne_zero (Language.relationCount L)))
-    (le_trans _ _ _ (le_add_right (S (Language.relationCount L) * xs) (S j))
-      (le_trans _ _ _
-        (le_mul_of_pos (S (Language.relationCount L) * xs + S j) 3 (succ_ne_zero 2))
-        (le_succ_self (3 * (S (Language.relationCount L) * xs + S j)))))
+  let p := relationCount L
+  let f := relationFamilyCount L
+  let b := ite (ltb j p) j (p + ((j - p) % f))
+  let m := S (p + f)
+  let k := (j - p) / f
+  let args := ite (ltb b p) xs (pair k xs)
+  have hp := le_ite (ltb b p) xs xs (pair k xs) (le_refl xs) (right_le_pair k xs)
+  have hm := le_mul_of_pos args m (succ_ne_zero _)
+  have ha := le_add_right (m * args) (S b)
+  have ht := le_mul_of_pos
+    (m * args + S b) 3 (succ_ne_zero 2)
+  exact le_trans _ _ _ hp (le_trans _ _ _ hm
+    (le_trans _ _ _ ha (le_trans _ _ _ ht (le_succ_self _))))
+
+/-- Every number denotes falsity, an atomic formula, an implication, or a quantifier. -/
+theorem cases (P : Nat → Prop) : ∀ L, P falsum →
+    (∀ t u, P (equal L t u)) →
+    (∀ j xs, IsRelation L j → P (rel L j xs)) →
+    (∀ A B, P (imp A B)) → (∀ A, P (all A)) → ∀ A, P A := by
+  intro L hf he hr hi ha A
+  by_cases hz : A = 0
+  · rw [hz]
+    exact hf
+  · let r := pred A % 3
+    have residues : r = 0 ∨ r = 1 ∨ r = 2 := by
+      have bound : r < 3 := mod_lt (pred A) 3 (succ_ne_zero 2)
+      rcases zero_or_succ_pred r with h0 | h0
+      · left
+        exact h0
+      · rcases zero_or_succ_pred (pred r) with h1 | h1
+        · right
+          left
+          rw [h0, h1]
+        · rcases zero_or_succ_pred (pred (pred r)) with h2 | h2
+          · right
+            right
+            rw [h0, h1, h2]
+          · rw [h0, h1, h2] at bound
+            exact false_elim (succ_ne_zero (pred (pred (pred r))) bound)
+    rcases residues with h0 | hrest
+    · let q := pred A / 3
+      let p := relationCount L
+      let f := relationFamilyCount L
+      let m := S (p + f)
+      have outer : 3 * q = pred A := by
+        have h := div_mod (pred A) 3
+        rw [h0, add_zero] at h
+        exact h
+      by_cases hq : q % m = 0
+      · have inner : m * (q / m) = q := by
+          have h := div_mod q m
+          rw [hq, add_zero] at h
+          exact h
+        have form : equal L (unpairLeft (q / m)) (unpairRight (q / m)) = A := by
+          rw [equal, pair_unpair, inner, outer, succ_pred A hz]
+        rw [← form]
+        exact he (unpairLeft (q / m)) (unpairRight (q / m))
+      · let b := pred (q % m)
+        let v := q / m
+        let j := ite (ltb b p) b
+          (relationFamilyMember L (b - p) (unpairLeft v))
+        have hb : b < p + f := by
+          have h := mod_lt q m (succ_ne_zero _)
+          rw [← succ_pred (q % m) hq] at h
+          exact and_left (succ_le_succ _ _) h
+        have hentry : ite (ltb j p) j (p + ((j - p) % f)) = b :=
+          ite_ltb_mod_eq_self_of_lt_add p f b (unpairLeft v) hb
+        let xs := ite (ltb b p) v (unpairRight v)
+        have form : rel L j xs = A := by
+          rw [rel, hentry]
+          have hx : ite (ltb b p) xs
+              (pair ((j - p) / f) xs) = v := by
+            by_cases ho : b < p
+            · rw [and_right (ltb_eq_one b p) ho, ite_succ, ite_succ]
+            · have hle := le_of_not_lt p b ho
+              have hf : b - p < f := and_right (sub_lt_iff b p f hle) hb
+              have hnz := ne_zero_of_pos f (lt_of_le_of_lt 0 _ f (zero_le _) hf)
+              rw [ltb_eq_zero_of_ge b p hle, ite_zero, ite_zero, relationFamilyMember,
+                add_sub_self_left, div_mul_add_of_lt f _ (b - p) hnz hf]
+              exact pair_unpair v
+          rw [hx, succ_pred (q % m) hq, div_mod, outer, succ_pred A hz]
+        rw [← form]
+        apply hr
+        rw [IsRelation, hentry]
+        exact hb
+    · let q := pred A / 3
+      have h := div_mod (pred A) 3
+      rcases hrest with h1 | h2
+      · rw [h1] at h
+        have form : imp (unpairLeft q) (unpairRight q) = A := by
+          rw [imp, pair_unpair, h, succ_pred A hz]
+        rw [← form]
+        exact hi (unpairLeft q) (unpairRight q)
+      · rw [h2] at h
+        have form : all q = A := by
+          rw [all, h, succ_pred A hz]
+        rw [← form]
+        exact ha q
 
 theorem imp_arg_of_head_eq_one : ∀ L A, ¬ A = 0 → head L A = 1 →
     imp (unpairLeft (arg L A)) (unpairRight (arg L A)) = A := by
-  intro L A ha hh
-  have hm : pred A % 3 = 1 := by
-    by_cases hz : pred A % 3 = 0
-    · rw [head, hz] at hh
-      by_cases hr : (pred A / 3) % S (Language.relationCount L) = 0
-      · rw [hr] at hh
-        exact false_elim (zero_ne_succ 0 hh)
-      · rw [ite_of_ne_zero _ _ _ hr] at hh
-        exact false_elim (succ_ne_zero 1 (eq_congr pred hh))
-    · rw [head, ite_of_ne_zero _ _ _ hz] at hh
-      exact hh
-  rw [imp, pair_unpair, arg, hm]
-  exact eq_trans (eq_congr S (eq_trans
-    (eq_congr (fun r => 3 * (pred A / 3) + r) (eq_symm hm)) (div_mod (pred A) 3)))
-    (succ_pred A ha)
+  intro L
+  apply cases (fun A => ¬ A = 0 → head L A = 1 →
+    imp (unpairLeft (arg L A)) (unpairRight (arg L A)) = A) L
+  · intro hz hh
+    exact false_elim (hz rfl)
+  · intro t u hz hh
+    rw [head_equal] at hh
+    exact false_elim (zero_ne_succ 0 hh)
+  · intro j xs hj hz hh
+    rw [head_rel L j xs hj] at hh
+    exact false_elim (succ_ne_zero 1 (eq_congr pred hh))
+  · intro A B hz hh
+    rw [arg_imp, unpairLeft_pair, unpairRight_pair]
+  · intro A hz hh
+    rw [head_all] at hh
+    exact false_elim (succ_ne_zero 0 (eq_congr pred hh))
 
 theorem all_arg_of_head_eq_two : ∀ L A, ¬ A = 0 → head L A = 2 → all (arg L A) = A := by
-  intro L A ha hh
-  have hm : pred A % 3 = 2 := by
-    by_cases hz : pred A % 3 = 0
-    · rw [head, hz] at hh
-      by_cases hr : (pred A / 3) % S (Language.relationCount L) = 0
-      · rw [hr] at hh
-        exact false_elim (zero_ne_succ 1 hh)
-      · rw [ite_of_ne_zero _ _ _ hr] at hh
-        exact false_elim (succ_ne_zero 0 (eq_congr pred (eq_congr pred hh)))
-    · rw [head, ite_of_ne_zero _ _ _ hz] at hh
-      exact hh
-  rw [all, arg, hm]
-  exact eq_trans (eq_congr S (eq_trans
-    (eq_congr (fun r => 3 * (pred A / 3) + r) (eq_symm hm)) (div_mod (pred A) 3)))
-    (succ_pred A ha)
+  intro L
+  apply cases (fun A => ¬ A = 0 → head L A = 2 → all (arg L A) = A) L
+  · intro hz hh
+    exact false_elim (hz rfl)
+  · intro t u hz hh
+    rw [head_equal] at hh
+    exact false_elim (zero_ne_succ 1 hh)
+  · intro j xs hj hz hh
+    rw [head_rel L j xs hj] at hh
+    exact false_elim (succ_ne_zero 0 (eq_congr pred (eq_congr pred hh)))
+  · intro A B hz hh
+    rw [head_imp] at hh
+    exact false_elim (zero_ne_succ 0 (eq_congr pred hh))
+  · intro A hz hh
+    rw [arg_all]
 
 /--
 `Formula.allN n A` adds `n` universal quantifiers around formula code `A`.
@@ -525,7 +732,18 @@ theorem equalPremises_two : ∀ L x y u v A,
 
 end Formula
 
-/-! ## Recursion -/
+/-! ## Recursion
+
+- `Term.rec` processes variables, constants, and function applications by numerical recursion,
+  passing an exact-arity tuple of child results to the application handler.
+- `Formula.induction_of_bool` proves predicates represented by numerical tests, using hypotheses for
+  the immediate children.
+- `Formula.inductionWithDepth_of_bool` also tracks binder depth, allowing smaller child depths.
+- `Formula.induction_eq` specializes induction to equations and tracks binder depth.
+- `Formula.recWithDepth` makes the binder depth available to every formula handler.
+  Its paired recursion rank decreases when entering a quantified body, even though depth increases.
+- `Formula.rec` processes the same cases with handlers that ignore binder depth.
+-/
 
 namespace Term
 
@@ -535,55 +753,88 @@ namespace Term
 - `var i` handles variable index `i`.
 - `const j` handles constant symbol index `j`.
 - `app j xs` handles function symbol index `j`, with `xs` a tuple of child results of length
-  `Language.functionArity L j`.
+  `Language.functionSymbolArity L j`.
 -/
 def rec (var const : Nat → Nat) (app : Nat → Nat → Nat) : Nat → Nat → Nat :=
-  fun L => covrec (fun t history => ite (ltb t (Language.constants L)) (const t)
-    (ite (head L t)
-      (app (pred (head L t)) (Tuple.map (fun a => Sequence.rget history a)
-        (Language.functionArity L (pred (head L t))) (arg L t)))
-      (var (arg L t))))
+  fun L => covrec (fun t history =>
+    let c := Language.constants L;
+    let s := S (functionCount L + functionFamilyCount L);
+    let m := S (functionCount L + functionFamilyCount L + isPos (constantFamilyCount L));
+    ite (ltb t c) (const t)
+      (ite (eqb ((t - c) % m) s) (const (c + (t - c) / m))
+        (ite (head L t)
+          (app (pred (head L t)) (Tuple.map (fun a => Sequence.rget history a)
+            (Language.functionSymbolArity L (pred (head L t))) (arg L t)))
+          (var (arg L t)))))
 
 theorem rec_const (var const : Nat → Nat) (app : Nat → Nat → Nat) :
-    ∀ L j, j < Language.constants L → rec var const app L (Term.const L j) = const j := by
+    ∀ L j, IsConstant L j → rec var const app L (Term.const L j) = const j := by
   intro L j hj
-  change rec var const app L j = const j
-  rw [rec, covrec, and_right (ltb_eq_one j (Language.constants L)) hj]
-  rfl
+  by_cases ho : j < constants L
+  · rw [const_of_lt L j ho, rec, covrec, and_right (ltb_eq_one j (constants L)) ho, ite_succ]
+  · have hC : ¬ constantFamilyCount L = 0 := by
+      rcases hj with h | h
+      · exact false_elim (ho h)
+      · exact h
+    let c := constants L
+    let s := S (functionCount L + functionFamilyCount L)
+    have hle := le_of_not_lt c j ho
+    have hc := le_add_right c (S s * (j - c) + s)
+    have hm : S (functionCount L + functionFamilyCount L + isPos (constantFamilyCount L)) =
+        S s := by
+      rw [and_right (isPos_eq_one _) hC, add_succ, add_zero]
+    rw [Term.const, ltb_eq_zero_of_ge j c hle, ite_zero, rec, covrec,
+      ltb_eq_zero_of_ge _ _ hc, ite_zero, add_sub_self_left, hm,
+      mod_mul_add_of_lt _ _ s (succ_ne_zero _) (lt_succ_self s),
+      eqb_self, ite_succ, div_mul_add_of_lt _ _ s (succ_ne_zero _) (lt_succ_self s),
+      add_comm, sub_add_cancel_of_le j c hle]
 
 theorem rec_var (var const : Nat → Nat) (app : Nat → Nat → Nat) :
     ∀ L i, rec var const app L (Term.var L i) = var i := by
   intro L i
   rw [rec, covrec,
     ltb_eq_zero_of_ge (Term.var L i) (Language.constants L) (constants_le_var L i),
-    head_var, arg_var]
+    head_var, arg_var, Term.var, add_sub_self_left, mod_mul,
+    and_right (eqb_eq_zero 0 _) (zero_ne_succ _)]
   rfl
 
 theorem rec_app (var const : Nat → Nat) (app : Nat → Nat → Nat) :
-    ∀ L j args, j < Language.functionCount L →
+    ∀ L j args, IsFunction L j →
     rec var const app L (Term.app L j args) =
-      app j (Tuple.map (rec var const app L) (Language.functionArity L j) args) := by
+      app j (Tuple.map (rec var const app L) (Language.functionSymbolArity L j) args) := by
   intro L j args hj
+  let p := functionCount L
+  let f := functionFamilyCount L
+  let b := ite (ltb j p) j (p + ((j - p) % f))
+  let m := S (p + f + isPos (constantFamilyCount L))
+  have hb : S b < m := and_right (succ_le_succ _ _) (lt_of_lt_of_le _ _ _ hj
+    (le_add_right (p + f) (isPos (constantFamilyCount L))))
+  have hr : (Term.app L j args - constants L) % m = S b := by
+    rw [Term.app, add_sub_self_left, mod_mul_add_of_lt _ _ _ (succ_ne_zero _) hb]
+  have hne : ¬ S b = S (p + f) := by
+    intro h
+    have he : b = p + f := succ_inj h
+    exact not_lt_self _ (eq_subst (fun n => n < p + f) he hj)
   rw [rec, covrec,
     ltb_eq_zero_of_ge (Term.app L j args) (Language.constants L) (constants_le_app L j args),
-    head_app L j args hj, arg_app L j args hj]
-  change app j (Tuple.map _ (Language.functionArity L j) args) = _
+    hr, and_right (eqb_eq_zero _ _) hne, ite_zero, head_app L j args hj, arg_app L j args hj,
+    ite_zero, ite_succ, pred_succ]
   apply eq_congr (app j)
   apply Tuple.map_congr_of_get_eq _ _
   intro i hi
-  rw [Sequence.rget_generate _ (Tuple.get (Language.functionArity L j) args i)
-    (Term.app L j args) (lt_of_le_of_lt _ args _
-      (Tuple.get_le (Language.functionArity L j) args i) (args_lt_app L j args))]
+  have h := lt_of_le_of_lt _ args _ (Tuple.get_le (functionSymbolArity L j) args i)
+    (args_lt_app L j args)
+  rw [Sequence.rget_generate _ (Tuple.get (functionSymbolArity L j) args i) (Term.app L j args) h]
   rfl
 
 theorem rec_app_one (var const : Nat → Nat) (app : Nat → Nat → Nat) :
-    ∀ L j x, j < Language.functionCount L → Language.functionArity L j = 1 →
+    ∀ L j x, IsFunction L j → Language.functionSymbolArity L j = 1 →
     rec var const app L (Term.app L j x) = app j (rec var const app L x) := by
   intro L j x hj ha
   rw [rec_app var const app L j x hj, ha, Tuple.map_one _]
 
 theorem rec_app_two (var const : Nat → Nat) (app : Nat → Nat → Nat) :
-    ∀ L j x y, j < Language.functionCount L → Language.functionArity L j = 2 →
+    ∀ L j x y, IsFunction L j → Language.functionSymbolArity L j = 2 →
     rec var const app L (Term.app L j (pair x y)) =
       app j (pair (rec var const app L x) (rec var const app L y)) := by
   intro L j x y hj ha
@@ -606,68 +857,6 @@ theorem binder_rank_lt : ∀ A d, pair A (S d) < pair (all A) d := by
   rw [succ_add] at hd
   exact hd
 
-/-- Every number denotes falsity, an atomic formula, an implication, or a quantifier. -/
-theorem cases (P : Nat → Prop) : ∀ L, P falsum →
-    (∀ t u, P (equal L t u)) →
-    (∀ j xs, j < Language.relationCount L → P (rel L j xs)) →
-    (∀ A B, P (imp A B)) → (∀ A, P (all A)) → ∀ A, P A := by
-  intro L hf he hr hi ha A
-  by_cases hz : A = 0
-  · rw [hz]
-    exact hf
-  · let r := pred A % 3
-    have tags : r = 0 ∨ r = 1 ∨ r = 2 := by
-      have bound : r < 3 := mod_lt (pred A) 3 (succ_ne_zero 2)
-      rcases zero_or_succ_pred r with h0 | h0
-      · left
-        exact h0
-      · rcases zero_or_succ_pred (pred r) with h1 | h1
-        · right
-          left
-          rw [h0, h1]
-        · rcases zero_or_succ_pred (pred (pred r)) with h2 | h2
-          · right
-            right
-            rw [h0, h1, h2]
-          · rw [h0, h1, h2] at bound
-            exact false_elim (succ_ne_zero (pred (pred (pred r))) bound)
-    rcases tags with h0 | hrest
-    · let q := pred A / 3
-      let m := S (Language.relationCount L)
-      have outer : 3 * q = pred A := by
-        have h := div_mod (pred A) 3
-        rw [h0, add_zero] at h
-        exact h
-      by_cases hq : q % m = 0
-      · have inner : m * (q / m) = q := by
-          have h := div_mod q m
-          rw [hq, add_zero] at h
-          exact h
-        have form : equal L (unpairLeft (q / m)) (unpairRight (q / m)) = A := by
-          rw [equal, pair_unpair, inner, outer, succ_pred A hz]
-        rw [← form]
-        exact he (unpairLeft (q / m)) (unpairRight (q / m))
-      · have symbol : pred (q % m) < Language.relationCount L := by
-          have h := and_left (lt_succ (q % m) (Language.relationCount L))
-            (mod_lt q m (succ_ne_zero (Language.relationCount L)))
-          rw [← succ_pred (q % m) hq] at h
-          exact h
-        have form : rel L (pred (q % m)) (q / m) = A := by
-          rw [rel, succ_pred (q % m) hq, div_mod, outer, succ_pred A hz]
-        rw [← form]
-        exact hr (pred (q % m)) (q / m) symbol
-    · rcases hrest with h1 | h2
-      · have hh : head L A = 1 := by
-          rw [head, h1]
-          rfl
-        rw [← imp_arg_of_head_eq_one L A hz hh]
-        exact hi (unpairLeft (arg L A)) (unpairRight (arg L A))
-      · have hh : head L A = 2 := by
-          rw [head, h2]
-          rfl
-        rw [← all_arg_of_head_eq_two L A hz hh]
-        exact ha (arg L A)
-
 /-- Structural induction with a binder depth for a predicate represented by the numerical test
 `f`. At depth `d`, implication cases may use either child at depths at most `d`; the quantified
 case may use its body at depths at most `S d`. Atomic cases receive their term codes directly.
@@ -676,7 +865,7 @@ theorem inductionWithDepth_of_bool (P : Nat → Nat → Prop) (f : Nat → Nat �
     (∀ A d, ¬ f A d = 0 ↔ P A d) →
     (∀ d, P falsum d) →
     (∀ t u d, P (equal L t u) d) →
-    (∀ j xs d, j < Language.relationCount L → P (rel L j xs) d) →
+    (∀ j xs d, IsRelation L j → P (rel L j xs) d) →
     (∀ A B d, (∀ e, e ≤ d → P A e) → (∀ e, e ≤ d → P B e) → P (imp A B) d) →
     (∀ A d, (∀ e, e ≤ S d → P A e) → P (all A) d) → ∀ A d, P A d := by
   intro L spec hf he hr hi ha
@@ -721,7 +910,7 @@ Equality and relation cases receive term codes; use term induction when reasonin
 theorem induction_of_bool (P : Nat → Prop) (f : Nat → Nat) : ∀ L,
     (∀ A, ¬ f A = 0 ↔ P A) → P falsum →
     (∀ t u, P (equal L t u)) →
-    (∀ j xs, j < Language.relationCount L → P (rel L j xs)) →
+    (∀ j xs, IsRelation L j → P (rel L j xs)) →
     (∀ A B, P A → P B → P (imp A B)) →
     (∀ A, P A → P (all A)) → ∀ A, P A := by
   intro L spec hf he hr hi ha A
@@ -737,7 +926,7 @@ The quantified-body hypothesis is at depth `S d`; implication hypotheses are at 
 theorem induction_eq (f g : Nat → Nat → Nat) : ∀ L,
     (∀ d, f falsum d = g falsum d) →
     (∀ t u d, f (equal L t u) d = g (equal L t u) d) →
-    (∀ j xs d, j < Language.relationCount L → f (rel L j xs) d = g (rel L j xs) d) →
+    (∀ j xs d, IsRelation L j → f (rel L j xs) d = g (rel L j xs) d) →
     (∀ A B d, f A d = g A d → f B d = g B d → f (imp A B) d = g (imp A B) d) →
     (∀ A d, f A (S d) = g A (S d) → f (all A) d = g (all A) d) →
     ∀ A d, f A d = g A d := by
@@ -766,7 +955,7 @@ code `L`, starting at binder depth `d`. Every handler receives the current depth
 - `falsum k` is the value for falsity.
 - `equal k t s` handles equality of term codes `t` and `s`.
 - `rel k j xs` handles relation symbol index `j`, with a tuple `xs` of term codes of length
-  `Language.relationArity L j`.
+  `Language.relationSymbolArity L j`.
 - `imp k x y` combines the recursive results for the antecedent and consequent at depth `k`.
 - `all k x` handles a quantified body whose recursive result `x` is computed at depth `S k`.
 
@@ -806,7 +995,7 @@ theorem recWithDepth_equal (falsum : Nat → Nat) (equal rel imp : Nat → Nat �
   rfl
 
 theorem recWithDepth_rel (falsum : Nat → Nat) (equal rel imp : Nat → Nat → Nat → Nat)
-    (all : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
+    (all : Nat → Nat → Nat) : ∀ L j xs d, IsRelation L j →
     recWithDepth falsum equal rel imp all L (Formula.rel L j xs) d = rel d j xs := by
   intro L j xs d hj
   rw [recWithDepth, covrec, unpairLeft_pair, unpairRight_pair]
@@ -926,7 +1115,7 @@ theorem rec_equal (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
     (fun _ x y => imp x y) (fun _ x => all x) L t s 0
 
 theorem rec_rel (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) :
-    ∀ L falsum j xs, j < Language.relationCount L →
+    ∀ L falsum j xs, IsRelation L j →
     rec equal rel imp all L falsum (Formula.rel L j xs) = rel j xs :=
   fun L falsum j xs hj => recWithDepth_rel
     (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
@@ -950,7 +1139,16 @@ theorem rec_all (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) : ∀ 
 
 end Formula
 
-/-! ## Substitution -/
+/-! ## Substitution
+
+- `Term.subst` and `Formula.substWithDepth` replace variables, tracking depth beneath quantifiers.
+- `Formula.instantiateAt` and `Formula.instantiate` substitute a term into a surrounding
+  variable position or quantifier body, lifting it beneath inner binders and lowering later indices.
+- `Term.bound` and `Formula.bound` give the number of surrounding variable positions
+  needed by the syntax.
+- `Formula.Closed` states that a formula has no free variable positions;
+  `Formula.isClosed` is its numerical test.
+-/
 
 namespace Term
 
@@ -962,24 +1160,24 @@ Constants and function symbols are preserved.
 def subst (f : Nat → Nat) : Nat → Nat → Nat :=
   fun L => rec f (const L) (app L) L
 
-theorem subst_const (f : Nat → Nat) : ∀ L j, j < Language.constants L →
+theorem subst_const (f : Nat → Nat) : ∀ L j, IsConstant L j →
     subst f L (const L j) = const L j := fun L j h => rec_const f (const L) (app L) L j h
 
 theorem subst_var (f : Nat → Nat) : ∀ L i, subst f L (var L i) = f i :=
   fun L i => rec_var f (const L) (app L) L i
 
-theorem subst_app (f : Nat → Nat) : ∀ L j args, j < Language.functionCount L →
+theorem subst_app (f : Nat → Nat) : ∀ L j args, IsFunction L j →
     subst f L (app L j args) =
-      app L j (Tuple.map (subst f L) (Language.functionArity L j) args) :=
+      app L j (Tuple.map (subst f L) (Language.functionSymbolArity L j) args) :=
   fun L j args hj => rec_app f (const L) (app L) L j args hj
 
 theorem subst_app_one (f : Nat → Nat) : ∀ L j t,
-    j < Language.functionCount L → Language.functionArity L j = 1 →
+    IsFunction L j → Language.functionSymbolArity L j = 1 →
     subst f L (app L j t) = app L j (subst f L t) :=
   fun L j t hj ha => rec_app_one f (const L) (app L) L j t hj ha
 
 theorem subst_app_two (f : Nat → Nat) : ∀ L j t u,
-    j < Language.functionCount L → Language.functionArity L j = 2 →
+    IsFunction L j → Language.functionSymbolArity L j = 2 →
     subst f L (app L j (pair t u)) = app L j (pair (subst f L t) (subst f L u)) :=
   fun L j t u hj ha => rec_app_two f (const L) (app L) L j t u hj ha
 
@@ -1005,30 +1203,30 @@ def instantiateAt : Nat → Nat → Nat → Nat → Nat → Nat := fun L k t d n
 code `L`, or `0` when the term contains no variables.
 -/
 def bound : Nat → Nat → Nat := fun L =>
-  rec S (fun _ => 0) (fun j xs => Tuple.max (Language.functionArity L j) xs) L
+  rec S (fun _ => 0) (fun j xs => Tuple.max (Language.functionSymbolArity L j) xs) L
 
-theorem bound_const : ∀ L j, j < Language.constants L → bound L (const L j) = 0 :=
+theorem bound_const : ∀ L j, IsConstant L j → bound L (const L j) = 0 :=
   fun L j hj => rec_const S (fun _ => 0)
-    (fun j xs => Tuple.max (Language.functionArity L j) xs) L j hj
+    (fun j xs => Tuple.max (Language.functionSymbolArity L j) xs) L j hj
 
 theorem bound_var : ∀ L n, bound L (var L n) = S n :=
   fun L n => rec_var S (fun _ => 0)
-    (fun j xs => Tuple.max (Language.functionArity L j) xs) L n
+    (fun j xs => Tuple.max (Language.functionSymbolArity L j) xs) L n
 
-theorem bound_app : ∀ L j args, j < Language.functionCount L →
-    bound L (app L j args) = Tuple.max (Language.functionArity L j)
-      (Tuple.map (bound L) (Language.functionArity L j) args) :=
+theorem bound_app : ∀ L j args, IsFunction L j →
+    bound L (app L j args) = Tuple.max (Language.functionSymbolArity L j)
+      (Tuple.map (bound L) (Language.functionSymbolArity L j) args) :=
   fun L j args hj => rec_app S (fun _ => 0)
-    (fun j xs => Tuple.max (Language.functionArity L j) xs) L j args hj
+    (fun j xs => Tuple.max (Language.functionSymbolArity L j) xs) L j args hj
 
 theorem bound_app_one : ∀ L j t,
-    j < Language.functionCount L → Language.functionArity L j = 1 →
+    IsFunction L j → Language.functionSymbolArity L j = 1 →
     bound L (app L j t) = bound L t := by
   intro L j t hj ha
   rw [bound_app L j t hj, ha, Tuple.map_one _, Tuple.max_one]
 
 theorem bound_app_two : ∀ L j t u,
-    j < Language.functionCount L → Language.functionArity L j = 2 →
+    IsFunction L j → Language.functionSymbolArity L j = 2 →
     bound L (app L j (pair t u)) = max (bound L t) (bound L u) := by
   intro L j t u hj ha
   rw [bound_app L j (pair t u) hj, ha, Tuple.map_two _, Tuple.max_two]
@@ -1047,14 +1245,15 @@ def substWithDepth (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat := fu
   recWithDepth (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L
 
-theorem substWithDepth_falsum (f : Nat → Nat → Nat) : ∀ L d, substWithDepth f L falsum d = falsum :=
+theorem substWithDepth_falsum (f : Nat → Nat → Nat) : ∀ L d,
+    substWithDepth f L falsum d = falsum :=
   fun L d => recWithDepth_falsum (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L d
 
 theorem substWithDepth_equal (f : Nat → Nat → Nat) : ∀ L t s d,
@@ -1062,16 +1261,16 @@ theorem substWithDepth_equal (f : Nat → Nat → Nat) : ∀ L t s d,
   fun L t s d => recWithDepth_equal (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L t s d
 
-theorem substWithDepth_rel (f : Nat → Nat → Nat) : ∀ L j xs d, j < Language.relationCount L →
+theorem substWithDepth_rel (f : Nat → Nat → Nat) : ∀ L j xs d, IsRelation L j →
     substWithDepth f L (rel L j xs) d =
-      rel L j (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs) :=
+      rel L j (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs) :=
   fun L j xs d hj => recWithDepth_rel (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L j xs d hj
 
 theorem substWithDepth_imp (f : Nat → Nat → Nat) : ∀ L A B d,
@@ -1079,7 +1278,7 @@ theorem substWithDepth_imp (f : Nat → Nat → Nat) : ∀ L A B d,
   fun L A B d => recWithDepth_imp (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L A B d
 
 theorem substWithDepth_all (f : Nat → Nat → Nat) : ∀ L A d,
@@ -1087,7 +1286,7 @@ theorem substWithDepth_all (f : Nat → Nat → Nat) : ∀ L A d,
   fun L A d => recWithDepth_all (fun _ => falsum)
     (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
     (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationArity L j) xs))
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
     (fun _ x y => imp x y) (fun _ x => all x) L A d
 
 /--
@@ -1131,8 +1330,8 @@ bound by one, down to `0`. Falsity has bound `0`.
 -/
 def bound : Nat → Nat → Nat := fun L =>
   rec (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0
 
 /-- `Formula.Closed L A` states that formula code `A` has no free variable positions in
 language code `L`. Such a formula is a sentence. -/
@@ -1147,35 +1346,35 @@ theorem isClosed_eq_one : ∀ L A, isClosed L A = 1 ↔ Closed L A :=
 theorem bound_falsum : ∀ L, bound L falsum = 0 :=
   fun L => rec_falsum
     (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0
 
 theorem bound_equal : ∀ L t s,
     bound L (equal L t s) = max (Term.bound L t) (Term.bound L s) :=
   fun L t s => rec_equal
     (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0 t s
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0 t s
 
-theorem bound_rel : ∀ L j xs, j < Language.relationCount L →
-    bound L (rel L j xs) = Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs) :=
+theorem bound_rel : ∀ L j xs, IsRelation L j →
+    bound L (rel L j xs) = Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs) :=
   fun L j xs hj => rec_rel
     (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0 j xs hj
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0 j xs hj
 
 theorem bound_imp : ∀ L A B, bound L (imp A B) = max (bound L A) (bound L B) :=
   fun L A B => rec_imp
     (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0 A B
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0 A B
 
 theorem bound_all : ∀ L A, bound L (all A) = pred (bound L A) :=
   fun L A => rec_all
     (fun t s => max (Term.bound L t) (Term.bound L s))
-    (fun j xs => Tuple.max (Language.relationArity L j)
-      (Tuple.map (Term.bound L) (Language.relationArity L j) xs)) max pred L 0 A
+    (fun j xs => Tuple.max (Language.relationSymbolArity L j)
+      (Tuple.map (Term.bound L) (Language.relationSymbolArity L j) xs)) max pred L 0 A
 
 end Formula
 

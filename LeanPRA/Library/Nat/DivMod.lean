@@ -359,4 +359,47 @@ theorem product_mod_zero (f : Nat → Nat) (n i m : Nat) :
       · rw [← hie, product_succ f, mod_mul_eq (product f i) (f i) m, hf, mul_zero, zero_mod]
   exact prefixes n hi
 
+/-!
+## Remainders after a fixed prefix
+
+After an initial segment of length `p`, divide the indices into blocks of positive length `d`.
+The index `p + (d * q + r)` has the same position in its block as `p + r` when `r < d`.
+A lookup that depends only on this position gives the same value in every block.
+-/
+
+theorem ite_ltb_mod_mul_add_of_lt : ∀ p d r q, r < d →
+    let j := p + (d * q + r);
+    ite (ltb j p) j (p + ((j - p) % d)) = p + r := by
+  intro p d r q hr
+  have hd := ne_zero_of_pos d (lt_of_le_of_lt 0 r d (zero_le r) hr)
+  rw [ltb_eq_zero_of_ge _ _ (le_add_right p (d * q + r)), ite_zero, add_sub_self_left,
+    mod_mul_add_of_lt d q r hd hr]
+  rfl
+
+theorem ite_ltb_mod_eq_self_of_lt_add : ∀ p d r q, r < p + d →
+    let j := ite (ltb r p) r (p + (d * q + (r - p)));
+    ite (ltb j p) j (p + ((j - p) % d)) = r := by
+  intro p d r q h
+  by_cases hr : r < p
+  · rw [and_right (ltb_eq_one r p) hr, ite_succ,
+      and_right (ltb_eq_one r p) hr, ite_succ]
+    rfl
+  · have hle := le_of_not_lt p r hr
+    have hd := and_right (sub_lt_iff r p d hle) h
+    rw [ltb_eq_zero_of_ge r p hle, ite_zero]
+    exact eq_trans (ite_ltb_mod_mul_add_of_lt p d (r - p) q hd)
+      (eq_trans (add_comm p (r - p)) (sub_add_cancel_of_le r p hle))
+
+theorem ite_ltb_apply_mod_mod (initial periodic : Nat → Nat) : ∀ p d j,
+    let r := ite (ltb j p) j (p + ((j - p) % d));
+    ite (ltb r p) (initial r) (periodic ((r - p) % d)) =
+      ite (ltb j p) (initial j) (periodic ((j - p) % d)) := by
+  intro p d j
+  by_cases h : j < p
+  · rw [and_right (ltb_eq_one j p) h, ite_succ, and_right (ltb_eq_one j p) h, ite_succ]
+    rfl
+  · rw [ltb_eq_zero_of_ge _ _ (le_of_not_lt _ _ h), ite_zero,
+      ltb_eq_zero_of_ge _ _ (le_add_right p _), ite_zero, add_sub_self_left, mod_mod]
+    rfl
+
 end

@@ -91,6 +91,15 @@ partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Nam
     let name := (L.functions[i]?.map (·.1)).getD (Name.num `function i)
     let args ← args.toArray.mapM (termSyntax L names rename ·)
     `(folTerm| $(mkIdent name):ident($args,*))
+  | .indexedConst i k =>
+    let some family := L.constantFamilies[i]? | throwError "invalid constant family number"
+    let indices ← (← tupleEntries family.indexArity k).toArray.mapM (delabTerm names)
+    `(folTerm| $(mkIdent family.name):ident[$indices,*])
+  | .indexedApp i k args =>
+    let some family := L.functionFamilies[i]? | throwError "invalid family number"
+    let args ← args.toArray.mapM (termSyntax L names rename ·)
+    let indices ← (← tupleEntries family.indexArity k).toArray.mapM (delabTerm names)
+    `(folTerm| $(mkIdent family.name):ident[$indices,*]($args,*))
   | .code _ value _ =>
     return ⟨spliceNode ``termSplice (← delabTerm names value) none⟩
 
@@ -144,6 +153,11 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     let name := (L.relations[i]?.map (·.1)).getD (Name.num `relation i)
     let args ← args.toArray.mapM term
     `(folFormula| $(mkIdent name):ident($args,*))
+  | .indexedRelation i k args =>
+    let some family := L.relationFamilies[i]? | throwError "invalid family number"
+    let args ← args.toArray.mapM term
+    let indices ← (← tupleEntries family.indexArity k).toArray.mapM (delabTerm names)
+    `(folFormula| $(mkIdent family.name):ident[$indices,*]($args,*))
   | .parameter i args =>
     let args ← args.toArray.mapM term
     `(folFormula| $(mkIdent (Name.num `parameter i)):ident($args,*))

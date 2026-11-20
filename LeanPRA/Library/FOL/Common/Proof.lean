@@ -22,6 +22,15 @@ rules:
 Proofs are finite trees whose leaves are logical axioms or theory hypotheses. Theory axioms and
 proof conclusions may contain surrounding variable positions, with theory axioms understood
 universally, so GEN applies at any node.
+-/
+
+@[expose] public section
+
+pra
+
+namespace FOL
+
+/-! ## Proof trees and recursion
 
 Proof trees are encoded in `Nat`. Each node stores a rule tag, its conclusion formula, and
 its premise subtrees, using `S (pair rule (pair conclusion premises))`:
@@ -32,34 +41,16 @@ its premise subtrees, using `S (pair rule (pair conclusion premises))`:
 - `Proof.gen A p` is encoded as `S (pair 3 (pair (Formula.all A) p))`.
 
 Here `A` is a formula code, and `p`, `q` are complete subtree codes. In `Proof.mp`, `p` proves
-`B → A` and `q` proves `B`; in `Proof.gen`, `p` proves `A`. The theory is represented by a
-numerical membership test: `T A = 1` means that formula code `A` is an axiom of `T`.
+`B → A` and `q` proves `B`; in `Proof.gen`, `p` proves `A`.
 
 Taking the predecessor and unpairing recovers the node fields through `Proof.rule`,
 `Proof.conclusion`, and `Proof.premises`. Code `0`, rule tags above `3`, and leaves with nonzero
 premise data are invalid. Every subtree code is smaller than its parent, so the tree can be
 traversed by numerical course-of-values recursion.
 
-The module provides:
-
-- `Proof.rec` combines the results from premise subtrees according to the rule at each node.
-- `isProof L T prf` checks the rules and membership in `T` in one traversal.
-- `IsProofOf L T A prf` states that `prf` is an accepted proof with conclusion `A`.
-- `Provable L T A` states that some proof code satisfies `IsProofOf L T A`.
 - `Proof.mp'` reads the consequent from the first proof and applies modus ponens.
-- Proof-construction lemmas justify the inference rules and logical axiom instances, with congruence
-  restricted to symbols in the language.
-- Universal instantiation holds for every formula and term code because the bounded axiom search
-  can use either the substituted term or the term with code `0`.
+- `Proof.rec` combines the results from premise subtrees according to the rule at each node.
 -/
-
-@[expose] public section
-
-pra
-
-namespace FOL
-
-/-! ## Proof trees and recursion -/
 
 namespace Proof
 
@@ -236,7 +227,15 @@ theorem rec_gen (onAxiom hypothesis : Nat → Nat) (mp : Nat → Nat → Nat →
 
 end Proof
 
-/-! ## Proofs and provability in a theory -/
+/-! ## Proofs and provability in a theory
+
+The theory is represented by a numerical membership test. `T A = 1` means that formula code `A`
+is an axiom of `T`.
+
+- `isProof L T prf` checks the rules and membership in `T` in one traversal.
+- `IsProofOf L T A prf` states that `prf` is an accepted proof with conclusion `A`.
+- `Provable L T A` states that some proof code satisfies `IsProofOf L T A`.
+-/
 
 /--
 `isProof L T prf` checks tree code `prf` in language code `L` over theory `T`. A hypothesis leaf
@@ -349,7 +348,10 @@ def Provable (L : Nat) (T : Nat → Nat) : Nat → Prop := fun A =>
 theorem IsProofOf.provable (L : Nat) (T : Nat → Nat) : ∀ A p,
     IsProofOf L T A p → Provable L T A := fun A p h => (p, h)
 
-/-! ## Construction of checked proofs -/
+/-! ## Construction of checked proofs
+
+The proof-construction lemmas justify the four inference rules for checked proof trees.
+-/
 
 theorem isProof_axiom (L : Nat) (T : Nat → Nat) : ∀ A,
     isLogicalAxiom L A = 1 → isProof L T (Proof.axiom A) = 1 := by
@@ -397,7 +399,11 @@ theorem IsProofOf.mp' (L : Nat) (T : Nat → Nat) : ∀ A B p q,
   rw [Proof.mp', and_right hp, Formula.arg_imp, unpairRight_pair]
   exact IsProofOf.mp L T A B p q hp hq
 
-/-! ## Provability rules and logical axioms -/
+/-! ## Provability rules and logical axioms
+
+The provability lemmas justify the inference rules and logical axiom instances, with congruence
+restricted to symbols in the language.
+-/
 
 theorem Provable.axiom (L : Nat) (T : Nat → Nat) : ∀ A,
     isLogicalAxiom L A = 1 → Provable L T A :=
@@ -457,20 +463,24 @@ theorem transitivity (L : Nat) (T : Nat → Nat) (s t u : Nat) :
   FOL.Provable.axiom L T _ (isLogicalAxiom_of_transitivity L s t u)
 
 theorem functionCongruence (L : Nat) (T : Nat → Nat) (j xs ys : Nat) :
-    j < Language.functionCount L →
-      Provable L T (Formula.equalPremises L (Language.functionArity L j) xs ys
+    Language.IsFunction L j →
+      Provable L T (Formula.equalPremises L (Language.functionSymbolArity L j) xs ys
         (Formula.equal L (Term.app L j xs) (Term.app L j ys))) :=
   fun h => FOL.Provable.axiom L T _ (isLogicalAxiom_of_functionCongruence L j xs ys h)
 
 theorem relationCongruence (L : Nat) (T : Nat → Nat) (j xs ys : Nat) :
-    j < Language.relationCount L →
-      Provable L T (Formula.equalPremises L (Language.relationArity L j) xs ys
+    Language.IsRelation L j →
+      Provable L T (Formula.equalPremises L (Language.relationSymbolArity L j) xs ys
         (Formula.imp (Formula.rel L j xs) (Formula.rel L j ys))) :=
   fun h => FOL.Provable.axiom L T _ (isLogicalAxiom_of_relationCongruence L j xs ys h)
 
 end Provable
 
-/-! ## Universal instantiation -/
+/-! ## Universal instantiation
+
+Universal instantiation holds for every formula and term code because the bounded axiom search
+can use either the substituted term or the term with code `0`.
+-/
 
 namespace Term
 
@@ -513,11 +523,12 @@ theorem instantiateAt_dichotomy : ∀ L t d s,
     rw [subst_app (instantiateAt L 0 t d) L j args hj,
       subst_app (instantiateAt L 0 0 d) L j args hj]
     rcases Tuple.map_dichotomy (subst (instantiateAt L 0 t d) L)
-        (subst (instantiateAt L 0 0 d) L) t (Language.functionArity L j) args
+        (subst (instantiateAt L 0 0 d) L) t (Language.functionSymbolArity L j) args
         (fun i hi => ih i hi) with hm | hm
     · left
-      exact le_trans t _ _ hm (le_of_lt _ _ (args_lt_app L j
-        (Tuple.map (subst (instantiateAt L 0 t d) L) (Language.functionArity L j) args)))
+      have h := args_lt_app L j
+        (Tuple.map (subst (instantiateAt L 0 t d) L) (Language.functionSymbolArity L j) args)
+      exact le_trans t _ _ hm (le_of_lt _ _ h)
     · right
       rw [hm]
 
@@ -562,9 +573,9 @@ theorem instantiate_dichotomy : ∀ L t A d,
       substWithDepth_rel (Term.instantiateAt L 0 0) L j xs d hj]
     rcases Tuple.map_dichotomy (Term.subst (Term.instantiateAt L 0 t d) L)
         (Term.subst (Term.instantiateAt L 0 0 d) L) t
-        (Language.relationArity L j) xs
+        (Language.relationSymbolArity L j) xs
         (fun i hi => Term.instantiateAt_dichotomy L t d
-          (Tuple.get (Language.relationArity L j) xs i)) with hm | hm
+          (Tuple.get (Language.relationSymbolArity L j) xs i)) with hm | hm
     · left
       exact le_trans t _ _ hm (args_le_rel L j _)
     · right

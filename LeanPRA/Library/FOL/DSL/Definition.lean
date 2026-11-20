@@ -202,11 +202,11 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
     return (t, mkEqTrans source (.app s j) t (applyTheorem `FOL.Term.subst_var [L, j] [s])
       (applyTheorem `FOL.liftSubst_of_lt [L, numeral k, j] [g.f] [lt]))
   | .definition `FOL.Term.const [], [_, j] =>
-    let hj ← less j (applyDefinition `FOL.Language.constants [L])
+    let hj ← (constantProof L j).run' {}
     return (t, applyTheorem `FOL.Term.subst_const [L, j] [s] [hj])
   | .definition `FOL.Term.app [], [_, j, xs] =>
-    let hj ← less j (applyDefinition `FOL.Language.functionCount [L])
-    let arity ← (calculate (applyDefinition `FOL.Language.functionArity [L, j])).run' {}
+    let hj ← (symbolProof L j).run' {}
+    let arity ← (calculate (applyDefinition `FOL.Language.functionSymbolArity [L, j])).run' {}
     match numeralValue? arity.value, getAppFnArgs xs with
     | some 1, _ =>
       let build (ts : List Term) := applyDefinition `FOL.Term.app [L, j, ts[0]!]
@@ -224,7 +224,19 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
       return (build [x', y'], mkEqTrans source middle (build [x', y'])
         (applyTheorem `FOL.Term.subst_app_two [L, j, x, y] [s] [hj, arity.proof])
         (congruence build [(substitutedTerm s L x, x', px), (substitutedTerm s L y, y', py)]))
-    | _, _ => throwError "unsupported function arity"
+    | some n, _ =>
+      let arityTerm := applyDefinition `FOL.Language.functionSymbolArity [L, j]
+      let f := applyDefinition `FOL.Term.subst [L] [s]
+      let app (xs : Term) := applyDefinition `FOL.Term.app [L, j, xs]
+      let mapped (n : Term) := app (applyDefinition `Tuple.map [n, xs] [f])
+      let (xs', proof) ← substTuple k n xs
+      let counted := mkEqTrans source (mapped arityTerm) (mapped arity.value)
+        (applyTheorem `FOL.Term.subst_app [L, j, xs] [s] [hj])
+        (congruence (fun ts => mapped ts[0]!) [(arityTerm, arity.value, arity.proof)])
+      return (app xs', mkEqTrans source (mapped arity.value) (app xs') counted
+        (congruence (fun ts => app ts[0]!)
+          [(applyDefinition `Tuple.map [arity.value, xs] [f], xs', proof)]))
+    | _, _ => throwError "function arity did not reduce to a numeral"
   | .definition `FOL.Term.shift [], [_, count, x] =>
     unless k > 0 && count == numeral k do throwError "unexpected shift in a definition body"
     let .parameter _ := x | throwError "a shifted term must be a parameter of the definition"
@@ -246,6 +258,26 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
         d.name == name && !d.isFormula | throwError "unsupported term `{name}`"
     substDefinition k info fs
   | _, _ => throwError "unsupported term in a definition body"
+
+/-- Substitute across an exact-arity tuple of terms, keeping its shape. -/
+private partial def substTuple (k n : Nat) (xs : Term) : SubstitutionM (Term × Proof) := do
+  let L := (← read).language
+  let f := applyDefinition `FOL.Term.subst [L] [← lifted k]
+  if n == 0 then
+    return (numeral 0, applyTheorem `Tuple.map_zero [xs] [f])
+  let source := applyDefinition `Tuple.map [numeral n, xs] [f]
+  if n == 1 then
+    let (x, proof) ← substTerm k xs
+    return (x, mkEqTrans source (.app f xs) x (applyTheorem `Tuple.map_one [xs] [f]) proof)
+  let (.definition `pair [], [x, rest]) := getAppFnArgs xs |
+    throwError "expected a pair in a tuple of {n} terms"
+  let (x', px) ← substTerm k x
+  let (rest', pr) ← substTuple k (n - 1) rest
+  let tail := applyDefinition `Tuple.map [numeral (n - 1), rest] [f]
+  let pair (values : List Term) := applyDefinition `pair values
+  return (pair [x', rest'], mkEqTrans source (pair [.app f x, tail]) (pair [x', rest'])
+    (applyTheorem `Tuple.map_pair_succ [numeral (n - 2), x, rest] [f])
+    (congruence pair [(.app f x, x', px), (tail, rest', pr)]))
 
 /-- Substitute into the formula `A` of a definition body beneath `k` binders. The proof states
 `Formula.substWithDepth (liftSubst f L) L A k = result`. For `neg`, `conj`, `disj`, and `ex`,
@@ -274,8 +306,8 @@ private partial def substFormula (k : Nat) (A : Term) : SubstitutionM (Term × P
       (congruence build [(substitutedTerm s L x, x', px), (substitutedTerm s L y, y', py)]))
   | .definition `FOL.Formula.rel [], [_, j, xs] =>
     let s ← lifted k
-    let hj ← less j (applyDefinition `FOL.Language.relationCount [L])
-    let arityTerm := applyDefinition `FOL.Language.relationArity [L, j]
+    let hj ← (symbolProof L j true).run' {}
+    let arityTerm := applyDefinition `FOL.Language.relationSymbolArity [L, j]
     let arity ← (calculate arityTerm).run' {}
     let entrywise := applyDefinition `FOL.Term.subst [L] [s]
     let rel (xs : Term) := applyDefinition `FOL.Formula.rel [L, j, xs]
@@ -305,7 +337,12 @@ private partial def substFormula (k : Nat) (A : Term) : SubstitutionM (Term × P
             applyTheorem `Tuple.map_two [x, y] [entrywise])])
       return (build [x', y'], mkEqTrans source middle (build [x', y']) unfolded
         (congruence build [(substitutedTerm s L x, x', px), (substitutedTerm s L y, y', py)]))
-    | _, _ => throwError "unsupported relation arity"
+    | some n, _ =>
+      let (xs', proof) ← substTuple k n xs
+      return (rel xs', mkEqTrans source (mapped arity.value) (rel xs') counted
+        (congruence (fun ts => rel ts[0]!)
+          [(applyDefinition `Tuple.map [arity.value, xs] [entrywise], xs', proof)]))
+    | _, _ => throwError "relation arity did not reduce to a numeral"
   | .definition `FOL.Formula.imp [], [a, b] =>
     let build (ts : List Term) := imp ts[0]! ts[1]!
     let (a', pa) ← substFormula k a

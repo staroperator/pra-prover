@@ -44,6 +44,20 @@ theorem ite_self : ∀ c x, ite c x x = x := by
   · rfl
   · rfl
 
+theorem ite_mono : ∀ c x y u v, x ≤ u → y ≤ v → ite c x y ≤ ite c u v := by
+  intro c x y u v hx hy
+  by_cases h : c = 0
+  · rw [h, ite_zero, ite_zero]
+    exact hy
+  · rw [ite_of_ne_zero c _ _ h, ite_of_ne_zero c _ _ h]
+    exact hx
+
+theorem le_ite : ∀ c x y z, x ≤ y → x ≤ z → x ≤ ite c y z := by
+  intro c x y z hy hz
+  have h := ite_mono c x x y z hy hz
+  rw [ite_self] at h
+  exact h
+
 /-- Return `1` when `n = 0` and `0` when `n` is positive. -/
 def isZero : Nat → Nat := fun n => ite n 0 1
 

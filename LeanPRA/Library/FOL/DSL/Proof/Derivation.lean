@@ -27,9 +27,12 @@ private partial def sameTerm (env : List (Name × Name)) : TermView → TermView
     | some z => z == y
     | none => x == y && !(env.any (fun (_, z) => z == y))
   | .constant i, .constant j => i == j
+  | .indexedConst i k, .indexedConst j l => i == j && k == l
   | .code L a xs, .code M b ys => L == M && a == b && xs.length == ys.length &&
       (xs.zip ys).all (fun (a, b) => sameTerm env a b)
   | .app i xs, .app j ys => i == j && xs.length == ys.length &&
+    (xs.zip ys).all (fun (a, b) => sameTerm env a b)
+  | .indexedApp i k xs, .indexedApp j l ys => i == j && k == l && xs.length == ys.length &&
     (xs.zip ys).all (fun (a, b) => sameTerm env a b)
   | _, _ => false
 
@@ -42,6 +45,9 @@ def FormulaView.equiv : FormulaView → FormulaView → Bool := go [] where
     | .relation i xs, .relation j ys
     | .parameter i xs, .parameter j ys => i == j && xs.length == ys.length &&
       (xs.zip ys).all (fun (a, b) => sameTerm env a b)
+    | .indexedRelation i k xs, .indexedRelation j l ys =>
+      i == j && k == l && xs.length == ys.length &&
+        (xs.zip ys).all (fun (a, b) => sameTerm env a b)
     | .imp a b, .imp c d => go env a c && go env b d
     | .all x a, .all y b => go ((x, y) :: env) a b
     | _, _ => false
@@ -51,6 +57,7 @@ inductive SchemaArg where
   | term (value : TermView)
   | tuple (values : List TermView)
   | number (value : Nat)
+  | member (family : Nat) (index : Core.Term) (isRelation : Bool := false)
   deriving BEq, Hashable, Repr, Inhabited
 
 inductive Reason where
@@ -190,16 +197,21 @@ def eqTrans (i j : Nat) : DeriveM Nat := do
   mp (← mp (← logical (.imp (.equal a b) (.imp (.equal b d) (.equal a d))) 8
     [.term a, .term b, .term d]) i) j
 
-def eqCongr (index : Nat) (proofs : List Nat) : DeriveM Nat := do
+def eqCongr (index : Nat) (proofs : List Nat) (member : Option Core.Term := none) :
+    DeriveM Nat := do
+  let app := match member with
+    | none => TermView.app index
+    | some k => TermView.indexedApp index k
   let pairs ← proofs.mapM fun p => do
     let .equal a b ← conclusion p | throwError "function congruence requires equations"
     pure (a, b)
   let xs := pairs.map (·.1)
   let ys := pairs.map (·.2)
-  if xs == ys then return ← eqRefl (.app index xs)
-  let result := FormulaView.equal (.app index xs) (.app index ys)
+  if xs == ys then return ← eqRefl (app xs)
+  let result := FormulaView.equal (app xs) (app ys)
   let schema := pairs.foldr (fun (a, b) r => .imp (.equal a b) r) result
-  let mut p ← logical schema 9 [.number index, .tuple xs, .tuple ys]
+  let symbol := member.map (fun k => SchemaArg.member index k) |>.getD (.number index)
+  let mut p ← logical schema 9 [symbol, .tuple xs, .tuple ys]
   for q in proofs do p ← mp p q
   return p
 

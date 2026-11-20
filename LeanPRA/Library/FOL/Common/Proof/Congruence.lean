@@ -219,7 +219,7 @@ theorem congruenceProof_valid (L : Nat) (T : Nat → Nat) (f : Nat → Nat) :
     (dischargePremises_valid L T f e n xs ys C hn entries n) lifted
 
 def functionRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat := fun e j rs =>
-  let n := FOL.Language.functionArity L j;
+  let n := FOL.Language.functionSymbolArity L j;
   let xs := Tuple.map lhs n rs;
   let ys := Tuple.map rhs n rs;
   pack (FOL.Term.app L j xs) (FOL.Term.app L j ys)
@@ -227,19 +227,20 @@ def functionRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat := 
       (FOL.Formula.equal L (FOL.Term.app L j xs) (FOL.Term.app L j ys)))
 
 theorem functionRecord_valid (L : Nat) (T : Nat → Nat) : ∀ e j rs,
-    j < FOL.Language.functionCount L →
-    (∀ i, i < FOL.Language.functionArity L j →
+    FOL.Language.IsFunction L j →
+    (∀ i, i < FOL.Language.functionSymbolArity L j →
       FOL.IsProofOf L T (FOL.Formula.imp e
-        (equation L T (lhs (Tuple.get (FOL.Language.functionArity L j) rs i))
-          (rhs (Tuple.get (FOL.Language.functionArity L j) rs i))))
-        (proof (Tuple.get (FOL.Language.functionArity L j) rs i))) →
+        (equation L T (lhs (Tuple.get (FOL.Language.functionSymbolArity L j) rs i))
+          (rhs (Tuple.get (FOL.Language.functionSymbolArity L j) rs i))))
+        (proof (Tuple.get (FOL.Language.functionSymbolArity L j) rs i))) →
     Record L T (equation L T) e
-      (FOL.Term.app L j (Tuple.map lhs (FOL.Language.functionArity L j) rs))
-      (FOL.Term.app L j (Tuple.map rhs (FOL.Language.functionArity L j) rs))
+      (FOL.Term.app L j (Tuple.map lhs (FOL.Language.functionSymbolArity L j) rs))
+      (FOL.Term.app L j (Tuple.map rhs (FOL.Language.functionSymbolArity L j) rs))
       (functionRecord L T e j rs) := by
   intro e j rs hj entries
   apply record_pack L T (equation L T)
-  apply congruenceProof_valid L T (fun i => proof (Tuple.get (FOL.Language.functionArity L j) rs i))
+  apply congruenceProof_valid L T
+    (fun i => proof (Tuple.get (FOL.Language.functionSymbolArity L j) rs i))
   · exact succ_ne_zero _
   · exact FOL.isLogicalAxiom_of_functionCongruence L j _ _ hj
   · intro i hi
@@ -253,7 +254,7 @@ def termRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat → Nat
     (functionRecord L T (antecedent L T s t d)) L
 
 theorem termRecord_const (L : Nat) (T : Nat → Nat) : ∀ s t d j,
-    j < FOL.Language.constants L → termRecord L T s t d (FOL.Term.const L j) =
+    FOL.Language.IsConstant L j → termRecord L T s t d (FOL.Term.const L j) =
       reflexiveRecord L T (antecedent L T s t d) (FOL.Term.const L j) := by
   intro s t d j hj
   exact FOL.Term.rec_const (variableRecord L T s t d)
@@ -268,9 +269,9 @@ theorem termRecord_var (L : Nat) (T : Nat → Nat) : ∀ s t d i,
     (functionRecord L T (antecedent L T s t d)) L i
 
 theorem termRecord_app (L : Nat) (T : Nat → Nat) : ∀ s t d j xs,
-    j < FOL.Language.functionCount L → termRecord L T s t d (FOL.Term.app L j xs) =
+    FOL.Language.IsFunction L j → termRecord L T s t d (FOL.Term.app L j xs) =
       functionRecord L T (antecedent L T s t d) j
-        (Tuple.map (termRecord L T s t d) (FOL.Language.functionArity L j) xs) := by
+        (Tuple.map (termRecord L T s t d) (FOL.Language.functionSymbolArity L j) xs) := by
   intro s t d j xs hj
   exact FOL.Term.rec_app (variableRecord L T s t d)
     (fun j => reflexiveRecord L T (antecedent L T s t d) (FOL.Term.const L j))
@@ -316,7 +317,7 @@ theorem termRecord_valid (L : Nat) (T : Nat → Nat) (s t d : Nat) : ∀ a,
         FOL.Term.subst_var (FOL.Term.instantiateAt L 0 t d)]
       exact variableRecord_valid L T s t d i
     · intro j xs hj ih
-      let n := FOL.Language.functionArity L j
+      let n := FOL.Language.functionSymbolArity L j
       have entries : ∀ i, i < n → Record L T (equation L T) (antecedent L T s t d)
           (FOL.Term.subst (FOL.Term.instantiateAt L 0 s d) L (Tuple.get n xs i))
           (FOL.Term.subst (FOL.Term.instantiateAt L 0 t d) L (Tuple.get n xs i))
@@ -434,7 +435,7 @@ theorem reverseEquation_valid (L : Nat) (T : Nat → Nat) : ∀ e r,
     (FOL.Provable.equal_symm_under.witness_correct L T e (lhs r) (rhs r)) h
 
 def relationRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat := fun e j rs =>
-  let n := FOL.Language.relationArity L j;
+  let n := FOL.Language.relationSymbolArity L j;
   let xs := Tuple.map lhs n rs;
   let ys := Tuple.map rhs n rs;
   let a := FOL.Formula.rel L j xs;
@@ -447,18 +448,18 @@ def relationRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat := 
       (FOL.Formula.imp b a)))
 
 theorem relationRecord_valid (L : Nat) (T : Nat → Nat) : ∀ e j rs,
-    j < FOL.Language.relationCount L →
-    (∀ i, i < FOL.Language.relationArity L j →
+    FOL.Language.IsRelation L j →
+    (∀ i, i < FOL.Language.relationSymbolArity L j →
       FOL.IsProofOf L T (FOL.Formula.imp e
-        (equation L T (lhs (Tuple.get (FOL.Language.relationArity L j) rs i))
-          (rhs (Tuple.get (FOL.Language.relationArity L j) rs i))))
-        (proof (Tuple.get (FOL.Language.relationArity L j) rs i))) →
+        (equation L T (lhs (Tuple.get (FOL.Language.relationSymbolArity L j) rs i))
+          (rhs (Tuple.get (FOL.Language.relationSymbolArity L j) rs i))))
+        (proof (Tuple.get (FOL.Language.relationSymbolArity L j) rs i))) →
     Record L T equivalenceFormula e
-      (FOL.Formula.rel L j (Tuple.map lhs (FOL.Language.relationArity L j) rs))
-      (FOL.Formula.rel L j (Tuple.map rhs (FOL.Language.relationArity L j) rs))
+      (FOL.Formula.rel L j (Tuple.map lhs (FOL.Language.relationSymbolArity L j) rs))
+      (FOL.Formula.rel L j (Tuple.map rhs (FOL.Language.relationSymbolArity L j) rs))
       (relationRecord L T e j rs) := by
   intro e j rs hj entries
-  let n := FOL.Language.relationArity L j
+  let n := FOL.Language.relationSymbolArity L j
   let xs := Tuple.map lhs n rs
   let ys := Tuple.map rhs n rs
   let a := FOL.Formula.rel L j xs
@@ -496,7 +497,7 @@ def formulaRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat → Nat → 
     (fun d a b => equalityRecord L T (antecedent L T s t d)
       (termRecord L T s t d a) (termRecord L T s t d b))
     (fun d j xs => relationRecord L T (antecedent L T s t d) j
-      (Tuple.map (termRecord L T s t d) (FOL.Language.relationArity L j) xs))
+      (Tuple.map (termRecord L T s t d) (FOL.Language.relationSymbolArity L j) xs))
     (fun d a b => implicationRecord L T (antecedent L T s t d) a b)
     (fun d a => universalRecord L T (antecedent L T s t d) a) L
 
@@ -505,7 +506,7 @@ theorem formulaRecord_eq (L : Nat) (T : Nat → Nat) : ∀ s t A d, formulaRecor
       (fun d a b => equalityRecord L T (antecedent L T s t d)
         (termRecord L T s t d a) (termRecord L T s t d b))
       (fun d j xs => relationRecord L T (antecedent L T s t d) j
-        (Tuple.map (termRecord L T s t d) (FOL.Language.relationArity L j) xs))
+        (Tuple.map (termRecord L T s t d) (FOL.Language.relationSymbolArity L j) xs))
       (fun d a b => implicationRecord L T (antecedent L T s t d) a b)
       (fun d a => universalRecord L T (antecedent L T s t d) a) L A d :=
   fun s t A d => rfl
@@ -523,9 +524,9 @@ theorem formulaRecord_equal (L : Nat) (T : Nat → Nat) : ∀ s t a b d,
   rw [formulaRecord_eq L T, FOL.Formula.recWithDepth_equal _ _ _ _ _]
 
 theorem formulaRecord_rel (L : Nat) (T : Nat → Nat) : ∀ s t j xs d,
-    j < FOL.Language.relationCount L → formulaRecord L T s t (FOL.Formula.rel L j xs) d =
+    FOL.Language.IsRelation L j → formulaRecord L T s t (FOL.Formula.rel L j xs) d =
       relationRecord L T (antecedent L T s t d) j
-        (Tuple.map (termRecord L T s t d) (FOL.Language.relationArity L j) xs) := by
+        (Tuple.map (termRecord L T s t d) (FOL.Language.relationSymbolArity L j) xs) := by
   intro s t j xs d hj
   rw [formulaRecord_eq L T]
   exact FOL.Formula.recWithDepth_rel _ _ _ _ _ L j xs d hj
@@ -586,7 +587,7 @@ theorem formulaRecord_valid (L : Nat) (T : Nat → Nat) (s t : Nat) : ∀ A d,
       exact equalityRecord_valid L T _ _ _ _ _ _ _
         (termRecord_valid L T s t d a) (termRecord_valid L T s t d b)
     · intro j xs d hj
-      let n := FOL.Language.relationArity L j
+      let n := FOL.Language.relationSymbolArity L j
       have h := relationRecord_valid L T (antecedent L T s t d) j
         (Tuple.map (termRecord L T s t d) n xs) hj (by
           intro i hi
