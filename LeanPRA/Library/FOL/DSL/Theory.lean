@@ -116,9 +116,8 @@ def declareTheory (name lang : Name) (parent : Option Name) (entries : Array Syn
     T := { T with axioms := P.axioms, parent := some P.name, inherited := P.axioms.size }
   for s in entries do
     match s with
-    | `(folAxiom| axiom $n:folAxiomName $ps:praParam* := $a:folFormula) =>
-      let axiomName := if n.raw[0].isIdent then n.raw[0].getId.eraseMacroScopes
-        else `induction
+    | `(folAxiom| axiom $n:ident $ps:praParam* := $a:folFormula) =>
+      let axiomName := n.getId.eraseMacroScopes
       if T.axioms.any (fun entry => entry.name == axiomName) then throwErrorAt n "duplicate axiom"
       let (_, parameters) ← declarationParameters ps
       let mut names : List Name := []

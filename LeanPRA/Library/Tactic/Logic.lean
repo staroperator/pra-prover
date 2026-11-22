@@ -31,7 +31,7 @@ open Lean Elab LeanPRA.Surface LeanPRA.Surface.Tactic
 
 syntax (name := exactTac) "exact" praExpr : praTactic
 syntax (name := refineTac) "refine" praExpr : praTactic
-syntax (name := introTac) "intro" (ppSpace praFunBinder)* : praTactic
+syntax (name := introTac) "intro" (ppSpace colGt praFunBinder)* : praTactic
 
 /-- Patterns shared by `rintro` and `rcases`: names, ignored binders, tuples, and disjunctions. -/
 declare_syntax_cat praCasesPattern

@@ -44,7 +44,6 @@ syntax:max "(" praExpr ")" : praExpr
 syntax:max "(" praExpr " : " praExpr ")" : praExpr
 syntax:max "(" praExpr ", " praExpr,+ ")" : praExpr
 syntax:max "(" ")" : praExpr
-syntax:max atomic(&"induction" " (" &"motive" " := ") praExpr ")" : praExpr
 syntax:lead praExpr:lead ppSpace colGt praExpr:arg : praExpr
 syntax:50 praExpr:51 " = " praExpr:51 : praExpr
 syntax:35 praExpr:36 " ∧ " praExpr:35 : praExpr

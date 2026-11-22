@@ -32,14 +32,15 @@ private partial def enclosingName? (environment : Core.Environment) (ns name : N
   else if (lookupSignature environment (ns ++ name)).isSome then some (ns ++ name)
   else enclosingName? environment ns.getPrefix name
 
-/-- Resolve `name` in `environment`, checking enclosing namespaces before opened namespaces. -/
+/-- Resolve `name` in `environment`. Enclosing namespaces take precedence. A primitive
+at the root is the fallback when no declaration matches. -/
 def resolveDeclarationNames (environment : Core.Environment) (ns : Name)
     (opens : List OpenDecl) (name : Name) : List Name := Id.run do
   if name.getRoot == `_root_ then
     let absolute := name.replacePrefix `_root_ .anonymous
     return if (lookupSignature environment absolute).isSome then [absolute] else []
   if let some name := enclosingName? environment ns name then return [name]
-  let mut result := if (lookupSignature environment name).isSome then [name] else []
+  let mut result := if (environment.lookup name).isSome then [name] else []
   for opened in opens do
     let candidate := match opened with
       | .simple ns except => if except.contains name then none else some (ns ++ name)
@@ -47,6 +48,7 @@ def resolveDeclarationNames (environment : Core.Environment) (ns : Name)
         if alias.isPrefixOf name then some (name.replacePrefix alias target) else none
     if let some candidate := candidate then
       if (lookupSignature environment candidate).isSome then result := result ++ [candidate]
+  if result.isEmpty && (primitiveDeclaration? name).isSome then return [name]
   return result.eraseDups
 
 /-- Resolve `name` in the current scope, throwing an error if multiple declarations match. -/

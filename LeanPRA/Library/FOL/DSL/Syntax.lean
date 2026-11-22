@@ -70,7 +70,6 @@ syntax:lead "∃ " ident+ ", " folFormula : folFormula
 
 declare_syntax_cat folAxiom
 
-syntax folAxiomName := ident <|> "induction"
 syntax:max (name := termParameterType) (priority := high) &"term" (" of " num)? : praExpr
 syntax:max (name := formulaParameterType) (priority := high) &"formula" (" of " num)? : praExpr
 syntax (name := formulaActual) (priority := high) atomic("(" ident " := ")
@@ -80,7 +79,7 @@ syntax (name := formulaValueActual) (priority := low) atomic("(" ident " := ")
 syntax (name := formulaCodeActual) (priority := high) atomic("(" ident " := ")
   "$" "{" praExpr "}" ")" : folPraActual
 
-syntax "axiom " folAxiomName (ppSpace praParam)* " := " folFormula : folAxiom
+syntax "axiom " ident (ppSpace praParam)* " := " folFormula : folAxiom
 syntax folAxiomSeq := sepBy1IndentSemicolon(folAxiom)
 syntax (name := theoryDecl) "fol_theory " ident " over " ident
   (" extends " ident)? " where" ppIndent(colGt folAxiomSeq) : praDecl
@@ -102,7 +101,7 @@ declare_syntax_cat folSchemaActual
 
 syntax "(" ident " := " "fun " ident+ " => " folFormula ")" : folSchemaActual
 syntax "(" ident " := " folFormula ")" : folSchemaActual
-syntax (name := pintroTac) "pintro " ident+ : praTactic
+syntax (name := pintroTac) "pintro" (ppSpace colGt ident)+ : praTactic
 syntax (name := papplyTac) "papply " praExpr ("[" folTerm,* "]")? : praTactic
 syntax (name := passumptionTac) "passumption" : praTactic
 syntax (name := pconstructorTac) "pconstructor" : praTactic

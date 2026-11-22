@@ -1214,11 +1214,6 @@ private partial def proofBody (stx : Syntax) (expected : Option Predicate) :
       | `(praExpr| @$id:ident) => pure (← `(praExpr| $id:ident)).raw
       | `(praExpr| @($p:praExpr)) => pure p.raw
       | _ => pure head
-    if let `(praExpr| induction (motive := $motive:praExpr)) := head then
-      let id := mkIdentFrom head[0] `induction
-      let .theoremE d ← lookup id | throwErrorAt head "expected the induction declaration"
-      let named ← `(praExpr| (motive := $motive))
-      return ← constantProof stx d (named.raw :: args) expected explicit
     let `(praExpr| $id:ident) := head | do
       if args.isEmpty && !explicit then throwErrorAt head "expected a proof expression"
       return ← applyProof stx (← proof head) args expected explicit
@@ -2006,7 +2001,7 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := withDeferredDispl
   let ns ← getCurrNamespace
   let name := if shortName.getRoot == `_root_ then
     shortName.replacePrefix `_root_ .anonymous else ns ++ shortName
-  if isBuiltinName (shortName.replacePrefix `_root_ .anonymous) then
+  if isBuiltinName name then
     throwErrorAt id "reserved PRA name `{name}`"
   let environment ← runObject s do
     let declaration ← if isTheorem then
@@ -2093,6 +2088,6 @@ def elaboratePrint (id : Syntax) : CommandElabM Unit := do
   if let some d := s.environment.lookup signature.name then
     logInfoAt id m!"{← formatSyntax `praDecl (← delabDeclaration d)}"
   else
-    logInfoAt id m!"primitive {← delabSignature signature}"
+    logInfoAt id m!"primitive {← delabSignature signature (fullName := true)}"
 
 end LeanPRA.Surface

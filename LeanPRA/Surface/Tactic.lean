@@ -52,7 +52,7 @@ public meta section
 namespace LeanPRA.Surface
 open Lean Elab Command
 
-declare_syntax_cat praTactic
+declare_syntax_cat praTactic (behavior := both)
 syntax praTacticSeq := sepBy1IndentSemicolon(praTactic)
 syntax (name := praBy) "by" ppIndent(colGt praTacticSeq) : praExpr
 

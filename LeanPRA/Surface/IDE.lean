@@ -222,8 +222,7 @@ def addDeclarationInfo (stx : Syntax) (d : DeclarationSignature) : CommandElabM 
   unless ← editorInfoEnabled do return
   unless (stx.getRange? (canonicalOnly := true)).isSome do return
   let text ← captureDisplay do
-    let text ← (← delabSignature d).toString
-    return if (primitiveDeclaration? d.name).isSome then s!"primitive {text}" else text
+    return ← (← delabSignature d (fullName := true)).toString
   let metadata := ((declarationMetadata.getState (← getEnv)).find? d.name).getD {}
   addInfo stx text metadata.location? (metadata.doc?.getD "")
 

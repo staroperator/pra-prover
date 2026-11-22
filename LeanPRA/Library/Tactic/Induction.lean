@@ -39,8 +39,6 @@ syntax (name := letAnonymousTypedTac) "let " "_" " : " praExpr " := " praExpr : 
 syntax (name := letAnonymousTac) "let " "_" " := " praExpr : praTactic
 syntax (name := changeTac) "change " praExpr : praTactic
 
-macro "induction" : praExpr => `(praExpr| $(mkIdent `induction):ident)
-
 /-- Elaborate induction, case splits, local bindings, and conversion into PRA proof refinements. -/
 @[pra_tactic inductionTac, pra_tactic byCasesTac, pra_tactic haveTypedTac,
   pra_tactic haveTac, pra_tactic letTypedTac, pra_tactic letTac,
@@ -48,7 +46,7 @@ macro "induction" : praExpr => `(praExpr| $(mkIdent `induction):ident)
 def evalInduction : Tactic := fun stx => do
   match stx with
   | `(praTactic| induction $n:praExpr with $k:ident $ih:ident) =>
-    Tactic.refine (← `(praExpr| induction ?_ (fun $k:ident $ih:ident => ?_) $n))
+    Tactic.refine (← `(praExpr| _root_.induction ?_ (fun $k:ident $ih:ident => ?_) $n))
   | `(praTactic| by_cases $h:ident : $p:praExpr) =>
     Tactic.refine (← `(praExpr| or_elim (lem $p)
       (fun $h:ident => ?_) (fun $h:ident => ?_)))
@@ -77,7 +75,7 @@ def evalStructuredInduction : Tactic := fun stx => do
     | zero => $base:praTacticSeq
     | succ $k:ident $ih:ident => $step:praTacticSeq) := stx | throwUnsupportedSyntax
   let rest := (← get).drop 1
-  Tactic.refine (← `(praExpr| induction ?_ (fun $k:ident $ih:ident => ?_) $n:ident))
+  Tactic.refine (← `(praExpr| _root_.induction ?_ (fun $k:ident $ih:ident => ?_) $n:ident))
   let goals := (← get).take 2
   for (goal, branch) in goals.zip [base, step] do
     set [goal]

@@ -524,10 +524,7 @@ private def parameters (signature : List Core.Parameter) :
 
 /-- Delaborate `d` to a `praDecl`. -/
 def delabDeclaration (d : Core.Declaration) : CommandElabM (TSyntax `praDecl) := do
-  let ns ← getCurrNamespace
-  let relative := d.name.replacePrefix ns .anonymous
-  let name := if ns.isPrefixOf d.name && ns != d.name && !isBuiltinName relative then
-    relative else `_root_ ++ d.name
+  let name := d.name
   match d with
   | .function d =>
     let (names, ps) ← parameters d.parameterSignature
@@ -566,10 +563,12 @@ def delabSignatureType (d : DeclarationSignature) : CommandElabM MessageData := 
     text := text ++ (← formatSyntax `praParam p).pretty ++ " → "
   return m!"{text}{← formatSyntax `praExpr type}"
 
-/-- Format `d`'s name, parameters, and result type. -/
-def delabSignature (d : DeclarationSignature) : CommandElabM MessageData := do
+/-- Format `d`'s name, parameters, and result type. Use its full name when requested. -/
+def delabSignature (d : DeclarationSignature) (fullName : Bool := false) :
+    CommandElabM MessageData := do
   let (ps, type) ← signatureParts d
-  let mut text := (← relativeName d.name).toString
+  let name ← if fullName then pure d.name else relativeName d.name
+  let mut text := name.toString
   for p in ps do
     text := text ++ " " ++ (← formatSyntax `praParam p).pretty
   return m!"{text} : {← formatSyntax `praExpr type}"
