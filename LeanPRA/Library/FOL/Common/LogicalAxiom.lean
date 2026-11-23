@@ -1,6 +1,6 @@
 module
 
-public import LeanPRA.Library.FOL.Common.Syntax
+public import LeanPRA.Library.FOL.Common.Substitution
 
 /-!
 # Logical axioms of the shared Hilbert calculus

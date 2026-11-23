@@ -145,36 +145,6 @@ theorem disj_elim (L : Nat) (T : Nat → Nat) : ∀ Γ A B C,
       (imp_intro L T Γ A C ha))
     (imp_intro L T Γ B C hb)
 
-end Sequent
-
-namespace Formula
-
-theorem shift_imp : ∀ L A B, shift L (imp A B) = imp (shift L A) (shift L B) := by
-  intro L A B
-  rw [shift_eq_subst L (imp A B), shift_eq_subst L A, shift_eq_subst L B]
-  exact subst_imp (FOL.shiftSubst L 1) L A B
-
-theorem shift_falsum : ∀ L, shift L falsum = falsum := by
-  intro L
-  rw [shift_eq_subst L falsum]
-  exact subst_falsum (FOL.shiftSubst L 1) L
-
-theorem shift_neg : ∀ L A, shift L (neg A) = neg (shift L A) := by
-  intro L A
-  rw [neg, neg, shift_imp, shift_falsum]
-
-theorem instantiate_neg : ∀ L A t, instantiate L (neg A) t = neg (instantiate L A t) := by
-  intro L A t
-  rw [neg, neg, instantiate_eq_subst L (imp A falsum) t, instantiate_eq_subst L A t,
-    subst_imp (FOL.consSubst t (FOL.shiftSubst L 0)),
-    subst_falsum (FOL.consSubst t (FOL.shiftSubst L 0))]
-
-end Formula
-
-namespace Sequent
-
-open Formula
-
 /-- Introduce a universal quantifier. The premise holds under the shifted assumptions, so the
 new variable is fresh for them. -/
 theorem all_intro (L : Nat) (T : Nat → Nat) : ∀ Γ A,

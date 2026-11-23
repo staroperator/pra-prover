@@ -1,7 +1,6 @@
 module
 
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
-public import LeanPRA.Library.FOL.Common.Substitution
 meta import LeanPRA.Library.Tactic.Witnessing
 
 /-!

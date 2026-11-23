@@ -6,12 +6,11 @@ public import LeanPRA.Library.Nat.Tuple
 /-!
 # First-order syntax
 
-Terms and formulas are encoded in `Nat`. For a fixed language `L`, every number has an
-interpretation as each kind of syntax. Symbol indices start at zero within each symbol group.
+Terms and formulas are encoded in `Nat` such that there is an one-to-one correspondence between each
+number and each term or formula.
 
-Variables use de Bruijn indices: `0` refers to the nearest binder, with larger indices counting
-outward. Beneath `d` binders, an index `i ≥ d` refers to surrounding position `i - d`.
-Formulas have no fixed scope.
+Variables use de Bruijn indices. Index zero refers to the nearest binder, and larger indices refer
+to outer binders. Terms and formulas can also refer to free variables.
 -/
 
 @[expose] public section
@@ -1139,64 +1138,15 @@ theorem rec_all (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) : ∀ 
 
 end Formula
 
-/-! ## Substitution
+/-! ## Free variable bounds
 
-- `Term.subst` and `Formula.substWithDepth` replace variables, tracking depth beneath quantifiers.
-- `Formula.instantiateAt` and `Formula.instantiate` substitute a term into a surrounding
-  variable position or quantifier body, lifting it beneath inner binders and lowering later indices.
-- `Term.bound` and `Formula.bound` give the number of surrounding variable positions
-  needed by the syntax.
-- `Formula.Closed` states that a formula has no free variable positions;
-  `Formula.isClosed` is its numerical test.
+- `Term.bound` and `Formula.bound` count the surrounding variable positions needed by a term or
+  formula. A quantifier binds position zero in its body.
+- `Formula.Closed` states that a formula has no free variables. `Formula.isClosed` tests this
+  condition on its code.
 -/
 
 namespace Term
-
-/--
-`Term.subst f L t` simultaneously substitutes terms for variables in term code `t` in language
-code `L`. `f i` supplies the term code for variable index `i`, inserted unchanged.
-Constants and function symbols are preserved.
--/
-def subst (f : Nat → Nat) : Nat → Nat → Nat :=
-  fun L => rec f (const L) (app L) L
-
-theorem subst_const (f : Nat → Nat) : ∀ L j, IsConstant L j →
-    subst f L (const L j) = const L j := fun L j h => rec_const f (const L) (app L) L j h
-
-theorem subst_var (f : Nat → Nat) : ∀ L i, subst f L (var L i) = f i :=
-  fun L i => rec_var f (const L) (app L) L i
-
-theorem subst_app (f : Nat → Nat) : ∀ L j args, IsFunction L j →
-    subst f L (app L j args) =
-      app L j (Tuple.map (subst f L) (Language.functionSymbolArity L j) args) :=
-  fun L j args hj => rec_app f (const L) (app L) L j args hj
-
-theorem subst_app_one (f : Nat → Nat) : ∀ L j t,
-    IsFunction L j → Language.functionSymbolArity L j = 1 →
-    subst f L (app L j t) = app L j (subst f L t) :=
-  fun L j t hj ha => rec_app_one f (const L) (app L) L j t hj ha
-
-theorem subst_app_two (f : Nat → Nat) : ∀ L j t u,
-    IsFunction L j → Language.functionSymbolArity L j = 2 →
-    subst f L (app L j (pair t u)) = app L j (pair (subst f L t) (subst f L u)) :=
-  fun L j t u hj ha => rec_app_two f (const L) (app L) L j t u hj ha
-
-/--
-`Term.shift L d t` returns the term code obtained by raising every variable index in term
-code `t` by `d`, in language code `L`.
--/
-def shift : Nat → Nat → Nat → Nat := fun L d => subst (fun n => var L (n + d)) L
-
-/--
-`Term.instantiateAt L k t d n` gives the replacement term code for variable index `n` at binder
-depth `d`, when surrounding position `k` is replaced by term code `t` in language code `L`.
-Indices below `d` are preserved; position `k` receives `t` shifted by `d`; later positions
-move down by one. This removes position `k` from the surrounding variable context.
--/
-def instantiateAt : Nat → Nat → Nat → Nat → Nat → Nat := fun L k t d n =>
-  ite (ltb n d) (var L n)
-    (ite (eqb (n - d) k) (shift L d t)
-      (var L (ite (ltb k (n - d)) (pred n) n)))
 
 /--
 `Term.bound L t` is one more than the largest variable index in term code `t` in language
@@ -1234,93 +1184,6 @@ theorem bound_app_two : ∀ L j t u,
 end Term
 
 namespace Formula
-
-/--
-`Formula.substWithDepth f L A d` replaces variables in formula code `A` in language code `L`,
-starting at binder depth `d`. `f k i` supplies a term code for variable index `i` at the
-current depth `k`. Each quantifier increases `k` by one. The replacement function `f`
-determines how bound variables are treated.
--/
-def substWithDepth (f : Nat → Nat → Nat) : Nat → Nat → Nat → Nat := fun L =>
-  recWithDepth (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L
-
-theorem substWithDepth_falsum (f : Nat → Nat → Nat) : ∀ L d,
-    substWithDepth f L falsum d = falsum :=
-  fun L d => recWithDepth_falsum (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L d
-
-theorem substWithDepth_equal (f : Nat → Nat → Nat) : ∀ L t s d,
-    substWithDepth f L (equal L t s) d = equal L (Term.subst (f d) L t) (Term.subst (f d) L s) :=
-  fun L t s d => recWithDepth_equal (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L t s d
-
-theorem substWithDepth_rel (f : Nat → Nat → Nat) : ∀ L j xs d, IsRelation L j →
-    substWithDepth f L (rel L j xs) d =
-      rel L j (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs) :=
-  fun L j xs d hj => recWithDepth_rel (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L j xs d hj
-
-theorem substWithDepth_imp (f : Nat → Nat → Nat) : ∀ L A B d,
-    substWithDepth f L (imp A B) d = imp (substWithDepth f L A d) (substWithDepth f L B d) :=
-  fun L A B d => recWithDepth_imp (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L A B d
-
-theorem substWithDepth_all (f : Nat → Nat → Nat) : ∀ L A d,
-    substWithDepth f L (all A) d = all (substWithDepth f L A (S d)) :=
-  fun L A d => recWithDepth_all (fun _ => falsum)
-    (fun d t s => equal L (Term.subst (f d) L t) (Term.subst (f d) L s))
-    (fun d j xs => rel L j
-      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs))
-    (fun _ x y => imp x y) (fun _ x => all x) L A d
-
-/--
-`Formula.instantiateAt L k A t` substitutes term code `t` for surrounding position `k` in
-formula code `A`, in language code `L`. Indices referring to inner binders and earlier
-surrounding positions are preserved; `t` is shifted beneath binders, and later positions
-move down by one.
--/
-def instantiateAt : Nat → Nat → Nat → Nat → Nat :=
-  fun L k A t => substWithDepth (Term.instantiateAt L k t) L A 0
-
-/--
-`Formula.instantiate L A t` instantiates the body formula code `A` with term code `t` in language
-code `L`. It replaces surrounding position `0`, lifts `t` beneath inner binders, and lowers later
-positions by one. Thus `A` is the body passed to `Formula.all` for universal instantiation.
--/
-def instantiate : Nat → Nat → Nat → Nat := fun L A t => instantiateAt L 0 A t
-
-/--
-`Formula.shift L A` returns the formula code obtained by raising each surrounding variable
-position in formula code `A` by one, in language code `L`. Indices referring to binders
-inside `A` are preserved.
--/
-def shift : Nat → Nat → Nat := fun L A =>
-  substWithDepth (fun d n => Term.var L (ite (ltb n d) n (S n))) L A 0
-
-/--
-`Formula.successorInstance L successor A` replaces surrounding position `0` in formula code `A`
-by its successor, preserving other positions. `L` is a language code, and `successor`
-is a function symbol index below `Language.functionCount L` with arity `1`.
--/
-def successorInstance : Nat → Nat → Nat → Nat := fun L successor A =>
-  substWithDepth
-    (fun d n => ite (eqb n d) (Term.app L successor (Term.var L n)) (Term.var L n)) L A 0
 
 /--
 `Formula.bound L A` gives the number of surrounding variable positions needed by formula
