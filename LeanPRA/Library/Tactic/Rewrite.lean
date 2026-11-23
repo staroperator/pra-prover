@@ -65,10 +65,18 @@ private def fixedHead : Metavariable.Term → Option Metavariable.Term
   | .succ => some .succ
   | _ => none
 
-private def compatibleHeads (pattern candidate : Metavariable.Term) : Bool :=
-  match fixedHead (matchingTerm pattern), fixedHead (matchingTerm candidate) with
-  | some a, some b => a == b
-  | _, _ => true
+-- A proof argument can determine an omitted term by conversion. Elaborating the rule against a
+-- candidate can then choose that candidate's spelling for the term.
+private def hasOnlyTermArguments : Metavariable.Proof → Bool
+  | .theoremE .. | .hyp _ => true
+  | .forallElim proof _ => hasOnlyTermArguments proof
+  | _ => false
+
+-- The pattern's only unknowns stand for quantified numbers. Substituting a number preserves
+-- application nodes, so each fixed argument must already agree with the candidate.
+private def matchesFixedArguments : Metavariable.Term → Metavariable.Term → Bool
+  | .app f x, .app g y => matchesFixedArguments f g && matchesFixedArguments x y
+  | pattern, candidate => !pattern.isComplete || pattern == candidate
 
 private def lowerTerm (count : Nat) (t : Metavariable.Term) : Option Metavariable.Term := do
   let marker := (termMetas t).foldl max 0 + 1
@@ -135,25 +143,31 @@ def rewrite (rule : TSyntax `praExpr) (reverse : Bool) (location : Option (TSynt
   let target := Bridge.betaReducePredicate goal.projection goal.maxDepth target
   let restoreInspection ← saveState
   let mut equation ← `(praExpr| @($rule))
-  let mut type ← infer equation
+  let (ruleProof, ruleType) ← Tactic.elaborateProof equation
+  let mut type := ruleType
   let mut count := 0
   repeat
     let .all motive := Bridge.betaReducePredicate goal.projection goal.maxDepth type | break
     count := count + 1
     if count > goal.maxDepth then throwError "rw rule binder limit exhausted"
     type := Bridge.betaReducePredicate goal.projection goal.maxDepth
-      (.app motive.shift (.bvar 0))
+      (.app motive (← Tactic.unknownTerm))
     equation ← `(praExpr| $equation _)
   let .equal patternLeft patternRight :=
       Bridge.betaReducePredicate goal.projection goal.maxDepth type
     | throwError "rw expects a numerical equality"
-  let pattern := if reverse then patternRight else patternLeft
+  let pattern := matchingTerm (Bridge.betaReduceTerm goal.projection goal.maxDepth
+    (if reverse then patternRight else patternLeft))
+  let checkArguments := if count == 0 then pattern.isComplete
+    else ruleType.isComplete && hasOnlyTermArguments ruleProof
   restoreInspection
   for candidate in (predicateCandidates 0 target).eraseDups do
-    unless compatibleHeads pattern candidate do continue
-    -- A rule without quantified binders or metavariables must already beta-match the candidate.
-    if count == 0 && pattern.isComplete && candidate.isComplete then
-      unless betaEqual goal pattern candidate do continue
+    if let (some a, some b) := (fixedHead pattern, fixedHead candidate) then
+      if a != b then continue
+    if checkArguments && candidate.isComplete then
+      let candidateForm := matchingTerm
+        (Bridge.betaReduceTerm goal.projection goal.maxDepth candidate)
+      unless matchesFixedArguments pattern candidateForm do continue
     let .ok 0 := Bridge.termType goal.projection goal.maxDepth goal.environment goal.context
         candidate
       | continue
