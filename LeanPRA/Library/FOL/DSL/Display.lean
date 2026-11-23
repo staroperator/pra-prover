@@ -71,6 +71,27 @@ unsafe initialize termDisplayAttribute : KeyedDeclsAttribute TermDisplay ←
     evalKey := fun _ stx => return (← Attribute.Builtin.getIdent stx).getId.eraseMacroScopes
   }
 
+/-- Print a folded definition with the arguments that its substitution theorem describes. -/
+private def namedDefinitionSyntax (names : Names) (isFormula : Bool) (value : Core.Term)
+    (count : Nat) (showArguments : CommandElabM (Array (TSyntax `folTerm))) :
+    CommandElabM (Option Syntax) := do
+  let .definition head values := value | return none
+  let some d := (definitions.getState (← getEnv)).find? (·.name == head) | return none
+  let positions := (List.range d.arguments.size).map (· + d.parameters.size)
+  unless d.isFormula == isFormula && d.substitution.isSome && count == d.arguments.size &&
+      d.termPositions == positions do return none
+  let name := mkIdent (Name.mkSimple d.name.getString!)
+  let shown ← showArguments
+  let named := d.parameters.zip values.toArray
+  if named.isEmpty then
+    if isFormula then return some (← `(folFormula| $name:ident($shown,*))).raw
+    return some (← `(folTerm| $name:ident($shown,*))).raw
+  let actuals ← named.mapM fun (binder, actual) => do
+    `(folPraActual| ($(mkIdent binder):ident := $(← delabTerm names actual)))
+  let kind := if isFormula then ``formulaDefinedApplication else ``termDefinedApplication
+  return some (.node .none kind #[name, mkNullNode actuals,
+    mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"])
+
 /-- Print a term tree in FOL notation. `level` is the precedence the position requires. -/
 partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Name)
     (t : TermView) (level : Nat := 0) : CommandElabM (TSyntax `folTerm) := do
@@ -100,7 +121,10 @@ partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Nam
     let args ← args.toArray.mapM (termSyntax L names rename ·)
     let indices ← (← tupleEntries family.indexArity k).toArray.mapM (delabTerm names)
     `(folTerm| $(mkIdent family.name):ident[$indices,*]($args,*))
-  | .code _ value _ =>
+  | .code _ value arguments => do
+    let term (t : TermView) := termSyntax L names rename t
+    if let some shown ← namedDefinitionSyntax names false value arguments.length
+        (arguments.toArray.mapM term) then return ⟨shown⟩
     return ⟨spliceNode ``termSplice (← delabTerm names value) none⟩
 
 private def parenthesizedFormula (level wanted : Nat) (a : TSyntax `folFormula) :
@@ -183,20 +207,20 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     parenthesizedFormula 25 level (← `(folFormula| $b:folFormula → $c:folFormula))
   | .all x body => quantified x body false
   | .code _ value arguments =>
-    -- A definition applied to its term arguments is shown as it is written in a formula.
-    if let .definition head parameters := value then
-      if let some d := (definitions.getState (← getEnv)).find? (·.name == head) then
-        let count := d.parameters.size
-        if d.isFormula && d.substitution.isSome && arguments.length == d.arguments.size &&
-            d.termPositions == (List.range d.arguments.size).map (· + count) then
-          let name := mkIdent (Name.mkSimple d.name.getString!)
-          let shown ← arguments.toArray.mapM term
-          if count == 0 then return ← `(folFormula| $name:ident($shown,*))
-          let actuals ← (d.parameters.zip (parameters.toArray.extract 0 count)).mapM
-            fun (parameter, actual) => do
-              `(folPraActual| ($(mkIdent parameter):ident := $(← delabTerm names actual)))
-          return ⟨.node .none ``formulaDefinedApplication #[name, mkNullNode actuals,
-            mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"]⟩
+    if let some shown ← namedDefinitionSyntax names true value arguments.length
+        (arguments.toArray.mapM term) then return ⟨shown⟩
+    -- For a formula with only result slots, skip the surrounding context after those slots.
+    let (head, _) := getAppFnArgs value
+    let known : Array DefinitionInfo := definitions.getState (← getEnv)
+    let arguments : List TermView := match head with
+      | .definition name _ =>
+        match known.find? (·.name == name) with
+        | some d =>
+          if d.language == L.name && d.isFormula && d.resultArity > 0 &&
+              d.syntaxParameters.isEmpty then arguments.take d.resultArity
+          else arguments
+        | none => arguments
+      | _ => arguments
     let value ← delabTerm names value
     let arguments ← arguments.reverse.toArray.mapM term
     return ⟨spliceNode (if arguments.isEmpty then ``formulaSplice else ``formulaSpliceApplication)

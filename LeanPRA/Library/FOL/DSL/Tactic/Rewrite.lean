@@ -175,8 +175,6 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
           unless g.context.entries.any (·.1 == name) ||
               (← getGoal).names.used.contains name do
             if let some d ← findDefinition name then
-              unless d.isFormula do
-                throwErrorAt id "the term definition `{name}` is always written out in a formula"
               openNamed [d.name] location
               return true
         if let some h := location then

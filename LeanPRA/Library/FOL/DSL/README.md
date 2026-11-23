@@ -135,9 +135,9 @@ entering a binder shifts their surrounding variables.
 
 When a term or formula definition `D` has a body whose substitutions can be proved automatically,
 `fol_def` generates a theorem `D.subst` for `Term.subst` or `Formula.subst`, respectively. This
-pushes substitutions directly into the arguments of `D` without unfolding its body. Term definitions
-are unfolded inside formulas unless a registered equation lets their codes stay symbolic.
-Definitions with explicit result slots currently use unfolding and calculation equations.
+pushes substitutions directly into the arguments of `D` without unfolding its body. If a
+substitution needs the body of a term definition, it can use a registered equation or open the
+definition. Definitions with explicit result slots use unfolding and registered equations.
 
 `Formula.subst f L A` replaces free variables by terms and lifts `f` beneath quantifiers to avoid
 capture. The lower-level `Formula.substWithDepth f L A d` passes each binder depth and variable
@@ -263,7 +263,7 @@ fol_theorem and_symm (p q : formula) : AddTheory ⊢ p ∧ q → q ∧ p := by
 | `ptrans u` | Split an equality goal `t = v` into two goals `t = u` and `u = v`. |
 | `pcongr` | Reduce `f(t₁, ..., tₙ) = f(u₁, ..., uₙ)` to subgoals `t₁ = u₁`, ..., `tₙ = uₙ`. |
 | `prw [r₁, r₂, ...]` | Close an equation by rewriting both sides with equality axioms, theorems, or assumptions `rᵢ` and comparing the results. |
-| `prw [D]`, `prw [D] at h` | Open the formula definition `D` in the goal or in the local assumption `h`. |
+| `prw [D]`, `prw [D] at h` | Open the term or formula definition `D` in the goal or in `h`. |
 | `psubst h` | Given an equality proof or assumption `h` of `x = t` for an object variable `x`, replace `x` with `t` throughout the goal formula. |
 
 ```lean
@@ -286,10 +286,10 @@ rule are matched against subterms from the inside out, earlier rules normalize l
 list, and both sides of the target equation are rewritten to a common term. To replace an object
 variable inside a non-equality formula (such as a relation or quantifier body), use `psubst`.
 
-### Opening formula definitions in proofs
+### Opening definitions in proofs
 
-Formula definitions with a `.subst` theorem stay closed in proof goals until a tactic needs to
-inspect their body:
+Term definitions with no explicit result slots and formula definitions with a `.subst` theorem
+stay closed in proof goals until a tactic needs to inspect their body:
 
 - Connective-directed tactics (`pintro`, `pconstructor`, `pleft`, `pright`, `pexists`, `pcases`,
   `papply`, `ptrans`, `psymm`, and `pcongr`) open definitions at the head of the formula they

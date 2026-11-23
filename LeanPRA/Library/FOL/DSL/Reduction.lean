@@ -9,8 +9,8 @@ This frontend evaluator uses the PRA constructor equations to calculate substitu
 equalities. Pairing codes remain symbolic. Each reduction returns an ordinary PRA equality proof,
 assembled from common theorems, congruence, and definitional equality.
 
-A formula definition with a substitution theorem stays closed: the calculation rewrites a
-substitution into it by that theorem and leaves its body alone.
+A term or formula definition can stay closed during calculation. A substitution theorem lets
+the calculation substitute into the arguments while keeping the definition closed.
 
 - `Calculation` stores a resulting expression together with its equality proof.
 - `calculate` calculates an expression; `openDefinitions` also opens the named definitions.
@@ -290,13 +290,14 @@ structure CalculationState where
 
 abbrev CalculationM := StateRefT CalculationState CommandElabM
 
-/-- Read `t` as a formula definition applied to its parameters and arguments. The
-definition must have a substitution theorem, which lets it stay closed in calculations. -/
+/-- Read a definition that stays closed during calculation. Formulas need a substitution
+theorem. Terms with no result slots can also be opened when a substitution needs their body. -/
 def definitionApplication? (t : Term) :
     CommandElabM (Option (DefinitionInfo × List Term)) := do
   let .definition name values := t | return none
   let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
-  unless d.isFormula && d.substitution.isSome && !(← opensDefinitions) do return none
+  unless !(← opensDefinitions) &&
+      (if d.isFormula then d.substitution.isSome else d.resultArity == 0) do return none
   return some (d, values)
 
 private def closedDefinition? (t : Term) :
@@ -512,8 +513,9 @@ mutual
     return ⟨.definition name current, proof⟩
 
   /-- Apply the checked substitution theorem while keeping the definition closed. -/
-  private partial def substDefinition (L f : Term) (_substitution : SubstitutionView)
-      (d : DefinitionInfo) (values : List Term) : CalculationM (Option Calculation) := do
+  private partial def substDefinition (L f : Term) (d : DefinitionInfo) (values : List Term) :
+      CalculationM (Option Calculation) := do
+    unless L == applyDefinition (d.language ++ `language) do return none
     let some theoremName := d.substitution | return none
     let arguments := values.zipIdx.map fun (value, i) =>
       if let some p := d.syntaxAt? i then p.transport L f value else value
@@ -521,6 +523,11 @@ mutual
       applyTheorem theoremName [] (f :: values)⟩
 
   private partial def calculateHead (t : Term) : CalculationM Calculation := do
+    let opened := (← get).opened
+    unless opened.isEmpty do
+      if let (.definition name _, _) := getAppFnArgs t then
+        if opened.contains name then
+          if let some next ← unfoldOnce t then return ← follow t next (.forallElim .eqRefl t)
     if let some (d, values) ← closedDefinition? t then
       let result ← calculateDefinition t d values
       if result.value != t then return ← follow t result.value result.proof
@@ -602,10 +609,10 @@ mutual
                 return ← follow t result (mkEqTrans t middle result
                   (applyTheorem `FOL.Formula.subst_comp [L, B] [f, g]) equation)
           if let some (d, values) ← closedDefinition? A then
-            if let some normalized ← normalizeSubstitution normalizeTerm L f then
-              if let some result ←
-                  substDefinition L f normalized.substitution d values then
-                return ← follow t result.value result.proof
+            if d.isFormula then
+              if (← normalizeSubstitution normalizeTerm L f).isSome then
+                if let some result ← substDefinition L f d values then
+                  return ← follow t result.value result.proof
             -- The substitution changes the meaning of the PRA parameters: open the definition.
             if let some next ← unfoldOnce A then
               return ← follow t (applyDefinition name [L, next] [f]) (.forallElim .eqRefl t)
@@ -789,6 +796,12 @@ mutual
                 r.symbol == symbol && r.language == L && r.parameters == parameters.length &&
                   r.arity == parameters.length + values.length) then
               return ⟨a, applyTheorem rule.theoremName (parameters ++ values) [f]⟩
+          if let some (d, values) ← closedDefinition? a then
+            unless d.isFormula do
+              if let some result ← substDefinition L f d values then
+                return ← follow t result.value result.proof
+              if let some next ← unfoldOnce a then
+                return ← follow t (applyDefinition name [L, next] [f]) (.forallElim .eqRefl t)
           if let some (_, [_, i]) := named a `FOL.Term.var then
             return ← follow t (.app f i) (applyTheorem `FOL.Term.subst_var [L, i] [f])
           if let some (_, [_, i]) := named a `FOL.Term.const then
@@ -839,6 +852,9 @@ mutual
             return ← follow t (applyDefinition name [L, next]) (.forallElim .eqRefl t)
     if name == `FOL.Term.bound then
       if let [L, a] := args then
+        if (← closedDefinition? a).isSome then
+          if let some next ← unfoldOnce a then
+            return ← follow t (applyDefinition name [L, next]) (.forallElim .eqRefl t)
         if let some (_, [_, j]) := named a `FOL.Term.const then
           let hj ← constantProof L j
           return ⟨numeral 0, applyTheorem `FOL.Term.bound_const [L, j] [] [hj]⟩
@@ -875,7 +891,8 @@ end
 with the arguments in place, keeping definitions inside the body closed, together with a proof
 that `t` equals it. -/
 def openHead (t : Term) : CommandElabM (Option Calculation) := do
-  let some _ ← definitionApplication? t | return none
+  let some (d, _) ← definitionApplication? t | return none
+  unless d.isFormula do return none
   let some next ← unfoldOnce t | return none
   let result ← (calculate next).run' {}
   return some ⟨result.value,

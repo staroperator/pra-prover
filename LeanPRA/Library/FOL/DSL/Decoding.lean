@@ -74,12 +74,12 @@ partial def freePositions (closed : Array DefinitionInfo) (t : Term) (depth : Na
     | none => 0
   | _, _ => args.foldl (fun n a => max n (freePositions closed a depth)) 0
 
-/-- The definitions that stay closed when formulas are read in the current scope. -/
+/-- The definitions that stay closed when terms and formulas are read in the current scope. -/
 def closedDefinitions : CommandElabM (Array DefinitionInfo) := do
   if ← opensDefinitions then return #[]
   let preserve := fol.preserveDisplayNames.get (← getOptions)
   return (definitions.getState (← getEnv)).filter fun d =>
-    d.isFormula && (d.substitution.isSome || preserve)
+    if d.isFormula then d.substitution.isSome || preserve else d.resultArity == 0
 
 partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
     (fuel : Nat := 64) : CommandElabM TermView := do
@@ -111,6 +111,17 @@ partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
         (fun t => readTerm L bound free t (fuel - 1)))
   | _, _ => pure ()
   if let .letE _ v body := value then return ← readTerm L bound free (body.subst0 v) (fuel - 1)
+  if let some (d, values) ← definitionApplication? value then
+    unless d.isFormula do
+      let language := languageTerm L
+      if ← isRegisteredClosedTerm language value then return .code language value []
+      if d.substitution.isSome && !d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then
+        let terms := d.termPositions.map fun i => values[i]!
+        let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
+          values.set position (applyDefinition `FOL.Term.var [language, numeral i])) values
+        let arguments ← terms.mapM (readTerm L bound free · (fuel - 1))
+        return .code language (.definition d.name variables) arguments
+      return .code language value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
   if reduced.value != value then return ← readTerm L bound free reduced.value (fuel - 1)
   if ← isRegisteredClosedTerm (languageTerm L) value then
@@ -149,13 +160,14 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
     return ← readFormula L bound free (body.subst0 v) (fuel - 1)
   -- Explicit term arguments give closed definitions a substitution context of their own.
   if let some (d, values) ← definitionApplication? value then
-    if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then
-      return .code (languageTerm L) value ((bound ++ free).map TermView.var)
-    let terms := d.termPositions.map fun i => values[i]!
-    let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
-      values.set position (applyDefinition `FOL.Term.var [languageTerm L, numeral i])) values
-    let arguments ← terms.mapM (readTerm L bound free ·)
-    return .code (languageTerm L) (.definition d.name variables) arguments
+    if d.isFormula then
+      if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then
+        return .code (languageTerm L) value ((bound ++ free).map TermView.var)
+      let terms := d.termPositions.map fun i => values[i]!
+      let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
+        values.set position (applyDefinition `FOL.Term.var [languageTerm L, numeral i])) values
+      let arguments ← terms.mapM (readTerm L bound free ·)
+      return .code (languageTerm L) (.definition d.name variables) arguments
   if fol.preserveDisplayNames.get (← getOptions) then
     if let .definition name _ := value then
       if (definitions.getState (← getEnv)).any (fun d => d.name == name && d.isFormula) then

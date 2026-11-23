@@ -293,7 +293,7 @@ def applySequentRule (g : ProofGoal) (premises : List Core.Term) (conclusion : C
 
 /-- Whether the formula is a definition that stays closed when read. -/
 def isClosedDefinition : FormulaView → CommandElabM Bool
-  | .code _ value _ => return (← definitionApplication? value).isSome
+  | .code _ value _ => return (← definitionApplication? value).any (·.1.isFormula)
   | _ => return false
 
 /-- Replace a goal whose conclusion is a closed definition by the goal for its body, and return
