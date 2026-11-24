@@ -36,31 +36,40 @@ namespace PA
 
 open Arithmetic
 
+/-- If `a * x = b * y` and `x = y + b²`, then `x` is a Bézout coefficient for
+`S a` modulo `S b`. The other coefficient is the predecessor of `y + b`. -/
+fol_theorem bezout_succ_of_square_difference : PA ⊢
+    ∀ a b x y, 0 < b → a * x = b * y → x = y + b * b → bezout(S a, S b) := by
+  pintro a b x y hb hmul hdiff
+  phave hpos : 0 < y + b
+  · papply lt_of_lt_of_le[0, b, y + b]
+    · pexact hb
+    · pexact le_add_left[b, y]
+  · phave hp : ∃ z, y + b = S z
+    · papply positive_predecessor[y + b]
+      pexact hpos
+    · pcases hp with ⟨z, hz⟩
+      pexists x
+      pexists z
+      papply add_right_cancel[S a * x, 1 + S b * z, S b]
+      ptrans a * x + x + S b
+      · prw [succ_mul]
+      · ptrans b * y + (y + b * b) + S b
+        · prw [hmul, hdiff]
+        · ptrans 1 + S b * (y + b)
+          · pring
+          · prw [hz, Q.mul_succ, add_assoc]
+
 fol_theorem bezout_succ_mul_of_mul_eq_add : PA ⊢
     ∀ u v c t, 0 < v * c → v * t = u * t + c → bezout(S (u * c), S (v * c)) := by
   pintro u v c t hpos hstep
-  phave hbound : 0 < v * v * u * c * t + v * c
-  · papply lt_of_lt_of_le[0, v * c, v * v * u * c * t + v * c]
-    · passumption
-    · pexact le_add_left[v * c, v * v * u * c * t]
-  · phave hzex : ∃ z, v * v * u * c * t + v * c = S z
-    · papply positive_predecessor[v * v * u * c * t + v * c]
-      passumption
-    · pcases hzex with ⟨z, hz⟩
-      pexists v * v * v * c * t
-      pexists z
-      papply add_right_cancel[S (u * c) * (v * v * v * c * t),
-        1 + S (v * c) * z, S (v * c)]
-      ptrans 1 + S (v * c) * (v * v * u * c * t + v * c)
-      · ptrans (v * v * c) * (v * t) + (u * v * v * v * c * c * t + 1 + v * c)
-        · pring
-        · ptrans (v * v * c) * (u * t + c) +
-            (u * v * v * v * c * c * t + 1 + v * c)
-          · prw [hstep]
-          · pring
-      · ptrans 1 + S (v * c) * S z
-        · prw [hz]
-        · pring
+  papply bezout_succ_of_square_difference[u * c, v * c,
+    (v * v * c) * (v * t), (v * v * c) * (u * t)]
+  · pexact hpos
+  · pring
+  · ptrans (v * v * c) * (u * t + c)
+    · prw [hstep]
+    · pring
 
 /-- The beta moduli at distinct increasing indices admit an oriented Bézout identity. -/
 fol_theorem bezout_betaModulus_of_lt : PA ⊢

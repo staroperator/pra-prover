@@ -571,6 +571,16 @@ theorem iter_succ_apply (f : Nat → Nat) :
   · rfl
   · rw [iter_succ f, ih, iter_succ f]
 
+/-- If `f` undoes each recursion step, applying it `k` times recovers the initial value. -/
+theorem iter_primrec_eq_base (f : Nat → Nat) (step : Nat → Nat → Nat) :
+    ∀ a, (∀ i x, f (step i x) = x) → ∀ k, iter f k (primrec a step k) = a := by
+  intro a undo k
+  induction k with j ih
+  · rfl
+  · rw [primrec_succ step a j, iter_succ f j, ← iter_succ_apply f j,
+      undo j (primrec a step j)]
+    exact ih
+
 theorem iter_add (f : Nat → Nat) :
     ∀ m n x, iter f (m + n) x = iter f n (iter f m x) := by
   intro m n x

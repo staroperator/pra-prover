@@ -77,6 +77,21 @@ fol_theorem bezout_mul : PA ⊢
     · prw [he, hf]
     · pring
 
+/-- Adjust a residue using a Bézout identity and a multiple with the required remainder. -/
+fol_theorem remainder_adjust_eq : PA ⊢ ∀ b d m r x y w,
+    d * x = 1 + m * y → b + w = m * b + r → b + d * (x * w) = m * (b + y * w) + r := by
+  pintro b d m r x y w he hw
+  ptrans b + (d * x) * w
+  · psymm
+    prw [mul_assoc]
+  · ptrans (b + w) + m * (y * w)
+    · prw [he, right_distrib, one_mul, mul_assoc, add_assoc]
+    · ptrans (m * b + m * (y * w)) + r
+      · ptrans (m * b + r) + m * (y * w)
+        · prw [hw]
+        · pexact add_right_comm[m * b, r, m * (y * w)]
+      · prw [left_distrib]
+
 /-- Given `bezout d m` and `r < m`, some multiple `d * t` adjusts `b` so that
 `b + d * t` has remainder `r` modulo `m`. -/
 fol_theorem exists_remainder_add_mul : PA ⊢
@@ -93,23 +108,11 @@ fol_theorem exists_remainder_add_mul : PA ⊢
     pconstructor
     · passumption
     · pexists b + y * (r + k * b)
-      ptrans b + (d * x) * (r + k * b)
-      · pring
-      · ptrans b + (1 + m * y) * (r + k * b)
-        · prw [he]
-        · ptrans b + (1 + S k * y) * (r + k * b)
-          · prw [hk]
-          · ptrans S k * (b + y * (r + k * b)) + r
-            · ptrans (b + (r + k * b)) + S k * (y * (r + k * b))
-              · prw [right_distrib, one_mul, mul_assoc, add_assoc]
-              · ptrans (S k * b + r) + S k * (y * (r + k * b))
-                · pcongr
-                  · pring
-                  · prefl
-                · ptrans (S k * b + S k * (y * (r + k * b))) + r
-                  · pexact add_right_comm[S k * b, r, S k * (y * (r + k * b))]
-                  · prw [left_distrib]
-            · prw [hk]
+      papply remainder_adjust_eq[b, d, m, r, x, y, r + k * b]
+      · pexact he
+      · ptrans S k * b + r
+        · pring
+        · prw [hk]
 
 fol_theorem remainderPrefix_succ_add_mul (p : Nat) : PA ⊢
     ∀ c k b d t r, remainderPrefix (p := ${p})(c, k, b) →

@@ -704,19 +704,10 @@ theorem equalPremises_consequent : ∀ L n xs ys A,
   intro L n xs ys A
   let step := fun i B => imp
     (equal L (Tuple.get n xs (n - S i)) (Tuple.get n ys (n - S i))) B
-  have peel : ∀ i B, unpairRight (arg L (step i B)) = B := by
+  have hstep : ∀ i B, unpairRight (arg L (step i B)) = B := by
     intro i B
     exact eq_trans (eq_congr unpairRight (arg_imp L _ B)) (unpairRight_pair _ B)
-  have h : ∀ k, iter (fun B => unpairRight (arg L B)) k (primrec A step k) = A := by
-    intro k
-    induction k with j ih
-    · rfl
-    · exact eq_trans
-        (eq_symm (iter_succ_apply (fun B => unpairRight (arg L B)) j
-          (step j (primrec A step j))))
-        (eq_trans (eq_congr (iter (fun B => unpairRight (arg L B)) j)
-          (peel j (primrec A step j))) ih)
-  exact h n
+  exact iter_primrec_eq_base (fun B => unpairRight (arg L B)) step A hstep n
 
 theorem equalPremises_one : ∀ L x y A,
     equalPremises L 1 x y A = imp (equal L x y) A := fun L x y A => rfl

@@ -392,10 +392,11 @@ theorem antecedent_shift (L : Nat) (T : Nat → Nat) : ∀ s t d,
     FOL.Formula.subst (FOL.shiftSubst L 1) L
       (antecedent L T s t d) = antecedent L T s t (S d) := by
   intro s t d
-  rw [antecedent, antecedent, equation, equation,
-    FOL.Formula.subst_equal (FOL.shiftSubst L 1),
-    ← FOL.Term.shift_eq_subst_shiftSubst, ← FOL.Term.shift_eq_subst_shiftSubst,
-    FOL.Term.shift_shift, FOL.Term.shift_shift, add_one]
+  unfold antecedent equation
+  rw [FOL.Formula.subst_equal (FOL.shiftSubst L 1) L (FOL.Term.shift L d s) (FOL.Term.shift L d t),
+    ← FOL.Term.shift_eq_subst_shiftSubst L 1 (FOL.Term.shift L d s),
+    ← FOL.Term.shift_eq_subst_shiftSubst L 1 (FOL.Term.shift L d t),
+    FOL.Term.shift_shift L 1 d s, FOL.Term.shift_shift L 1 d t, add_one d]
 
 def universalRecord (L : Nat) (T : Nat → Nat) : Nat → Nat → Nat := fun e r =>
   pack (FOL.Formula.all (lhs r)) (FOL.Formula.all (rhs r))
