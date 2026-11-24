@@ -149,13 +149,7 @@ theorem isValid_node : ∀ e x y p q,
     Sequence.rget_generate _ q (node e x y p q) (childRight_lt_node e x y p q)]
   rfl
 
-theorem ite_isBool : ∀ c x y, IsBool x → IsBool y → IsBool (ite c x y) := by
-  intro c x y hx hy
-  by_cases h : c = 0
-  · rw [h]
-    exact hy
-  · rw [ite_of_ne_zero c x y h]
-    exact hx
+theorem ite_isBool : ∀ c x y, IsBool x → IsBool y → IsBool (ite c x y) := ite_bool
 
 theorem checkNode_bool : ∀ e x y p q hp hq, IsBool (checkNode e x y p q hp hq) := by
   intro e x y p q hp hq
@@ -224,23 +218,25 @@ theorem evaluates_succ : ∀ x,
   repeat rw [eqb_self]
   rfl
 
+theorem checkNode_left : ∀ x y hp hq,
+    checkNode Code.left x y 0 0 hp hq = isPos (eqb y (unpairLeft x)) :=
+  fun x y hp hq => rfl
+
 theorem evaluates_left : ∀ x,
     Evaluates Code.left x (unpairLeft x) (node Code.left x (unpairLeft x) 0 0) := by
   intro x
   apply evaluates_node
-  rw [Code.left, checkNode]
-  change isPos (eqb (unpairLeft x) (unpairLeft x)) = 1
-  repeat rw [eqb_self]
-  rfl
+  rw [checkNode_left, eqb_self, isPos_succ]
+
+theorem checkNode_right : ∀ x y hp hq,
+    checkNode Code.right x y 0 0 hp hq = isPos (eqb y (unpairRight x)) :=
+  fun x y hp hq => rfl
 
 theorem evaluates_right : ∀ x,
     Evaluates Code.right x (unpairRight x) (node Code.right x (unpairRight x) 0 0) := by
   intro x
   apply evaluates_node
-  rw [Code.right, checkNode]
-  change isPos (eqb (unpairRight x) (unpairRight x)) = 1
-  repeat rw [eqb_self]
-  rfl
+  rw [checkNode_right, eqb_self, isPos_succ]
 
 theorem evaluates_pair : ∀ f g x y z p q,
     Evaluates f x y p → Evaluates g x z q →
@@ -452,9 +448,14 @@ theorem checkNode_pair : ∀ f g x y p q hp hq,
         (band (eqb (program q) g) (band (eqb (input q) x)
           (eqb y (_root_.pair (output p) (output q))))))) := by
   intro f g x y p q hp hq
-  rw [Code.pair, checkNode, Code.tag_binary 0 f g rfl, Code.args_binary 0 f g rfl,
+  have select : ∀ a b c d e rest,
+      ite (eqb (4 + 0) 0) a (ite (eqb (4 + 0) 1) b
+        (ite (eqb (4 + 0) 2) c (ite (eqb (4 + 0) 3) d
+        (ite (eqb (4 + 0) 4) e rest)))) = e :=
+    fun a b c d e rest => rfl
+  unfold Code.pair checkNode
+  rw [Code.tag_binary 0 f g rfl, select, Code.args_binary 0 f g rfl,
     unpairLeft_pair, unpairRight_pair]
-  rfl
 
 theorem evaluates_pair_elim : ∀ f g x y t, Evaluates (Code.pair f g) x y t →
     Evaluates f x (output (childLeft t)) (childLeft t) ∧
@@ -481,9 +482,14 @@ theorem checkNode_comp : ∀ f g x y p q hp hq,
         (band (eqb (program p) g) (band (eqb (program q) f)
           (eqb (input q) (output p))))) := by
   intro f g x y p q hp hq
-  rw [Code.comp, checkNode, Code.tag_binary 1 f g rfl, Code.args_binary 1 f g rfl,
+  have select : ∀ a b c d e f rest,
+      ite (eqb (4 + 1) 0) a (ite (eqb (4 + 1) 1) b
+        (ite (eqb (4 + 1) 2) c (ite (eqb (4 + 1) 3) d
+        (ite (eqb (4 + 1) 4) e (ite (eqb (4 + 1) 5) f rest))))) = f :=
+    fun a b c d e f rest => rfl
+  unfold Code.comp checkNode
+  rw [Code.tag_binary 1 f g rfl, select, Code.args_binary 1 f g rfl,
     unpairLeft_pair, unpairRight_pair]
-  rfl
 
 theorem evaluates_comp_elim : ∀ f g x y t, Evaluates (Code.comp f g) x y t →
     Evaluates g x (output (childLeft t)) (childLeft t) ∧

@@ -14,6 +14,26 @@ public import LeanPRA.Metatheory.Core.Judgement.Syntax
 
 namespace LeanPRA.Core
 
+/-- Expose the function of an application after ruling out the zero recursion equation. -/
+public theorem exposeTerm_app_eq {n changed f a}
+    (notZero : ¬ ∃ b s, f = .primrec b s ∧ a = .zero) :
+    exposeTerm (n + 1) changed (.app f a) = (do
+      let computed ← exposeTerm n false f
+      match computed.getD f with
+      | .lam _ body => exposeTerm n true (body.subst0 a)
+      | _ =>
+        match computed with
+        | some g => pure (some (.app g a))
+        | none => pure (if changed then some (.app f a) else none)) := by
+  cases f <;> cases a <;> first
+  | exact False.elim (notZero ⟨_, _, rfl, rfl⟩)
+  | simp only [exposeTerm, Reduced.beforeChange, Reduced.term, Reduced.done]
+    congr 1
+    funext g
+    cases g with
+    | none => rfl
+    | some v => cases v <;> rfl
+
 /-- Adding an expression diagnostic preserves exactly the successful results. -/
 @[simp] public theorem CheckResult.withSite_eq_ok {r : CheckResult α} {c s a} :
     r.withSite c s = .ok a ↔ r = .ok a := by

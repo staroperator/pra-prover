@@ -83,8 +83,8 @@ theorem isProof_mono (L : Nat) (T U : Nat → Nat) :
     by_cases h0 : Proof.rule p = 0
     · rw [h0] at hp
       rw [h0]
-      change ite (eqb (Proof.premises p) 0) (isLogicalAxiom L (Proof.conclusion p)) 0 = 1
-      have hp : ite (eqb (Proof.premises p) 0) (isLogicalAxiom L (Proof.conclusion p)) 0 = 1 := hp
+      rw [eqb_self 0, ite_succ] at hp
+      rw [eqb_self 0, ite_succ]
       exact hp
     rw [and_right (eqb_eq_zero (Proof.rule p) 0) h0] at hp
     rw [and_right (eqb_eq_zero (Proof.rule p) 0) h0]
@@ -105,10 +105,8 @@ theorem isProof_mono (L : Nat) (T U : Nat → Nat) :
       rw [h2]
       let a := unpairLeft (Proof.premises p)
       let b := unpairRight (Proof.premises p)
-      let guard := eqb (Proof.conclusion a)
-        (Formula.imp (Proof.conclusion b) (Proof.conclusion p))
-      have hp : band (band (isProof L T a) (isProof L T b)) guard = 1 := hp
-      change band (band (isProof L U a) (isProof L U b)) guard = 1
+      rw [ite_zero, ite_zero, eqb_self 2, ite_succ] at hp
+      rw [ite_zero, ite_zero, eqb_self 2, ite_succ]
       have parts := and_left (band_eq_one _ _) hp
       have both := and_left (band_eq_one _ _)
         (and_right (bool_eq_one _ (band_bool _ _)) (and_left parts))

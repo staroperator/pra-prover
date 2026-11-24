@@ -34,6 +34,11 @@ subtrees within each record to reduce memory use. It also reuses decoded spans a
 of their bytes and checking their depth. Every proof is checked with the same typing and conversion
 rules at either setting.
 
+During conversion, the checker opens the heavier definition first when both heads have
+different weights. A definition's weight is one more than the highest weight of a
+definition referenced in its body, or one if it has no references. When two heads have
+the same weight, the checker opens both in the same step.
+
 `lake build` exports every module containing PRA declarations in the root and Library import
 closures. Modules without PRA declarations produce no files. For an exported module such as
 `LeanPRA.Library.Nat.Defs`, the output directory contains:

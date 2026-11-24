@@ -165,6 +165,9 @@ private def solveTerm : Nat → Nat → Environment → Context → List Nat →
     let left ← liftResult (resolveTerm state locals depth left)
     let right ← liftResult (resolveTerm state locals depth right)
     if left == right then return true
+    if left.isComplete && right.isComplete then
+      checked (Bridge.equalTerms state.projection depth env arity left right)
+      return true
     let mut assignmentFailure := none
     if let .mvar i := left then
       match ← tryAssignment (assignTerm depth env ctx locals i right) with
@@ -259,9 +262,7 @@ private def solveTerm : Nat → Nat → Environment → Context → List Nat →
         if solved then modify fun s => { s with usedHeuristic := true }
         return solved
     | _, _ => pure ()
-    if !(termMetas left ++ termMetas right).isEmpty then return false
-    checked (Bridge.equalTerms (← get).projection depth env arity left right)
-    return true
+    return false
 
 private def solvePredicate : Nat → Nat → Environment → Context → List Nat → Nat →
     Predicate → Predicate → M Bool
@@ -271,6 +272,9 @@ private def solvePredicate : Nat → Nat → Environment → Context → List Na
     let left ← liftResult (resolvePredicate state locals depth left)
     let right ← liftResult (resolvePredicate state locals depth right)
     if left == right then return true
+    if left.isComplete && right.isComplete then
+      checked (Bridge.equalPredicates state.projection depth env arity left right)
+      return true
     let mut assignmentFailure := none
     if let .mvar i := left then
       match ← tryAssignment (assignPredicate depth env ctx locals i right) with
@@ -339,10 +343,7 @@ private def solvePredicate : Nat → Nat → Environment → Context → List Na
     if let some a := formulaHead left then
       if let some b := formulaHead right then
         if a != b then throw (.invalid "incompatible formula shapes")
-    let a := predicateMetas left; let b := predicateMetas right
-    if !(a.1 ++ b.1).isEmpty || !(a.2 ++ b.2).isEmpty then return false
-    checked (Bridge.equalPredicates (← get).projection depth env arity left right)
-    return true
+    return false
 
 end
 

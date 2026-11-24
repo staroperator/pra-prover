@@ -45,7 +45,7 @@ theorem isProof_cases (L : Nat) (T : Nat → Nat) : ∀ p, isProof L T p = 1 →
   rw [node] at hp
   by_cases h0 : Proof.rule p = 0
   · rw [h0] at hp
-    have hp : ite (eqb (Proof.premises p) 0) (isLogicalAxiom L (Proof.conclusion p)) 0 = 1 := hp
+    rw [eqb_self 0, ite_succ] at hp
     by_cases hc : Proof.premises p = 0
     · rw [hc] at hp
       have hax : isLogicalAxiom L (Proof.conclusion p) = 1 := hp
@@ -84,9 +84,7 @@ theorem isProof_cases (L : Nat) (T : Nat → Nat) : ∀ p, isProof L T p = 1 →
   · rw [h2] at hp
     let q := unpairLeft (Proof.premises p)
     let r := unpairRight (Proof.premises p)
-    have hp : band (band (isProof L T q) (isProof L T r))
-        (eqb (Proof.conclusion q) (Formula.imp (Proof.conclusion r) (Proof.conclusion p))) = 1 :=
-      hp
+    rw [ite_zero, ite_zero, eqb_self 2, ite_succ] at hp
     have parts := and_left (band_eq_one _ _) hp
     have both := and_left (band_eq_one _ _)
       (and_right (bool_eq_one _ (band_bool _ _)) (and_left parts))

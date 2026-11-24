@@ -38,6 +38,12 @@ theorem ite_of_ne_zero : ∀ c x y, ¬ c = 0 → ite c x y = x := by
   · intro h; exact false_elim (h rfl)
   · intro h; rfl
 
+theorem ite_bool : ∀ c x y, IsBool x → IsBool y → IsBool (ite c x y) := by
+  intro c x y hx hy
+  induction c with n ih
+  · exact hy
+  · exact hx
+
 theorem ite_self : ∀ c x, ite c x x = x := by
   intro c x
   induction c with k ih

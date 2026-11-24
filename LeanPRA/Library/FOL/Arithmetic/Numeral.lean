@@ -30,16 +30,9 @@ namespace Arithmetic
 fol_def num over Arithmetic (n : Nat) : term :=
   ${primrec (FOL.Term.const language 0) (fun _ t => FOL.Term.app language 0 t) n}
 
-theorem num_zero : num 0 = FOL.Term.const language 0 := by
-  have h : ∀ n, num n =
-      primrec (FOL.Term.const language 0) (fun _ t => FOL.Term.app language 0 t) n :=
-    fun n => rfl
-  exact eq_trans (h 0)
-    (primrec_zero (fun _ t => FOL.Term.app language 0 t) (FOL.Term.const language 0))
+theorem num_zero : num 0 = FOL.Term.const language 0 := rfl
 
-theorem num_succ : ∀ n, num («S» n) = FOL.Term.app language 0 (num n) := by
-  intro n
-  exact primrec_succ (fun _ t => FOL.Term.app language 0 t) (FOL.Term.const language 0) n
+theorem num_succ : ∀ n, num («S» n) = FOL.Term.app language 0 (num n) := fun n => rfl
 
 theorem bound_num : ∀ n, FOL.Term.bound language (num n) = 0 := by
   have hc : FOL.Language.IsConstant language 0 := by

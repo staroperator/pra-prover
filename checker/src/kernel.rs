@@ -325,6 +325,7 @@ struct Decl {
     ps: Vec<(u64, bool)>,
     sig: (u64, bool),
     value: R,
+    weight: usize,
 }
 
 #[derive(Default)]
@@ -342,6 +343,47 @@ fn signature(x: &R) -> (u64, bool) {
 }
 
 impl Kernel {
+    fn definition_weight(&self, body: &R) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        let mut pending = vec![body];
+        let mut weight = 0;
+        while let Some(node) = pending.pop() {
+            if !seen.insert(Rc::as_ptr(node)) {
+                continue;
+            }
+            if let X::L(xs) = node.as_ref() {
+                if matches!(op(node), "tdef" | "pdef") {
+                    weight = weight.max(self.env[&fields(node)[0]].weight);
+                }
+                pending.extend(xs);
+            }
+        }
+        weight + 1
+    }
+
+    fn head_weight(&self, mut x: &R) -> Option<usize> {
+        while matches!(op(x), "tapp" | "papp") {
+            x = &fields(x)[0];
+        }
+        if matches!(op(x), "tdef" | "pdef") {
+            self.env.get(&fields(x)[0]).map(|decl| decl.weight)
+        } else {
+            None
+        }
+    }
+
+    fn unfold_pair(&self, x: &R, y: &R) -> Res<(R, R)> {
+        if let (Some(a), Some(b)) = (self.head_weight(x), self.head_weight(y)) {
+            if a > b {
+                return Ok((self.unfold(x)?, y.clone()));
+            }
+            if b > a {
+                return Ok((x.clone(), self.unfold(y)?));
+            }
+        }
+        Ok((self.unfold(x)?, self.unfold(y)?))
+    }
+
     fn get(&self, n: &R, kind: &str) -> Res<&Decl> {
         let d = self
             .env
@@ -695,8 +737,7 @@ impl Kernel {
         if l != *x || r != *y {
             return self.eq(&l, &r, p, 0, d);
         }
-        let l = self.unfold(x)?;
-        let r = self.unfold(y)?;
+        let (l, r) = self.unfold_pair(x, y)?;
         if l != *x || r != *y {
             return self.eq(&l, &r, p, 0, d);
         }
@@ -922,6 +963,11 @@ impl Kernel {
             }
             _ => return Err("declaration constructor".into()),
         };
+        let weight = if op(x) == "theorem" {
+            0
+        } else {
+            self.definition_weight(&value)
+        };
         self.env.insert(
             a[0].clone(),
             Decl {
@@ -930,6 +976,7 @@ impl Kernel {
                 ps: c.ps,
                 sig,
                 value,
+                weight,
             },
         );
         self.admitted += 1;

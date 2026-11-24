@@ -280,18 +280,6 @@ private theorem HeadBatch.next {step : α → CheckResult (Option α)} {changed 
   cases batch with
   | some steps _ => exact .some (.next run steps) (by omega)
 
-private theorem exposeTerm_app_eq {n changed f a}
-    (notZero : ¬ ∃ b s, f = .primrec b s ∧ a = .zero) :
-    exposeTerm (n + 1) changed (.app f a) = (do
-      let computed ← exposeTerm n false f
-      match computed.getD f with
-      | .lam _ body => exposeTerm n true (body.subst0 a)
-      | _ =>
-        match computed with
-        | some g => pure (some (.app g a))
-        | none => pure (if changed then some (.app f a) else none)) := by
-  cases f <;> cases a <;> simp_all [exposeTerm] <;> rfl
-
 public theorem exposeTerm_batch {n changed E a result}
     (run : exposeTerm n changed a = .ok result) : HeadBatch (termStep E) changed a result := by
   induction n generalizing changed a result with

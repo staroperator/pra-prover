@@ -76,8 +76,8 @@ public theorem exposeTerm_sound {n changed E Ξ Γ t u k}
           cases u with
           | none => exact .refl typed
           | some u => exact (TermEq.primrecZero hb hs).trans eq
-        | _ => exact application typed run
-      | _ => exact application typed run
+        | _ => exact application typed (by rwa [exposeTerm_app_eq (by simp)] at run)
+      | _ => exact application typed (by rwa [exposeTerm_app_eq (by simp)] at run)
     | _ =>
       simp only [exposeTerm, pure, Except.pure, Except.ok.injEq] at run
       split at run <;> subst u <;> exact .refl typed

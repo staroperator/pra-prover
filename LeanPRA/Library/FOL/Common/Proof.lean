@@ -301,35 +301,12 @@ theorem isProof_node_eq (L : Nat) (T : Nat → Nat) : ∀ k A children,
 
 theorem isProof_bool (L : Nat) (T : Nat → Nat) : ∀ prf, IsBool (isProof L T prf) := by
   intro prf
-  by_cases hz : prf = 0
-  · rw [hz, isProof_zero L T]
-    left; rfl
-  rw [isProof, Proof.rec, covrec, ite_of_ne_zero prf _ _ hz]
-  by_cases h₀ : Proof.rule prf = 0
-  · rw [h₀]
-    by_cases hc : Proof.premises prf = 0
-    · rw [hc]
-      exact isLogicalAxiom_bool L (Proof.conclusion prf)
-    · rw [and_right (eqb_eq_zero (Proof.premises prf) 0) hc]
-      left; rfl
-  rw [and_right (eqb_eq_zero (Proof.rule prf) 0) h₀]
-  by_cases h₁ : Proof.rule prf = 1
-  · rw [h₁]
-    by_cases hc : Proof.premises prf = 0
-    · rw [hc]
-      exact eqb_bool _ _
-    · rw [and_right (eqb_eq_zero (Proof.premises prf) 0) hc]
-      left; rfl
-  rw [and_right (eqb_eq_zero (Proof.rule prf) 1) h₁]
-  by_cases h₂ : Proof.rule prf = 2
-  · rw [h₂]
-    exact band_bool _ _
-  rw [and_right (eqb_eq_zero (Proof.rule prf) 2) h₂]
-  by_cases h₃ : Proof.rule prf = 3
-  · rw [h₃]
-    exact band_bool _ _
-  rw [and_right (eqb_eq_zero (Proof.rule prf) 3) h₃]
-  left; rfl
+  unfold isProof Proof.rec covrec
+  have hz : IsBool 0 := by left; rfl
+  exact ite_bool _ _ _ (ite_bool _ _ _
+    (ite_bool _ _ _ (isLogicalAxiom_bool L _) hz)
+    (ite_bool _ _ _ (ite_bool _ _ _ (eqb_bool _ _) hz)
+      (ite_bool _ _ _ (band_bool _ _) (ite_bool _ _ _ (band_bool _ _) hz)))) hz
 
 /-- `IsProofOf L T A p` states that proof code `p` is accepted in language `L` over theory `T`
 and has conclusion formula code `A`. Its two numerical equations form a quantifier-free predicate,

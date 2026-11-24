@@ -25,33 +25,93 @@ returns `exhausted` during normalization and leaves the expression unchanged dur
 
 namespace LeanPRA.Core
 
-mutual
+/-- Head contractions, including the position of a reduction inside an application. -/
+inductive HeadReduction where
+  | refl
+  | beta
+  | letTerm
+  | unfold
+  | recZero
+  | recSucc
+  | function (steps : HeadReduction)
+  | counter (steps : HeadReduction)
+  | trans (first second : HeadReduction)
+  deriving Inhabited, Repr
 
-/-- Reduce a checked term to weak head normal form. -/
-def whnfTerm : Nat → Environment → Term → CheckResult Term
-  | 0, _, _ => exhausted
-  | maxDepth + 1, environment, expression => do
+namespace HeadReduction
+
+/-- Join successive contractions, dropping empty paths. -/
+def append : HeadReduction → HeadReduction → HeadReduction
+  | .refl, q => q
+  | p, .refl => p
+  | p, q => .trans p q
+
+/-- Lift contractions through one enclosing operation. -/
+def lift (atPosition : HeadReduction → HeadReduction) : HeadReduction → HeadReduction
+  | .refl => .refl
+  | p => atPosition p
+
+end HeadReduction
+
+abbrev Reduced : Bool → Type
+  | false => Term
+  | true => Term × HeadReduction
+
+namespace Reduced
+
+abbrev term : (record : Bool) → Reduced record → Term
+  | false, t => t
+  | true, r => r.1
+
+abbrev done : (record : Bool) → Term → Reduced record
+  | false, t => t
+  | true, t => (t, .refl)
+
+abbrev before : (record : Bool) → (Unit → HeadReduction) →
+    CheckResult (Reduced record) → CheckResult (Reduced record)
+  | false, _, x => x
+  | true, step, x => x.map fun (t, h) => (t, (step ()).append h)
+
+abbrev steps : (record : Bool) → Reduced record → HeadReduction
+  | false, _ => .refl
+  | true, r => r.2
+
+end Reduced
+
+/-- Reduce to weak head normal form, optionally recording the contractions in order. -/
+@[specialize record] def whnfTerm (depth : Nat) (env : Environment) (expression : Term)
+    (record : Bool := false) :
+    CheckResult (Reduced record) := match depth with
+  | 0 => exhausted
+  | depth + 1 => do
+    let again := fun t => whnfTerm depth env t record
+    let before := Reduced.before record
     match expression with
     | .definition name functions =>
-      match environment.lookup name with
-      | some (.function declaration) =>
-        whnfTerm maxDepth environment (declaration.body.instantiate functions)
-      | _ => referenceError environment name .function
-    | .letE _ value body => whnfTerm maxDepth environment (body.subst0 value)
-    | .app function argument =>
-      let function ← whnfTerm maxDepth environment function
-      match function with
-      | .lam _ body => whnfTerm maxDepth environment (body.subst0 argument)
-      | .primrec base step =>
-        let argument ← whnfTerm maxDepth environment argument
-        match argument with
-        | .zero => whnfTerm maxDepth environment base
-        | .app .succ predecessor =>
-          whnfTerm maxDepth environment
-            (.app (.app step predecessor) (.app (.primrec base step) predecessor))
-        | _ => pure (.app (.primrec base step) argument)
-      | _ => pure (.app function argument)
-    | _ => pure expression
+      match env.lookup name with
+      | some (.function d) => before (fun _ => .unfold) (again (d.body.instantiate functions))
+      | _ => referenceError env name .function
+    | .letE _ value body => before (fun _ => .letTerm) (again (body.subst0 value))
+    | .app f a =>
+      let fn ← again f
+      before (fun _ => (Reduced.steps record fn).lift .function) <| do
+        let function := Reduced.term record fn
+        match function with
+        | .lam _ body => before (fun _ => .beta) (again (body.subst0 a))
+        | .primrec base step =>
+          let arg ← again a
+          before (fun _ => (Reduced.steps record arg).lift .counter) <| do
+            let argument := Reduced.term record arg
+            match argument with
+            | .zero => before (fun _ => .recZero) (again base)
+            | .app .succ i =>
+              before (fun _ => .recSucc)
+                (again (.app (.app step i) (.app (.primrec base step) i)))
+            | _ => pure (Reduced.done record (.app (.primrec base step) argument))
+        | _ => pure (Reduced.done record (.app function a))
+    | _ => pure (Reduced.done record expression)
+
+mutual
 
 /-- Normalize a checked term at `arity` by eta-expanding and beta-reducing. -/
 def reduceTerm : Nat → Environment → Arity → Term → CheckResult Term

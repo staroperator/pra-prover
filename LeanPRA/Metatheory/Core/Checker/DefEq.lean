@@ -20,13 +20,70 @@ soundness also assumes independently typed endpoints in a common context.
 
 namespace LeanPRA.Core
 
-open Theory
+open Theory TermComparison
 
 private theorem and_ok (a b : CheckResult Bool) :
     (do if ← a then b else .ok false) = .ok true ↔ a = .ok true ∧ b = .ok true := by
   cases a with
   | error e => simp
   | ok v => cases v <;> simp
+
+private theorem unfold_by_weight_sound {order : Ordering}
+    {openHead : α → CheckResult (Option β)} {a b : α} {x y : Option β}
+    (run : unfoldByWeight order openHead a b = .ok (x, y)) :
+    (x = none ∨ openHead a = .ok x) ∧ (y = none ∨ openHead b = .ok y) := by
+  cases order <;> cases ha : openHead a <;> cases hb : openHead b <;>
+    simp_all [unfoldByWeight, bind, Except.bind, pure, Except.pure] <;> grind
+
+private theorem unfold_by_weight_progress {order : Ordering}
+    {openHead : α → CheckResult (Option β)} {a b : α} {x y : Option β}
+    (ha : openHead a = .ok x) (hb : openHead b = .ok y)
+    (hleft : order = .gt → x ≠ none) (hright : order = .lt → y ≠ none) :
+    ∃ u v, unfoldByWeight order openHead a b = .ok (u, v) ∧
+      (u = none ∨ openHead a = .ok u) ∧ (v = none ∨ openHead b = .ok v) ∧
+      ((u ≠ none ∨ v ≠ none) ↔ (x ≠ none ∨ y ≠ none)) := by
+  cases order with
+  | lt => exact ⟨none, y, by rw [unfoldByWeight, hb]; rfl, .inl rfl, .inr hb,
+      by simp [hright rfl]⟩
+  | eq => exact ⟨x, y, by simp [unfoldByWeight, ha, hb, bind, Except.bind]; rfl,
+      .inr ha, .inr hb, Iff.rfl⟩
+  | gt => exact ⟨x, none, by rw [unfoldByWeight, ha]; rfl, .inr ha, .inl rfl,
+      by simp [hleft rfl]⟩
+
+private theorem term_unfold_none {E : Environment} (a : Term)
+    (h : unfoldTermHead E a = .ok none) : termHeadName a = none := by
+  cases a with
+  | app f a =>
+    cases h' : unfoldTermHead E f with
+    | error e => simp [unfoldTermHead, h', Except.map] at h
+    | ok x =>
+      cases x with
+      | none => exact term_unfold_none f h'
+      | some x => simp [unfoldTermHead, h', Except.map] at h
+  | definition n args =>
+    cases hd : E[n]? with
+    | none => simp [unfoldTermHead, hd, referenceError, Environment.lookup, fail] at h
+    | some d => cases d <;>
+        simp [unfoldTermHead, hd, Reduced.beforeChange, referenceError, Environment.lookup,
+          fail, pure, Except.pure] at h
+  | _ => rfl
+
+private theorem predicate_unfold_none {E : Environment} (a : Predicate)
+    (h : unfoldPredicateHead E a = .ok none) : predicateHeadName a = none := by
+  cases a with
+  | app f a =>
+    cases h' : unfoldPredicateHead E f with
+    | error e => simp [unfoldPredicateHead, h', Except.map] at h
+    | ok x =>
+      cases x with
+      | none => exact predicate_unfold_none f h'
+      | some x => simp [unfoldPredicateHead, h', Except.map] at h
+  | definition n fs ps =>
+    cases hd : E[n]? with
+    | none => simp [unfoldPredicateHead, hd, referenceError, Environment.lookup, fail] at h
+    | some d => cases d <;>
+        simp [unfoldPredicateHead, hd, referenceError, Environment.lookup, fail, pure, Except.pure] at h
+  | _ => rfl
 
 private theorem function_arguments_sound {E Ξ Γ} {compare : Arity → Term → Term → CheckResult Bool}
     (sound : ∀ {Γ a b k}, TermTyping E Ξ Γ a k → TermTyping E Ξ Γ b k →
@@ -99,17 +156,14 @@ private def termFallback (n : Nat) (E : Environment) (k : Arity) (a b : Term)
     let y ← exposeTerm (n + 1) false b
     if x.isSome || y.isSome then
       return ← defEqTerm n E 0 (x.getD a) (y.getD b)
-    let x ← unfoldTermHead E a
-    let y ← unfoldTermHead E b
+    let (x, y) ← unfoldByWeight (termUnfoldingOrder E a b) (unfoldTermHead E ·) a b
     if x.isSome || y.isSome then
       return ← defEqTerm n E 0 (x.getD a) (y.getD b)
     match a, b with
     | .app (.primrec ..) _, .app (.primrec ..) _ =>
       let x ← exposeRecursor (n + 1) E a
       let y ← exposeRecursor (n + 1) E b
-      match x, y with
-      | none, none => trial
-      | _, _ => defEqTerm n E 0 (x.getD a) (y.getD b)
+      if x.isSome || y.isSome then defEqTerm n E 0 (x.getD a) (y.getD b) else trial
     | .app (.primrec ..) _, _ =>
       let v ← whnfTerm (n + 1) E a
       if v == a then return ← trial
@@ -146,11 +200,18 @@ private theorem term_fallback_sound {n E Ξ Γ a b k trial} (valid : Environment
         exact ex.trans ((sound ex.regularity.2 ey.regularity.2 run).trans ey.symm)
       next =>
         simp only [CheckResult.bind_eq_ok] at run
-        obtain ⟨x, hx, y, hy, run⟩ := run
+        obtain ⟨⟨x, y⟩, hu, run⟩ := run
         split at run
         next =>
-          have ex := unfoldTermHead_sound valid left hx
-          have ey := unfoldTermHead_sound valid right hy
+          obtain ⟨hx, hy⟩ := unfold_by_weight_sound hu
+          have ex : TermEq E Ξ Γ a (x.getD a) 0 := by
+            rcases hx with rfl | hx
+            · exact .refl left
+            · exact unfoldTermHead_sound valid left hx
+          have ey : TermEq E Ξ Γ b (y.getD b) 0 := by
+            rcases hy with rfl | hy
+            · exact .refl right
+            · exact unfoldTermHead_sound valid right hy
           exact ex.trans ((sound ex.regularity.2 ey.regularity.2 run).trans ey.symm)
         next =>
           split at run
@@ -188,11 +249,11 @@ private theorem term_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
       compareTermApplications n E k a b = .ok true → TermEq E Ξ Γ a b k) := by
   induction n with
   | zero =>
-    constructor <;> intros <;> simp_all [defEqTerm, compareTermApplications, exhausted, fail]
+    constructor <;> intros <;> simp_all [defEqTerm, compareTermApplications, compareTerm, compareHead, exhausted, fail]
   | succ n ih =>
     constructor
     · intro Γ a b k left right run
-      simp only [defEqTerm] at run
+      simp only [defEqTerm, compareTerm] at run
       split at run
       next h => have : a = b := eq_of_beq h; subst b; exact .refl left
       next =>
@@ -220,7 +281,7 @@ private theorem term_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
           exact term_fallback_sound valid ih.1 left right
             (term_trial_sound ih.1 ih.2 left right) run
     · intro Γ a b k left right run
-      simp only [compareTermApplications] at run
+      simp only [compareTermApplications, compareHead] at run
       split at run
       next h => have : a = b := eq_of_beq h; subst b; exact .refl left
       next =>
@@ -232,9 +293,6 @@ private theorem term_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
           have eq := eq_of_beq (Except.ok.inj run)
           cases eq; exact .refl left
         next => exact term_trial_sound ih.1 ih.2 left right run
-        next => exact term_trial_sound ih.1 ih.2 left right run
-        next => exact term_trial_sound ih.1 ih.2 left right run
-        next => cases (show false = true from Except.ok.inj run)
 
 /-- Successful numerical comparison gives typed equality at the supplied arity. -/
 public theorem defEqTerm_sound {n E Ξ Γ a b k} (valid : EnvironmentWF E)
@@ -318,8 +376,7 @@ private def predicateFallback (n : Nat) (E : Environment) (k : Arity) (a b : Pre
     let y ← exposePredicate (n + 1) false b
     if x.isSome || y.isSome then
       return ← defEqPredicate n E 0 (x.getD a) (y.getD b)
-    let x ← unfoldPredicateHead E a
-    let y ← unfoldPredicateHead E b
+    let (x, y) ← unfoldByWeight (predicateUnfoldingOrder E a b) (unfoldPredicateHead E) a b
     match x, y with
     | none, none => trial
     | _, _ => defEqPredicate n E 0 (x.getD a) (y.getD b)
@@ -351,13 +408,20 @@ private theorem predicate_fallback_sound {n E Ξ Γ a b k s trial} (valid : Envi
         exact ex.trans ((sound (ex.regularity valid).2 (ey.regularity valid).2 run).trans ey.symm)
       next =>
         simp only [CheckResult.bind_eq_ok] at run
-        obtain ⟨x, hx, y, hy, run⟩ := run
+        obtain ⟨⟨x, y⟩, hu, run⟩ := run
+        obtain ⟨hx, hy⟩ := unfold_by_weight_sound hu
+        have ex : PredicateEq E Ξ Γ a (x.getD a) ⟨0, s⟩ := by
+          rcases hx with rfl | hx
+          · exact .refl left
+          · exact unfoldPredicateHead_sound valid left hx
+        have ey : PredicateEq E Ξ Γ b (y.getD b) ⟨0, s⟩ := by
+          rcases hy with rfl | hy
+          · exact .refl right
+          · exact unfoldPredicateHead_sound valid right hy
         cases x <;> cases y
         all_goals first
           | exact trialSound run
-          | have ex := unfoldPredicateHead_sound valid left hx
-            have ey := unfoldPredicateHead_sound valid right hy
-            exact ex.trans
+          | exact ex.trans
               ((sound (ex.regularity valid).2 (ey.regularity valid).2 run).trans ey.symm)
 
 private theorem predicate_sound (n : Nat) {E Ξ} (valid : EnvironmentWF E) :
@@ -485,20 +549,27 @@ private theorem term_batches_complete {n m E Ξ Γ a b x y}
 
 private theorem term_unfoldings_complete {E Ξ Γ a b x y} (valid : EnvironmentWF E)
     (left : TermTyping E Ξ Γ a 0) (right : TermTyping E Ξ Γ b 0)
-    (hx : unfoldTermHead E a = .ok x) (hy : unfoldTermHead E b = .ok y)
+    (hx : x = none ∨ unfoldTermHead E a = .ok x)
+    (hy : y = none ∨ unfoldTermHead E b = .ok y)
     (moves : x ≠ none ∨ y ≠ none)
     (next : ∀ {i j u v}, HeadSteps (termStep E) i a u → HeadSteps (termStep E) j b v →
       0 < i + j → TermTyping E Ξ Γ u 0 → TermTyping E Ξ Γ v 0 →
       Eventually (fun n => defEqTerm n E 0 u v = .ok true)) :
     Eventually (fun n => defEqTerm n E 0 (x.getD a) (y.getD b) = .ok true) := by
-  have batch {t out} (run : unfoldTermHead E t = .ok out) :
+  have batch {t out} (run : out = none ∨ unfoldTermHead E t = .ok out) :
       HeadBatch (termStep E) false t out := by
     cases out with
     | none => exact .none
-    | some out => exact .some (.next (unfoldTermHead_step run) .refl) (by omega)
+    | some out =>
+      exact .some (.next (unfoldTermHead_step (run.resolve_left (by simp))) .refl) (by omega)
   obtain ⟨i, j, si, sj, pos⟩ := HeadBatch.progress (batch hx) (batch hy) moves
-  exact next si sj pos (unfoldTermHead_sound valid left hx).regularity.2
-    (unfoldTermHead_sound valid right hy).regularity.2
+  apply next si sj pos
+  · rcases hx with rfl | hx
+    · exact left
+    · exact (unfoldTermHead_sound valid left hx).regularity.2
+  · rcases hy with rfl | hy
+    · exact right
+    · exact (unfoldTermHead_sound valid right hy).regularity.2
 
 private def termCompute (n : Nat) (E : Environment) (a b : Term)
     (trial : CheckResult Bool) : CheckResult Bool := do
@@ -506,9 +577,7 @@ private def termCompute (n : Nat) (E : Environment) (a b : Term)
   | .app (.primrec ..) _, .app (.primrec ..) _ =>
     let x ← exposeRecursor (n + 1) E a
     let y ← exposeRecursor (n + 1) E b
-    match x, y with
-    | none, none => trial
-    | _, _ => defEqTerm n E 0 (x.getD a) (y.getD b)
+    if x.isSome || y.isSome then defEqTerm n E 0 (x.getD a) (y.getD b) else trial
   | .app (.primrec ..) _, _ =>
     let v ← whnfTerm (n + 1) E a
     if v == a then return ← trial
@@ -623,8 +692,18 @@ private theorem term_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
     subst x; subst y
     obtain ⟨x, ux⟩ := unfoldTermHead_terminates left
     obtain ⟨y, uy⟩ := unfoldTermHead_terminates right
+    obtain ⟨u, v, scheduled, hu, hv, progress⟩ := unfold_by_weight_progress
+      (openHead := fun t => unfoldTermHead E t) (a := a) (b := b) ux uy
+      (order := termUnfoldingOrder E a b)
+      (by intro ord eq; subst x; simp [termUnfoldingOrder, term_unfold_none a ux, compareHeadWeights]
+          at ord)
+      (by
+        intro ord eq; subst y
+        cases ha : termHeadName a <;>
+          simp [termUnfoldingOrder, ha, term_unfold_none b uy, compareHeadWeights] at ord)
     by_cases moves : x ≠ none ∨ y ≠ none
-    · have tail := term_unfoldings_complete valid left right ux uy moves next
+    · have moved := progress.mpr moves
+      have tail := term_unfoldings_complete valid left right hu hv moved next
       refine eventually_mono ?_ (eventually_and (eventually_succ ⟨ix, hx⟩)
         (eventually_and (eventually_succ ⟨iy, hy⟩) tail))
       intro n h
@@ -632,12 +711,14 @@ private theorem term_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
       split
       next => rfl
       next =>
-        simp only [h.1, h.2.1, ux, uy, bind, Except.bind, Option.isSome_none,
+        simp only [h.1, h.2.1, scheduled, bind, Except.bind, Option.isSome_none,
           Bool.or_false, Bool.false_eq_true, ↓reduceIte]
-        cases x <;> cases y <;> first | exact h.2.2 | simp at moves
+        cases u <;> cases v <;> first | exact h.2.2 | simp at moved
     · have hx0 : x = none := Classical.byContradiction (fun h => moves (.inl h))
       have hy0 : y = none := Classical.byContradiction (fun h => moves (.inr h))
       subst x; subst y
+      have noMove : u = none ∧ v = none := by simpa using progress
+      obtain ⟨rfl, rfl⟩ := noMove
       have tail := term_compute_complete valid left right
         (term_ready left (hx ix (by omega)) ux) (term_ready right (hy iy (by omega)) uy)
         moving next trial
@@ -648,7 +729,7 @@ private theorem term_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF E)
       split
       next => rfl
       next =>
-        simpa only [termCompute, h.1, h.2.1, ux, uy, bind, Except.bind, Option.isSome_none,
+        simpa only [termCompute, h.1, h.2.1, scheduled, bind, Except.bind, Option.isSome_none,
           Bool.or_false, Bool.false_eq_true, ↓reduceIte] using h.2.2
 
 private theorem term_trace_complete {E Ξ Γ a b A B} (valid : EnvironmentWF E)
@@ -671,13 +752,13 @@ private theorem term_trace_complete {E Ξ Γ a b A B} (valid : EnvironmentWF E)
         left.inv_app.1.inv_primrec.2.1 right.inv_app.1.inv_primrec.2.1
       refine eventually_next ?_ (rest)
       intro n h
-      simp only [defEqTerm]
+      simp only [defEqTerm, compareTerm]
       split
       next => rfl
       next => exact h
     · refine eventually_next ?_ (fallback)
       intro n h
-      simp only [defEqTerm]
+      simp only [defEqTerm, compareTerm]
       split
       next => rfl
       next =>
@@ -782,7 +863,7 @@ private theorem term_applications_refl {E k a} :
   intro m hm
   cases m with
   | zero => omega
-  | succ m => simp [compareTermApplications, pure, Except.pure]
+  | succ m => simp [compareTermApplications, compareHead, answer, pure, Except.pure]
 
 private theorem term_refl {E k a} :
     Eventually (fun m => defEqTerm m E k a a = .ok true) := by
@@ -790,16 +871,16 @@ private theorem term_refl {E k a} :
   intro m hm
   cases m with
   | zero => omega
-  | succ m => simp [defEqTerm, pure, Except.pure]
+  | succ m => simp [defEqTerm, compareTerm, answer, pure, Except.pure]
 
 private theorem term_applications_app {n E k f a g b}
     (run : compareTermApplications n E (k + 1) f g = .ok true ∧
       defEqTerm n E 0 a b = .ok true) :
     compareTermApplications (n + 1) E k (.app f a) (.app g b) = .ok true := by
-  simp only [compareTermApplications]
+  simp only [compareTermApplications, compareHead]
   split
   next => rfl
-  next => simpa only [pure, Except.pure, and_ok] using run
+  next => simpa only [compareChildren, answer, both, pure, Except.pure, and_ok] using run
 
 private theorem term_app_whnf {f a} (h : TermWhnf (.app f a)) : TermWhnf f := by
   cases h with
@@ -832,7 +913,7 @@ private theorem term_app_complete {n E k f a g b}
       | change termFallback n E k _ _ _ = .ok true
         simp only [termTrial, run.1, run.2, bind, Except.bind, ↓reduceIte, termFallback]
         rfl
-  simp only [defEqTerm]
+  simp only [defEqTerm, compareTerm]
   split
   next => rfl
   next => exact start
@@ -840,10 +921,10 @@ private theorem term_app_complete {n E k f a g b}
 private theorem term_rec_complete {n E a s b r}
     (run : defEqTerm n E 0 a b = .ok true ∧ defEqTerm n E 2 s r = .ok true) :
     compareTermApplications (n + 1) E 1 (.primrec a s) (.primrec b r) = .ok true := by
-  simp only [compareTermApplications]
+  simp only [compareTermApplications, compareHead]
   split
   next => rfl
-  next => simpa only [pure, Except.pure, and_ok] using run
+  next => simpa only [compareChildren, answer, both, pure, Except.pure, and_ok] using run
 
 private theorem neutral_not_rec {n E t b s}
     (h : reduceTermNeutral n E t = .ok (.primrec b s)) : False := by
@@ -893,7 +974,7 @@ private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
               have rest := (ih A (by simp +arith)).1 tl tr hi hj
               refine eventually_next ?_ (rest)
               intro d h
-              simp only [defEqTerm]
+              simp only [defEqTerm, compareTerm]
               split
               next => rfl
               next => exact h
@@ -901,7 +982,7 @@ private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
                 (.app (left.shift 0) (.bvar rfl)) (.app (right.shift 0) (.bvar rfl)) ha hb
               refine eventually_next ?_ (rest)
               intro d h
-              simp only [defEqTerm]
+              simp only [defEqTerm, compareTerm]
               split
               next => rfl
               next =>
@@ -910,12 +991,12 @@ private theorem term_normal_complete (N : Term) {E} (valid : EnvironmentWF E) :
                   have eq := ((term_origin_normal _).1 .bvar ra).symm.trans
                     ((term_origin_normal _).1 .bvar rb)
                   cases Term.bvar.inj eq
-                  simp [pure, Except.pure]
+                  simp [answer, pure, Except.pure]
                 next =>
                   have eq := ((term_origin_normal _).1 .parameter ra).symm.trans
                     ((term_origin_normal _).1 .parameter rb)
                   cases Term.parameter.inj eq
-                  simp [pure, Except.pure]
+                  simp [answer, pure, Except.pure]
                 next => exact False.elim (lams ⟨_, _, _, _, rfl, rfl⟩)
                 next => exact Nat.noConfusion (Nat.add_right_cancel left.inv_app.1.inv_primrec.1)
                 next =>
@@ -1040,11 +1121,20 @@ private theorem predicate_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF
     subst x; subst y
     obtain ⟨x, ux⟩ := unfoldPredicateHead_terminates left
     obtain ⟨y, uy⟩ := unfoldPredicateHead_terminates right
-    have batch {t out} (run : unfoldPredicateHead E t = .ok out) :
+    obtain ⟨u, v, scheduled, hu, hv, progress⟩ := unfold_by_weight_progress (x := x) (y := y) ux uy
+      (order := predicateUnfoldingOrder E a b)
+      (by intro ord eq; subst x
+          simp [predicateUnfoldingOrder, predicate_unfold_none a ux, compareHeadWeights] at ord)
+      (by
+        intro ord eq; subst y
+        cases ha : predicateHeadName a <;>
+          simp [predicateUnfoldingOrder, ha, predicate_unfold_none b uy, compareHeadWeights] at ord)
+    have batch {t out} (run : out = none ∨ unfoldPredicateHead E t = .ok out) :
         HeadBatch (predicateStep E) false t out := by
       cases out with
       | none => exact .none
-      | some out => exact .some (.next (unfoldPredicateHead_step run) .refl) (by omega)
+      | some out =>
+        exact .some (.next (unfoldPredicateHead_step (run.resolve_left (by simp))) .refl) (by omega)
     have moves : x ≠ none ∨ y ≠ none := by
       apply Classical.byContradiction
       intro h
@@ -1052,10 +1142,17 @@ private theorem predicate_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF
       have hy0 : y = none := Classical.byContradiction (fun hn => h (.inr hn))
       subst x; subst y
       exact moving ⟨predicate_ready (hx ix (by omega)) ux, predicate_ready (hy iy (by omega)) uy⟩
-    obtain ⟨i, j, si, sj, pos⟩ := HeadBatch.progress (batch ux) (batch uy) moves
+    have moved := progress.mpr moves
+    obtain ⟨i, j, si, sj, pos⟩ := HeadBatch.progress (batch hu) (batch hv) moved
     have tail := next si sj pos
-      ((unfoldPredicateHead_sound valid left ux).regularity valid).2
-      ((unfoldPredicateHead_sound valid right uy).regularity valid).2
+      (by
+        rcases hu with rfl | hu
+        · exact left
+        · exact ((unfoldPredicateHead_sound valid left hu).regularity valid).2)
+      (by
+        rcases hv with rfl | hv
+        · exact right
+        · exact ((unfoldPredicateHead_sound valid right hv).regularity valid).2)
     refine eventually_mono ?_ (eventually_and (eventually_succ ⟨ix, hx⟩)
       (eventually_and (eventually_succ ⟨iy, hy⟩) tail))
     intro n h
@@ -1063,9 +1160,9 @@ private theorem predicate_fallback_complete {E Ξ Γ a b} (valid : EnvironmentWF
     split
     next => rfl
     next =>
-      simp only [h.1, h.2.1, ux, uy, bind, Except.bind, Option.isSome_none,
+      simp only [h.1, h.2.1, scheduled, bind, Except.bind, Option.isSome_none,
         Bool.or_false, Bool.false_eq_true, ↓reduceIte]
-      cases x <;> cases y <;> first | exact h.2.2 | simp at moves
+      cases u <;> cases v <;> first | exact h.2.2 | simp at moved
 
 private theorem predicate_trace_complete {E Ξ Γ a b A B} (valid : EnvironmentWF E)
     (left : PredicateTyping E Ξ Γ a ⟨0, .prop⟩) (right : PredicateTyping E Ξ Γ b ⟨0, .prop⟩)

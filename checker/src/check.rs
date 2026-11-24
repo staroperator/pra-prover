@@ -15,7 +15,10 @@ pub(crate) struct Timings {
     pub(crate) checking: Duration,
 }
 
-pub(crate) fn run(dir: &Path, record_bytes: usize) -> Res<(Timings, usize, usize)> {
+pub(crate) fn run(
+    dir: &Path,
+    record_bytes: usize,
+) -> Res<(Timings, usize, usize)> {
     let order = std::fs::read_to_string(dir.join("modules.txt")).map_err(|e| e.to_string())?;
     let mut kernel = Kernel::default();
     let mut times = Timings::default();

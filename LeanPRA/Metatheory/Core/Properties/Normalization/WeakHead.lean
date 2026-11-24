@@ -74,6 +74,7 @@ private theorem term_fixed {n E t u} (normal : TermWhnf t)
           obtain ⟨g, hg, run⟩ := run
           have := ih hg
           subst g
+          dsimp only [Reduced.term] at *
           split at run
           next => exact False.elim (notLam _ _ rfl)
           next => exact False.elim (notRec _ _ rfl)
@@ -94,6 +95,7 @@ private theorem term_fixed {n E t u} (normal : TermWhnf t)
               obtain ⟨a', ha, run⟩ := run
               have := ih ha
               subst a'
+              dsimp only [Reduced.term] at *
               split at run
               next => exact False.elim (blocked.1 rfl)
               next => exact False.elim (blocked.2 _ rfl)
@@ -109,7 +111,8 @@ private theorem term_exists {E t} (normal : TermWhnf t) : ∃ n, whnfTerm n E t 
       simp only [hn, bind, Except.bind]
       first
       | rfl
-      | split
+      | dsimp only [Reduced.term] at *
+        split
         next => exact False.elim (notLam _ _ rfl)
         next => exact False.elim (notRec _ _ rfl)
         next => rfl
@@ -122,6 +125,7 @@ private theorem term_exists {E t} (normal : TermWhnf t) : ∃ n, whnfTerm n E t 
       simp only [bind, Except.bind]
       rw [whnfTerm_mono (m := n + 1) (Nat.le_succ n) hn]
       simp only
+      dsimp only [Reduced.term] at *
       split
       next => exact False.elim (blocked.1 rfl)
       next => exact False.elim (blocked.2 _ rfl)
