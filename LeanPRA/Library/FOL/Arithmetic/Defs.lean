@@ -1,8 +1,6 @@
 module
 
-public meta import LeanPRA.Library.FOL.DSL.Tactic.Basic
-public meta import LeanPRA.Library.FOL.DSL.Tactic.Rewrite
-public meta import LeanPRA.Library.FOL.DSL.Tactic.Induction
+public import LeanPRA.Library.FOL.DSL.Tactic
 
 /-!
 # Robinson arithmetic and Peano arithmetic

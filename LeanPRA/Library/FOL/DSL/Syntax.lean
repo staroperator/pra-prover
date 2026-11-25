@@ -38,7 +38,8 @@ syntax:max ident : folTerm
 syntax:max (name := termSplice) (priority := high) "$" "{" praExpr "}" : folTerm
 declare_syntax_cat folPraActual
 
-syntax atomic("(" ident " := ") praExpr ")" : folPraActual
+syntax (name := numericalActual) (priority := low) atomic("(" ident " := ")
+  praExpr ")" : folPraActual
 syntax:max (name := termDefinedApplication) ident folPraActual+ "(" folTerm,* ")" : folTerm
 syntax:max "(" folTerm ")" : folTerm
 syntax:max ident "(" folTerm,* ")" : folTerm
@@ -74,8 +75,7 @@ syntax:max (name := termParameterType) (priority := high) &"term" (" of " num)? 
 syntax:max (name := formulaParameterType) (priority := high) &"formula" (" of " num)? : praExpr
 syntax (name := formulaActual) (priority := high) atomic("(" ident " := ")
   "fun " ident* " => " folFormula ")" : folPraActual
-syntax (name := formulaValueActual) (priority := low) atomic("(" ident " := ")
-  folFormula ")" : folPraActual
+syntax (name := formulaValueActual) atomic("(" ident " := ") folFormula ")" : folPraActual
 syntax (name := formulaCodeActual) (priority := high) atomic("(" ident " := ")
   "$" "{" praExpr "}" ")" : folPraActual
 
@@ -88,10 +88,15 @@ syntax (name := formulaQuote) "fol_formula" "[" ident " | " folFormula "]" : pra
 syntax:20 (name := provableQuote) ident " ⊢ " folFormula : praExpr
 syntax:20 (name := openProvableQuote) ident " ⊢ " &"free " ident+ " | "
   folFormula : praExpr
+declare_syntax_cat folDefInput
+
+syntax ident (" of " num)? : folDefInput
 syntax (name := termDefinition) "fol_def " ident " over " ident (ppSpace praParam)*
-  " : " &"term" (" of " num)? " := " ("fun " ident+ " => ")? folTerm : praDecl
+  " : " (atomic(folDefInput " → "))* &"term" (" of " num)? " := " ("fun " ident+ " => ")?
+  folTerm : praDecl
 syntax (name := formulaDefinition) "fol_def " ident " over " ident (ppSpace praParam)*
-  " : " &"formula" (" of " num)? " := " ("fun " ident+ " => ")? folFormula : praDecl
+  " : " (atomic(folDefInput " → "))* &"formula" (" of " num)? " := " ("fun " ident+ " => ")?
+  folFormula : praDecl
 syntax (name := folTheorem) "fol_theorem " ident (ppSpace praParam)* " : "
   ident " ⊢ " folFormula " := " praExpr : praDecl
 syntax (name := openFolTheorem) "fol_theorem " ident (ppSpace praParam)* " : "

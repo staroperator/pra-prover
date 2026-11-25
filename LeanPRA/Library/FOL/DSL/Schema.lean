@@ -15,14 +15,13 @@ produce terms or formulas, and arity zero allows captured free variables.
 - `instantiateSchema` substitutes actual formulas into a template without capturing variables.
 - `compileAxiom` emits numerical instance and membership functions and checked introduction lemmas.
 
-For direct membership checking, each parameter must occur applied to exactly the surrounding
-binders, in outermost-first order. A formula occurrence exposes its code directly; a term occurrence
-on an equality side exposes its term code. The generated test recovers the parameters and compares
-the reconstructed instance with the candidate. Schema instances may be universally closed over
-additional parameters. For example, `TheoryName.schema.formula` constructs an instance,
-`TheoryName.schema.isInstance` checks its exact shape, and `TheoryName.schema.isAxiom` also accepts
-its universal closures. The compiler proves membership for every formula argument, using the common
-syntax equations. -/
+To recover an argument, the compiler follows the enclosing constructors to an occurrence applied
+to exactly the surrounding binders in outermost-first order. A term parameter may occur as an
+equality side or inside a function or relation application. The generated test recovers the
+arguments and compares the reconstructed formula with the candidate.
+`TheoryName.schema.isAxiom` also accepts universal closures of instances. The compiler uses the
+constructor equations to prove membership from the arguments.
+-/
 
 public meta section
 
@@ -87,28 +86,6 @@ def instantiateSchema (actuals : Array FormulaActual) : FormulaView → FormulaV
 private def canonicalArguments (bound : List Name) (args : List TermView) : Bool :=
   args == bound.reverse.map TermView.var
 
-private def recoveryPath (parameter : Nat) (bound : List Name) : FormulaView → Option (List Nat)
-  | .parameter i args =>
-    if i == parameter && canonicalArguments bound args then some [] else none
-  | .equal (.parameter i args) (.parameter j other) =>
-    if i == parameter && canonicalArguments bound args then some [3]
-    else if j == parameter && canonicalArguments bound other then some [4] else none
-  | .equal (.parameter i args) _ =>
-    if i == parameter && canonicalArguments bound args then some [3] else none
-  | .equal _ (.parameter i args) =>
-    if i == parameter && canonicalArguments bound args then some [4] else none
-  | .imp a b =>
-    (recoveryPath parameter bound a).map (0 :: ·) <|>
-      (recoveryPath parameter bound b).map (1 :: ·)
-  | .all x a => (recoveryPath parameter (x :: bound) a).map (2 :: ·)
-  | _ => none
-
-private def recoverFormula (L candidate : Term) (path : List Nat) : Term :=
-  path.foldl (fun A step =>
-    let args := applyDefinition `FOL.Formula.arg [L, A]
-    if step == 0 || step == 3 then applyDefinition `unpairLeft [args]
-    else if step == 1 || step == 4 then applyDefinition `unpairRight [args] else args) candidate
-
 private partial def encodeTemplateTerm (L : Term) (actuals : Array Term) (bound : List Name) :
     TermView → CommandElabM Term
   | .parameter i args => do
@@ -151,60 +128,192 @@ private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name)
        tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | a => a.encode L bound []
 
-private def projectFormula (L A : Term) (step : Nat) : Term :=
-  let args := applyDefinition `FOL.Formula.arg [L, A]
-  if step == 0 || step == 3 then applyDefinition `unpairLeft [args]
-  else if step == 1 || step == 4 then applyDefinition `unpairRight [args] else args
+private structure RecoveryStep where
+  project : Term
+  value : Term
+  /-- Applying the projection to the preceding value gives this step's value. -/
+  equation : Proof
 
-private def proveRecovery (L : Term) (actuals : Array Term) (template : FormulaView)
-    (path : List Nat) (input : Term) : CommandElabM Proof := do
-  let mut formula := template
-  let mut bound := []
+private def applyProjection (project value : Term) : Term :=
+  match project with
+  | .lam _ body => body.subst0 value
+  | _ => .app project value
+
+private def pairStep (lhs rhs : Term) (takeRight : Bool) : RecoveryStep :=
+  if takeRight then
+    ⟨applyDefinition `unpairRight, rhs, applyTheorem `unpairRight_pair [lhs, rhs]⟩
+  else ⟨applyDefinition `unpairLeft, lhs, applyTheorem `unpairLeft_pair [lhs, rhs]⟩
+
+private def tupleSteps (index : Nat) : List Term → List RecoveryStep
+  | lhs :: rest@(_ :: _) =>
+    let rhs := tupleCode rest
+    if index == 0 then [pairStep lhs rhs false]
+    else pairStep lhs rhs true :: tupleSteps (index - 1) rest
+  | _ => []
+
+private structure RecoveryContext where
+  language : LanguageInfo
+  actuals : Array Term
+  parameter : Nat
+  bound : List Name := []
+
+private def RecoveryContext.term (ctx : RecoveryContext) (t : TermView) : CommandElabM Term :=
+  encodeTemplateTerm (languageTerm ctx.language) ctx.actuals ctx.bound t
+
+private def RecoveryContext.formula (ctx : RecoveryContext) (a : FormulaView) :
+    CommandElabM Term :=
+  encodeTemplate (languageTerm ctx.language) ctx.actuals ctx.bound a
+
+private def RecoveryContext.isCanonical (ctx : RecoveryContext) (i : Nat) (args : List TermView) :
+    Bool :=
+  i == ctx.parameter && canonicalArguments ctx.bound args
+
+private inductive FamilyKind where
+  | constant
+  | function
+  | relation
+
+private partial def sequenceLength (xs : Term) : CommandElabM (Nat × Proof) := do
+  match getAppFnArgs xs with
+  | (.definition `Sequence.nil [], []) => return (0, applyTheorem `Sequence.length_nil)
+  | (.definition `Sequence.cons [], [x, tail]) =>
+    let (n, proof) ← sequenceLength tail
+    let length := applyDefinition `Sequence.length [xs]
+    let tailLength := applyDefinition `Sequence.length [tail]
+    return (n + 1, mkEqTrans length (.app .succ tailLength) (numeral (n + 1))
+      (applyTheorem `Sequence.length_cons [x, tail])
+      (mkEqCongr .succ tailLength (numeral n) proof))
+  | _ => throwError "expected the declared language's symbol sequence"
+
+private def proveSymbolBound (language : LanguageInfo) (index : Nat) (countName lemma : Name)
+    (field : Nat) (sequenceName : Option Name := none) : CommandElabM Proof := do
+  -- The signature and sequence equations give the count before computing the signature code.
+  let core := LeanPRA.Surface.CoreEnvironment.getState (← getEnv)
+  let some (.function decl) := core.lookup (language.name ++ `language) |
+    throwError "expected a declared language"
+  let (.definition `FOL.Language.make [], fields) := getAppFnArgs decl.body |
+    throwError "expected the declared language's signature"
+  let L := languageTerm language
+  let count := applyDefinition countName [L]
+  let entry := fields[field]!
+  let equation := applyTheorem lemma fields
+  let (n, countEq) ← if let some sequenceName := sequenceName then do
+    let (n, entryLength) ← sequenceLength entry
+    let length := applyDefinition `Sequence.length
+    let projection := applyDefinition sequenceName [L]
+    pure (n, mkEqTrans count (.app length entry) (numeral n)
+      (mkEqCongr length projection entry equation) entryLength)
+  else
+    pure ((numeralValue? entry).getD 0, equation)
+  let motive := Predicate.lam `n (.app (.app (.definition `LT [] []) (numeral index)) (.bvar 0))
+  let transport := Proof.forallElim (Proof.forallElim (.eqSubst motive) (numeral n)) count
+  return .impElim (.impElim transport (mkEqSymm count (numeral n) countEq))
+    (.forallElim .eqRefl .zero)
+
+private def familyBound (L : LanguageInfo) (kind : FamilyKind) (i : Nat) : CommandElabM Proof :=
+  match kind with
+  | .constant => proveSymbolBound L i `FOL.Language.constantFamilyCount
+      `FOL.Language.constantFamilyCount_make 3
+  | .function => proveSymbolBound L i `FOL.Language.functionFamilyCount
+      `FOL.Language.functionFamilies_make 4 (some `FOL.Language.functionFamilies)
+  | .relation => proveSymbolBound L i `FOL.Language.relationFamilyCount
+      `FOL.Language.relationFamilies_make 5 (some `FOL.Language.relationFamilies)
+
+mutual
+
+private partial def RecoveryContext.inTerm (ctx : RecoveryContext) (t : TermView) :
+    CommandElabM (Option (List RecoveryStep)) := do
+  let L := languageTerm ctx.language
+  match t with
+  | .parameter i args =>
+    return if ctx.isCanonical i args then some [] else none
+  | .app i args =>
+    ctx.inSymbolArguments false args (numeral i) do
+      let bound ← proveSymbolBound ctx.language i `FOL.Language.functionCount
+        `FOL.Language.functions_make 1 (some `FOL.Language.functions)
+      return applyTheorem `FOL.Language.isFunction_of_lt [L, numeral i] [] [bound]
+  | .indexedApp i k args =>
+    let symbol := applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, k]
+    ctx.inSymbolArguments false args symbol do
+      let bound ← familyBound ctx.language .function i
+      return applyTheorem `FOL.Language.isFunction_familyMember [L, numeral i, k] [] [bound]
+  | _ => return none
+
+private partial def RecoveryContext.inArguments (ctx : RecoveryContext) (args : List TermView) :
+    CommandElabM (Option (Nat × List RecoveryStep)) := do
+  for (arg, i) in args.zipIdx do
+    if let some steps ← ctx.inTerm arg then return some (i, steps)
+  return none
+
+private partial def RecoveryContext.inSymbolArguments (ctx : RecoveryContext) (isRelation : Bool)
+    (args : List TermView) (symbol : Term) (belongs : CommandElabM Proof) :
+    CommandElabM (Option (List RecoveryStep)) := do
+  let some (i, path) ← ctx.inArguments args | return none
+  let L := languageTerm ctx.language
+  let values ← args.mapM ctx.term
+  let tuple := tupleCode values
+  let (projection, equation) := if isRelation then
+    (`FOL.Formula.arg, `FOL.Formula.arg_rel) else (`FOL.Term.arg, `FOL.Term.arg_app)
+  let step : RecoveryStep := ⟨applyDefinition projection [L], tuple,
+    applyTheorem equation [L, symbol, tuple] [] [← belongs]⟩
+  return some (step :: (tupleSteps i values ++ path))
+
+end
+
+private partial def RecoveryContext.inFormula (ctx : RecoveryContext) (a : FormulaView) :
+    CommandElabM (Option (List RecoveryStep)) := do
+  let L := languageTerm ctx.language
+  let arg := applyDefinition `FOL.Formula.arg [L]
+  match a with
+  | .parameter i args => return if ctx.isCanonical i args then some [] else none
+  | .equal t u =>
+    let some (i, path) ← ctx.inArguments [t, u] | return none
+    let lhs ← ctx.term t
+    let rhs ← ctx.term u
+    let step : RecoveryStep := ⟨arg, tupleCode [lhs, rhs],
+      applyTheorem `FOL.Formula.arg_equal [L, lhs, rhs]⟩
+    return some (step :: pairStep lhs rhs (i == 1) :: path)
+  | .imp a b =>
+    let antecedent ← ctx.inFormula a
+    let path ← if antecedent.isSome then pure antecedent else ctx.inFormula b
+    let some path := path | return none
+    let lhs ← ctx.formula a
+    let rhs ← ctx.formula b
+    let step : RecoveryStep := ⟨arg, tupleCode [lhs, rhs],
+      applyTheorem `FOL.Formula.arg_imp [L, lhs, rhs]⟩
+    return some (step :: pairStep lhs rhs antecedent.isNone :: path)
+  | .all x a =>
+    let inner := { ctx with bound := x :: ctx.bound }
+    let some path ← inner.inFormula a | return none
+    let value ← inner.formula a
+    let step : RecoveryStep := ⟨arg, value, applyTheorem `FOL.Formula.arg_all [L, value]⟩
+    return some (step :: path)
+  | .relation i args =>
+    ctx.inSymbolArguments true args (numeral i) do
+      let bound ← proveSymbolBound ctx.language i `FOL.Language.relationCount
+        `FOL.Language.relations_make 2 (some `FOL.Language.relations)
+      return applyTheorem `FOL.Language.isRelation_of_lt [L, numeral i] [] [bound]
+  | .indexedRelation i k args =>
+    let symbol := applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, k]
+    ctx.inSymbolArguments true args symbol do
+      let bound ← familyBound ctx.language .relation i
+      return applyTheorem `FOL.Language.isRelation_familyMember [L, numeral i, k] [] [bound]
+  | _ => return none
+
+private def recover (input : Term) (path : List RecoveryStep) : Term :=
+  path.foldl (fun value step => applyProjection step.project value) input
+
+private def proveRecovery (input : Term) (path : List RecoveryStep) : Proof := Id.run do
   let mut projection := input
-  let mut code ← encodeTemplate L actuals bound formula
+  let mut value := input
   let mut proof := Proof.forallElim .eqRefl input
   for step in path do
-    if step == 3 || step == 4 then
-      let .equal t u := formula | throwError "expected an equality in a term recovery path"
-      let ct ← encodeTemplateTerm L actuals bound t
-      let cu ← encodeTemplateTerm L actuals bound u
-      let pair := applyDefinition `pair [ct, cu]
-      let field := if step == 3 then `unpairLeft else `unpairRight
-      let result := if step == 3 then ct else cu
-      let arg := applyDefinition `FOL.Formula.arg [L, code]
-      let equation := mkEqTrans (projectFormula L code step) (applyDefinition field [pair]) result
-        (mkEqCongr (applyDefinition field) arg pair
-          (applyTheorem `FOL.Formula.arg_equal [L, ct, cu]))
-        (applyTheorem (if step == 3 then `unpairLeft_pair else `unpairRight_pair) [ct, cu])
-      let selector := Term.lam `F (projectFormula L.shift (.bvar 0) step)
-      return mkEqTrans (projectFormula L projection step) (projectFormula L code step) result
-        (mkEqCongr selector projection code proof) equation
-    let (child, names, equation) ← match formula, step with
-      | .imp a b, 0 | .imp a b, 1 => do
-        let ca ← encodeTemplate L actuals bound a
-        let cb ← encodeTemplate L actuals bound b
-        let pair := applyDefinition `pair [ca, cb]
-        let field := if step == 0 then `unpairLeft else `unpairRight
-        let result := if step == 0 then ca else cb
-        let arg := applyDefinition `FOL.Formula.arg [L, code]
-        let equation := mkEqTrans (projectFormula L code step)
-          (applyDefinition field [pair]) result
-          (mkEqCongr (applyDefinition field) arg pair
-            (applyTheorem `FOL.Formula.arg_imp [L, ca, cb]))
-          (applyTheorem (if step == 0 then `unpairLeft_pair else `unpairRight_pair) [ca, cb])
-        pure (if step == 0 then a else b, bound, equation)
-      | .all x a, 2 => do
-        let ca ← encodeTemplate L actuals (x :: bound) a
-        pure (a, x :: bound, applyTheorem `FOL.Formula.arg_all [L, ca])
-      | _, _ => throwError "invalid schema recovery path"
-    let next ← encodeTemplate L actuals names child
-    let selector := Term.lam `F (projectFormula L.shift (.bvar 0) step)
-    proof := mkEqTrans (projectFormula L projection step) (projectFormula L code step) next
-      (mkEqCongr selector projection code proof) equation
-    projection := projectFormula L projection step
-    formula := child
-    bound := names
-    code := next
+    let lhs := applyProjection step.project projection
+    let rhs := applyProjection step.project value
+    proof := mkEqTrans lhs rhs step.value (mkEqCongr step.project projection value proof)
+      step.equation
+    projection := lhs
+    value := step.value
   return proof
 
 private def quantifyProof (names : List Name) (type : Predicate) (proof : Proof) :
@@ -213,14 +322,39 @@ private def quantifyProof (names : List Name) (type : Predicate) (proof : Proof)
     let motive := Predicate.lam name type
     (.all motive, .forallIntro name motive proof)) (type, proof)
 
+private def reconstruct (build : List Term → Term) (actuals recovered : Array Term)
+    (proofs : Array Proof) : Proof := Id.run do
+  let start := build recovered.toList
+  let mut current := start
+  let mut values := recovered
+  let mut equality := Proof.forallElim .eqRefl start
+  for i in [:actuals.size] do
+    let selector := Term.lam `p (build ((values.map Term.shift).set! i (.bvar 0)).toList)
+    values := values.set! i actuals[i]!
+    let next := build values.toList
+    equality := mkEqTrans start current next equality
+      (mkEqCongr selector recovered[i]! actuals[i]! proofs[i]!)
+    current := next
+  return equality
+
 /-- Compile one named axiom or schema into checked PRA definitions and introduction lemmas. -/
-def compileAxiom (theory : Name) (L : Term) (info : AxiomInfo) (source : Syntax) :
+def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (source : Syntax) :
     CommandElabM Unit := do
+  let L := languageTerm language
   let name := theory ++ info.name
   let formulaName := info.formulaName theory
   let testName := name ++ `isAxiom
   let n := info.parameters.size
   let actuals := (List.range n).map (fun i => Term.bvar (n - i - 1))
+  let parameters := actuals.toArray
+  let mut paths : Array (List RecoveryStep) := #[]
+  for i in [:n] do
+    let parameter := info.parameters[i]!
+    let ctx : RecoveryContext := { language, actuals := parameters, parameter := i }
+    let some path ← ctx.inFormula info.template |
+      throwError "syntax parameter `{parameter.name}` needs a recoverable occurrence applied \
+        to its enclosing binders in outermost-first order"
+    paths := paths.push path
   if info.sentenceName?.isNone then
     let body ← encodeTemplate L actuals.toArray [] info.template
     let body := info.parameters.toList.foldr (fun p body => Term.lam p.name body) body
@@ -233,15 +367,24 @@ def compileAxiom (theory : Name) (L : Term) (info : AxiomInfo) (source : Syntax)
       .equal (applyDefinition testName [formula]) (numeral 1),
       applyTheorem `eqb_self [formula]⟩) source
     return
-  let mut recovered : Array Term := #[]
-  for i in [:n] do
-    let parameterName := info.parameters[i]!.name.eraseMacroScopes
-    let some path := recoveryPath i [] info.template |
-      throwError "syntax parameter `{parameterName}` needs a recoverable occurrence applied to \
-        its enclosing binders in outermost-first order; a term must be an equality side"
-    recovered := recovered.push (recoverFormula L (.bvar 0) path)
+  let recovered := paths.toList.map (recover (.bvar 0))
   publishChecked (.function ⟨name ++ `isInstance, [], 1,
-    .lam `A (applyDefinition `eqb [.bvar 0, applyDefinition formulaName recovered.toList])⟩) source
+    .lam `A (applyDefinition `eqb [.bvar 0, applyDefinition formulaName recovered])⟩) source
+  let instanceCode := applyDefinition formulaName actuals
+  let recoveredArgs := paths.map (recover instanceCode)
+  let recoveryProofs := paths.map (proveRecovery instanceCode)
+  let reconstructed := applyDefinition formulaName recoveredArgs.toList
+  let equalCode := reconstruct (applyDefinition formulaName ·) parameters recoveredArgs
+    recoveryProofs
+  let checkedCode := Proof.impElim
+    (← projectTheorem true `eqb_eq_one [instanceCode, reconstructed])
+    (mkEqSymm reconstructed instanceCode equalCode)
+  let instanceType := Predicate.equal
+    (applyDefinition (name ++ `isInstance) [instanceCode]) (numeral 1)
+  let names := info.parameters.toList.map (·.name)
+  let (instanceType, checkedInstance) := quantifyProof names instanceType checkedCode
+  publishChecked (.theoremE ⟨name ++ `isInstance_of_instance, [],
+    instanceType, checkedInstance⟩) source
   let candidate := Term.bvar 1
   let history := Term.bvar 0
   let isAll := applyDefinition `band [applyDefinition `isPos [candidate],
@@ -262,36 +405,6 @@ def compileAxiom (theory : Name) (L : Term) (info : AxiomInfo) (source : Syntax)
   let proof := Proof.forallIntro `A motive (.impIntro `h premise
     (applyTheorem `bor_eq_one_of_left_eq_one disjuncts [] [.hyp 0]))
   publishChecked (.theoremE ⟨name ++ `isAxiom_of_isInstance, [], .all motive, proof⟩) source
-  let parameters := actuals.toArray
-  let instanceCode := applyDefinition formulaName actuals
-  let mut recoveredArgs := #[]
-  let mut recoveryProofs := #[]
-  for i in [:n] do
-    let some path := recoveryPath i [] info.template | throwError "missing schema recovery path"
-    recoveredArgs := recoveredArgs.push (recoverFormula L instanceCode path)
-    recoveryProofs := recoveryProofs.push
-      (← proveRecovery L parameters info.template path instanceCode)
-  let reconstructed := applyDefinition formulaName recoveredArgs.toList
-  let mut current := reconstructed
-  let mut equality := Proof.forallElim .eqRefl reconstructed
-  for i in [:n] do
-    let values := recoveredArgs.mapIdx fun j value => if j < i then parameters[j]! else value
-    let nextValues := values.set! i parameters[i]!
-    let selector := Term.lam `p (applyDefinition formulaName
-      ((values.map Term.shift).set! i (.bvar 0)).toList)
-    let next := applyDefinition formulaName nextValues.toList
-    equality := mkEqTrans reconstructed current next equality
-      (mkEqCongr selector recoveredArgs[i]! parameters[i]! recoveryProofs[i]!)
-    current := next
-  let checkedInstance := Proof.impElim
-    (← projectTheorem true `eqb_eq_one [instanceCode, reconstructed])
-    (mkEqSymm reconstructed instanceCode equality)
-  let instanceType := Predicate.equal
-    (applyDefinition (name ++ `isInstance) [instanceCode]) (numeral 1)
-  let names := info.parameters.toList.map (·.name)
-  let (instanceType, checkedInstance) := quantifyProof names instanceType checkedInstance
-  publishChecked (.theoremE ⟨name ++ `isInstance_of_instance, [],
-    instanceType, checkedInstance⟩) source
   let checkedAxiom := applyTheorem (name ++ `isAxiom_of_isInstance) [instanceCode] []
     [applyTheorem (name ++ `isInstance_of_instance) actuals]
   let (axiomType, checkedAxiom) := quantifyProof names

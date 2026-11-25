@@ -75,19 +75,20 @@ unsafe initialize termDisplayAttribute : KeyedDeclsAttribute TermDisplay ←
 private def namedDefinitionSyntax (names : Names) (isFormula : Bool) (value : Core.Term)
     (count : Nat) (showArguments : CommandElabM (Array (TSyntax `folTerm))) :
     CommandElabM (Option Syntax) := do
-  let .definition head values := value | return none
-  let some d := (definitions.getState (← getEnv)).find? (·.name == head) | return none
-  let positions := (List.range d.arguments.size).map (· + d.parameters.size)
-  unless d.isFormula == isFormula && d.substitution.isSome && count == d.arguments.size &&
+  let some (d, values) ← appliedDefinition? value | return none
+  let positions := d.binders.toList.zipIdx.filterMap fun (binder, i) =>
+    if d.positional.contains binder then some i else none
+  unless d.isFormula == isFormula && d.substitution.isSome && count == d.positional.size &&
       d.termPositions == positions do return none
-  let name := mkIdent (Name.mkSimple d.name.getString!)
+  let name := mkIdent (← relativeName d.name names.used)
   let shown ← showArguments
-  let named := d.parameters.zip values.toArray
+  let named := (d.binders.zip values.toArray).filter fun (binder, _) =>
+    !d.positional.contains binder
   if named.isEmpty then
     if isFormula then return some (← `(folFormula| $name:ident($shown,*))).raw
     return some (← `(folTerm| $name:ident($shown,*))).raw
   let actuals ← named.mapM fun (binder, actual) => do
-    `(folPraActual| ($(mkIdent binder):ident := $(← delabTerm names actual)))
+    `(folPraActual| ($(mkIdent binder):ident := $(← delabTerm names actual):praExpr))
   let kind := if isFormula then ``formulaDefinedApplication else ``termDefinedApplication
   return some (.node .none kind #[name, mkNullNode actuals,
     mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"])

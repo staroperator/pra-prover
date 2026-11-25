@@ -10,8 +10,8 @@ FOL quotations expand to ordinary PRA expressions before elaboration. A splice s
 numerical syntax code in the surrounding context; entering a quantifier shifts its free positions.
 Syntax parameters describe a result kind and an explicit argument arity. Their captured variables
 are transported beneath new binders, and application fills the explicit slots in reverse numerical
-order: the last argument occupies position zero. Definitions receive these contextual codes as
-ordinary numerical parameters.
+order: the last argument occupies position zero. Definitions receive contextual codes as
+numerical declaration parameters or ordinary numerical arguments.
 
 - `termExpression` and `formulaExpression` expand notation to PRA syntax constructors.
 - `elaborateTheorem` checks proofs through the ordinary PRA elaborator.
@@ -68,12 +68,50 @@ private def applySyntax (L : LanguageInfo) (formula : Bool) (value : TSyntax `pr
   expressionCall (if formula then `FOL.Formula.subst else `FOL.Term.subst)
     [substitution, language, value]
 
-/-- Read the term spelling shared by term and formula argument parsers. -/
-def formulaAsTerm (s : TSyntax `folFormula) : CommandElabM (TSyntax `folTerm) := do
-  let some source := s.raw.reprint | throwErrorAt s "expected a term argument"
-  match Parser.runParserCategory (← getEnv) `folTerm source with
-  | .ok term => return ⟨term⟩
-  | .error _ => throwErrorAt s "expected a term argument"
+/-- Read a formula argument whose spelling is also a term: a name, a symbol or definition
+application in parentheses, a family member, a parenthesized term, or a splice. The syntax tree
+is converted directly; no source text is parsed again. -/
+partial def formulaAsTerm (s : TSyntax `folFormula) : CommandElabM (TSyntax `folTerm) :=
+  withRef s do
+  let stx := s.raw
+  if stx.isOfKind ``formulaTerm then return ⟨stx[0]⟩
+  if stx.isOfKind ``formulaSplice then return ⟨← `(folTerm| ${$(⟨stx[2]⟩):praExpr})⟩
+  if stx.isOfKind ``formulaDefinedApplication then
+    return ⟨stx.setKind ``termDefinedApplication⟩
+  match s with
+  | `(folFormula| ($a:folFormula)) => return ← `(folTerm| ($(← formulaAsTerm a)))
+  | `(folFormula| $n:ident) => `(folTerm| $n:ident)
+  | `(folFormula| $n:ident($args:folTerm,*)) => `(folTerm| $n:ident($args,*))
+  | `(folFormula| $n:ident[$indices:praExpr,*]($args:folTerm,*)) =>
+    `(folTerm| $n:ident[$indices,*]($args,*))
+  | _ => throwErrorAt s "expected a term argument"
+
+private partial def termAsNumerical (s : TSyntax `folTerm) : CommandElabM (TSyntax `praExpr) :=
+  withRef s do
+  if s.raw.isOfKind ``termSplice then return ⟨s.raw[2]⟩
+  match s with
+  | `(folTerm| ($t:folTerm)) => return ← `(praExpr| ($(← termAsNumerical t)))
+  | `(folTerm| $n:ident) => `(praExpr| $n:ident)
+  | `(folTerm| $n:ident($t:folTerm)) => `(praExpr| $n:ident ($(← termAsNumerical t)))
+  | _ => throwErrorAt s "expected a PRA numerical expression; write it as a braced splice"
+
+/-- Read an actual that parsed as first-order syntax but is used as a PRA numerical expression.
+The shared spelling covers names, applications written with spaces, parentheses, and braced
+splices. The syntax tree is converted directly; other PRA expressions use a braced splice. -/
+partial def formulaAsNumerical (s : TSyntax `folFormula) : CommandElabM (TSyntax `praExpr) :=
+  withRef s do
+  let stx := s.raw
+  if stx.isOfKind ``formulaSplice then return ⟨stx[2]⟩
+  if stx.isOfKind ``formulaTerm then return ← termAsNumerical ⟨stx[0]⟩
+  match s with
+  | `(folFormula| ($a:folFormula)) => return ← `(praExpr| ($(← formulaAsNumerical a)))
+  | `(folFormula| $n:ident) => `(praExpr| $n:ident)
+  | `(folFormula| $n:ident $args:folTerm*) => do
+    let mut result ← `(praExpr| $n:ident)
+    for arg in args do result ← `(praExpr| $result $(← termAsNumerical arg))
+    return result
+  | `(folFormula| $n:ident($t:folTerm)) => `(praExpr| $n:ident ($(← termAsNumerical t)))
+  | _ => throwErrorAt s "expected a PRA numerical expression; write it as a braced splice"
 
 /-- Abstract the arguments still expected by a partially applied syntax value. -/
 def completeApplication (body : Syntax) (expected : SyntaxParameter) (bound : List Name) :
@@ -182,10 +220,9 @@ private partial def definitionApplication (L : LanguageInfo) (bound : List Name)
     CommandElabM (TSyntax `praExpr) := do
   unless d.language == L.name do throwError "FOL definition `{d.name}` uses another language"
   unless d.isFormula == formula do throwError "FOL definition `{d.name}` has the wrong result kind"
-  let arity := d.arguments.size + d.resultArity
+  let arity := d.positional.size + d.resultArity
   unless args.size == arity do
     throwError "FOL definition `{d.name}` expects {arity} term arguments"
-  let mut values : List (TSyntax `praExpr) := []
   let mut supplied : List (Name × Syntax) := []
   for actual in actuals do
     let name ← match actual with
@@ -195,24 +232,28 @@ private partial def definitionApplication (L : LanguageInfo) (bound : List Name)
       | `(folPraActual| ($name:ident := $_:praExpr)) => pure name.getId.eraseMacroScopes
       | `(folPraActual| ($name:ident := $_:folFormula)) => pure name.getId.eraseMacroScopes
       | _ => throwUnsupportedSyntax
-    unless d.parameters.contains name do throwErrorAt actual "unknown named parameter `{name}`"
+    unless d.binders.contains name && !d.positional.contains name do
+      throwErrorAt actual "unknown named parameter `{name}`"
     if (supplied.lookup name).isSome then throwErrorAt actual "duplicate parameter `{name}`"
     supplied := (name, actual.raw) :: supplied
-  for parameter in d.parameters do
-    let some actual := supplied.lookup parameter |
-      throwError "missing parameter `{parameter}` of `{d.name}`"
-    if let some expected := d.syntaxParameters.find? (·.name == parameter) then
-      values := values ++ [← syntaxActual L bound parameters expected actual ambient]
-    else
-      let `(folPraActual| ($_:ident := $value:praExpr)) := actual |
-        throwErrorAt actual "expected an ordinary PRA argument"
-      values := values ++ [value]
-  let terms ← args.toList.mapM (fun t => termExpression L bound t.raw parameters ambient)
-  values := values ++ terms.take d.arguments.size
+  let positional := d.positional.toList.zip args.toList
+  let values ← d.binders.toList.mapM fun name => do
+    if let some term := positional.lookup name then
+      return ← termExpression L bound term.raw parameters ambient
+    let some actual := supplied.lookup name |
+      throwError "missing parameter `{name}` of `{d.name}`"
+    if let some expected := d.syntaxParameters.find? (·.name == name) then
+      return ← syntaxActual L bound parameters expected actual ambient
+    if let `(folPraActual| ($_:ident := $value:praExpr)) := actual then return value
+    let `(folPraActual| ($_:ident := $value:folFormula)) := actual |
+      throwErrorAt actual "expected an ordinary PRA argument"
+    formulaAsNumerical value
   let mut result ← `(praExpr| @$(mkIdent (`_root_ ++ d.name)):ident)
   for value in values do result ← `(praExpr| $result ($value))
   if d.resultArity > 0 then
-    return ← applySyntax L formula result (terms.drop d.arguments.size) 0
+    let terms ← (args.toList.drop d.positional.size).mapM fun t =>
+      termExpression L bound t.raw parameters ambient
+    return ← applySyntax L formula result terms 0
   return result
 
 /-- Elaborate a syntax actual in the context where it is supplied. -/
@@ -241,13 +282,7 @@ private partial def syntaxActual (L : LanguageInfo) (bound : List Name)
         throwErrorAt actual "syntax parameter kind or arity mismatch"
       if p.arity == expected.arity then
         return ← shiftExpression L (bound.length + ambient) value p.isFormula p.arity
-  let some source := value.raw.reprint | throwErrorAt value "cannot read syntax argument"
-  let category := if expected.isFormula then `folFormula else `folTerm
-  let .ok parsed := Parser.runParserCategory (← getEnv) category source |
-    throwErrorAt value "expected a syntax argument; inject numerical codes with a braced splice"
-  let (parsed, scope) ← completeApplication parsed expected bound
-  if expected.isFormula then formulaExpression L scope parsed parameters ambient
-  else termExpression L scope parsed parameters ambient
+  throwErrorAt value "expected a syntax argument; inject numerical codes with a braced splice"
 
 partial def formulaExpression (L : LanguageInfo) (bound : List Name) (s : Syntax)
     (parameters : Array SyntaxParameter := #[]) (ambient : Nat := 0) :

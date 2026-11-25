@@ -6,8 +6,9 @@ public meta import LeanPRA.Library.FOL.DSL.Reduction
 # FOL definitions
 
 `fol_def` gives a name to a term or a formula. The name stands for a PRA function from the
-definition's parameters to a syntax code. Contextual syntax arguments carry their surrounding
-variables; entering a binder transports them to the extended context.
+definition's parameters and ordinary arguments to a syntax code. `Nat`, `term of n`, and
+`formula of n` can appear as ordinary input types. Contextual syntax inputs carry their
+surrounding variables, which are transported when entering a binder.
 
 Results may have explicit slots, written `term of n` or `formula of n`. A lambda names those
 slots in an FOL body. A whole `${...}` body supplies a PRA expression whose author determines
@@ -120,9 +121,9 @@ private partial def substDefinition (k : Nat) (info : DefinitionInfo) (fs : List
           (operation canonical g.language value) result equal proof
       steps := steps ++ [(p.transport g.language s value, result, proof)]
     else steps := steps ++ [(value, value, .forallElim .eqRefl value)]
-  let build (values : List Term) := Term.definition info.name values
+  let build := info.apply
   let applied := applyTheorem theoremName [] (s :: values)
-  let source := Term.definition info.name fs
+  let source := build values
   let source := if info.isFormula then substitutedFormula s g.language source
     else substitutedTerm s g.language source
   let middle := build (steps.map (·.1))
@@ -253,10 +254,10 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
     return (result, .forallElim .eqRefl result)
   | .definition `FOL.Term.subst [values], [_, p] =>
     substApplication k false values p
-  | .definition name fs, [] =>
-    let some info := (definitions.getState (← getEnv)).find? fun d =>
-        d.name == name && !d.isFormula | throwError "unsupported term `{name}`"
-    substDefinition k info fs
+  | .definition name _, _ =>
+    let some (info, values) ← appliedDefinition? t | throwError "unsupported term `{name}`"
+    if info.isFormula then throwError "expected a term definition"
+    substDefinition k info values
   | _, _ => throwError "unsupported term in a definition body"
 
 /-- Substitute across an exact-arity tuple of terms, keeping its shape. -/
@@ -390,10 +391,10 @@ private partial def substFormula (k : Nat) (A : Term) : SubstitutionM (Term × P
     let (result, proof) ← substApplication k true values p
     return (result, mkEqTrans source (substitutedFormula (← lifted k) L A) result
       (applyTheorem `FOL.Formula.substWithDepth_liftSubst [L, A, depth] [g.f]) proof)
-  | .definition name fs, [] =>
-    let some info := (definitions.getState (← getEnv)).find? fun d =>
-        d.name == name && d.isFormula | throwError "unsupported formula `{name}`"
-    let (result, proof) ← substDefinition k info fs
+  | .definition name _, _ =>
+    let some (info, values) ← appliedDefinition? A | throwError "unsupported formula `{name}`"
+    unless info.isFormula do throwError "expected a formula definition"
+    let (result, proof) ← substDefinition k info values
     return (result, mkEqTrans source (substitutedFormula (← lifted k) L A) result
       (applyTheorem `FOL.Formula.substWithDepth_liftSubst [L, A, depth] [g.f]) proof)
   | _, _ => throwError "unsupported formula in a definition body"
@@ -406,16 +407,18 @@ def proveSubstitution (L : LanguageInfo) (info : DefinitionInfo) (source : Synta
   if info.resultArity > 0 then return info
   let environment := CoreEnvironment.getState (← getEnv)
   let some (.function declaration) := environment.lookup info.name | return info
-  let count := declaration.parameters.length
+  let count := info.binders.size
   let language := languageTerm L
   let f := Term.parameter 0
   let values := (List.range count).map fun i => Term.parameter (1 + i)
-  let body := Core.betaReduceTerm 2048 (declaration.body.instantiate values)
+  let body := fun inputs : List Term =>
+    let instantiated := declaration.body.instantiate (inputs.take declaration.parameters.length)
+    Core.betaReduceTerm 2048 ((inputs.drop declaration.parameters.length).foldl .app instantiated)
   try
     let syntaxParameters := values.zipIdx.filterMap fun (value, i) =>
       (info.syntaxAt? i).map (value, ·)
     let goal : SubstitutionGoal := ⟨language, f, syntaxParameters⟩
-    let action := if info.isFormula then substFormula 0 body else substTerm 0 body
+    let action := if info.isFormula then substFormula 0 (body values) else substTerm 0 (body values)
     let ((result, proof), found) ← (action.run goal).run []
     unless found.all (fun value => (syntaxParameters.lookup value).isSome) do
       throwError "ordinary PRA data used as contextual syntax needs an explicit syntax type"
@@ -423,19 +426,21 @@ def proveSubstitution (L : LanguageInfo) (info : DefinitionInfo) (source : Synta
       (info.syntaxAt? i).any (fun p => !p.isFormula && p.arity == 0)
     let arguments := values.zipIdx.map fun (value, i) =>
       if let some p := info.syntaxAt? i then p.transport language f value else value
-    let expected := Core.betaReduceTerm 2048 (declaration.body.instantiate arguments)
+    let expected := body arguments
     unless result == expected do
       throwError "a spliced expression depends on a term of the current scope"
-    let lhs := Term.definition info.name values
-    let rhs := Term.definition info.name arguments
+    let lhs := info.apply values
+    let rhs := info.apply arguments
     let (lhs, proof) := if info.isFormula then (substitutedFormula f language lhs, proof) else
       let unlifted := substitutedTerm (applyDefinition `FOL.liftSubst [language, numeral 0] [f])
         language lhs
       (substitutedTerm f language lhs, mkEqTrans (substitutedTerm f language lhs) unlifted rhs
         (mkEqSymm unlifted (substitutedTerm f language lhs)
           (applyTheorem `FOL.Term.subst_liftSubst_zero [language, lhs] [f])) proof)
+    let arguments := info.binders.toList.drop declaration.parameters.length
     let parameters := Parameter.function `f 1 ::
-      declaration.parameters.map (fun p => .function p.binderName p.arity)
+      (declaration.parameters.map (fun p => .function p.binderName p.arity) ++
+        arguments.map (fun name => .function name 0))
     let name := info.name ++ `subst
     publishChecked (.theoremE ⟨name, parameters, Predicate.equal lhs rhs, proof⟩) source
     return { info with substitution := some name, termPositions }
@@ -448,52 +453,69 @@ def elaborateDefinition : CommandElab := fun stx => do
   let (doc, entry) ← match stx[0] with
     | `(praDecl| $doc:docComment $decl:praDecl) => pure (some doc, decl.raw)
     | entry => pure (none, entry)
-  let (name, language, ps, formula, arity, slots, body) ← match entry with
-    | `(praDecl| fol_def $n:ident over $L:ident $ps:praParam* : term $[of $k:num]? :=
-        $[fun $xs:ident* =>]? $t:folTerm) =>
-      pure (n, L, ps, false, k.map (·.getNat) |>.getD 0, xs, t.raw)
-    | `(praDecl| fol_def $n:ident over $L:ident $ps:praParam* : formula $[of $k:num]? :=
-        $[fun $xs:ident* =>]? $a:folFormula) =>
-      pure (n, L, ps, true, k.map (·.getNat) |>.getD 0, xs, a.raw)
+  let (name, language, ps, inputs, formula, arity, lambda, body) ← match entry with
+    | `(praDecl| fol_def $n:ident over $L:ident $ps:praParam* :
+        $[$inputs:folDefInput →]* term $[of $k:num]? := $[fun $xs:ident* =>]? $t:folTerm) =>
+      pure (n, L, ps, inputs, false, k.map (·.getNat) |>.getD 0, xs, t.raw)
+    | `(praDecl| fol_def $n:ident over $L:ident $ps:praParam* :
+        $[$inputs:folDefInput →]* formula $[of $k:num]? := $[fun $xs:ident* =>]? $a:folFormula) =>
+      pure (n, L, ps, inputs, true, k.map (·.getNat) |>.getD 0, xs, a.raw)
     | _ => throwUnsupportedSyntax
   let L ← findLanguage language.getId.eraseMacroScopes
   let (binders, syntaxParameters) ← declarationParameters ps
-  let (body, scope) ← if let some xs := slots then do
-      unless xs.size == arity do throwError "expected {arity} explicit result binders"
-      let names := xs.toList.map (·.getId.eraseMacroScopes)
+  let names := lambda.getD #[]
+  unless names.size ≥ inputs.size do
+    throwErrorAt entry "expected {inputs.size} ordinary input binders"
+  let ordinary := names.extract 0 inputs.size
+  let slots := names.extract inputs.size names.size
+  let mut binderNames := ps.flatMap (fun p => p.raw[1].getArgs.map (·.getId.eraseMacroScopes))
+  let mut syntaxParameters := syntaxParameters
+  let mut dataNames := dataParameterNames ps
+  for (input, x) in inputs.zip ordinary do
+    let n := x.getId.eraseMacroScopes
+    if binderNames.contains n then throwErrorAt x "duplicate binder `{n}`"
+    binderNames := binderNames.push n
+    let `(folDefInput| $kind:ident $[of $k:num]?) := input | throwUnsupportedSyntax
+    match kind.getId.eraseMacroScopes with
+    | `Nat =>
+      unless k.isNone do throwErrorAt input "an ordinary Nat input has no syntax slots"
+      dataNames := dataNames.push n
+    | `term | `formula =>
+      syntaxParameters := syntaxParameters.push
+        ⟨n, kind.getId.eraseMacroScopes == `formula, k.map (·.getNat) |>.getD 0, false⟩
+    | _ => throwErrorAt input "expected Nat, term, or formula"
+  let (body, scope) ← if !slots.isEmpty then do
+      unless slots.size == arity do throwErrorAt entry "expected {arity} explicit result binders"
+      let names := slots.toList.map (·.getId.eraseMacroScopes)
       unless names.eraseDups.length == names.length do
-        throwError "duplicate result binder"
+        throwErrorAt entry "duplicate result binder"
       pure (body, names.reverse)
     else if body.isOfKind ``termSplice || body.isOfKind ``formulaSplice then
       pure (body, [])
-    else completeApplication body ⟨name.getId, formula, arity⟩ []
-  let mut parameters := #[]
-  let mut arguments := #[]
-  for p in ps do
-    let (ids, type) ← match p with
-      | `(praParam| ($ids:ident* : $type:praExpr)) => pure (ids, type)
-      | `(praParam| {$ids:ident* : $type:praExpr}) => pure (ids, type)
-      | _ => throwUnsupportedSyntax
-    if syntaxParameterType? type == some (false, 0) then
-      for id in ids do arguments := arguments.push id.getId.eraseMacroScopes
-    else
-      unless arguments.isEmpty do throwErrorAt p "put named parameters before term arguments"
-      for id in ids do parameters := parameters.push id.getId.eraseMacroScopes
+    else completeApplication body ⟨name.getId, formula, arity, false⟩ []
+  let positional := syntaxParameters.filterMap fun p =>
+    if !p.isFormula && p.arity == 0 then some p.name else none
   let previousData := activeDataParameters.getState (← getEnv)
-  modifyEnv (activeDataParameters.setState · (dataParameterNames ps))
+  modifyEnv (activeDataParameters.setState · dataNames)
   let value ← try
       if formula then formulaExpression L scope body syntaxParameters
       else termExpression L scope body syntaxParameters
     finally modifyEnv (activeDataParameters.setState · previousData)
-  let declaration ← `(praDecl| def $name:ident $binders:praParam* : Nat := $value)
+  let mut value := value
+  let mut type ← `(praExpr| Nat)
+  for x in ordinary.reverse do
+    value ← `(praExpr| fun $x:ident => $value)
+    type ← `(praExpr| Nat → $type)
+  let declaration ←
+    `(praDecl| def $name:ident $binders:praParam* : $type:praExpr := $value:praExpr)
   let declaration ← if let some doc := doc then
       `(praDecl| $doc:docComment $declaration:praDecl)
     else pure declaration
   elaborateDeclaration declaration
   let ns ← getCurrNamespace
-  let template ← if parameters.isEmpty && arity == 0 then do
-      let names ← arguments.mapM (fun n => liftCoreM (mkFreshUserName n))
-      let vars := arguments.toList.zip names.toList
+  let template ← if positional.size == binderNames.size && arity == 0 then do
+      let names ← positional.mapM (fun n => liftCoreM (mkFreshUserName n))
+      let vars := positional.toList.zip names.toList
       try
         let body ← if formula then Sum.inr <$> parseFormula L vars ⟨body⟩
           else Sum.inl <$> parseTerm L vars ⟨body⟩
@@ -505,8 +527,9 @@ def elaborateDefinition : CommandElab := fun stx => do
   let info : DefinitionInfo := {
     name := ns ++ name.getId.eraseMacroScopes
     language := L.name
-    parameters, arguments, template, syntaxParameters
-    isFormula := formula, resultArity := arity }
+    binders := binderNames
+    positional, template, syntaxParameters
+    arity := inputs.size, isFormula := formula, resultArity := arity }
   let info ← proveSubstitution L info name
   modifyEnv (definitions.addEntry · info)
 

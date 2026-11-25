@@ -5,10 +5,8 @@ framework for declaring first-order languages, theories, definitions, and proofs
 language. Each declaration and tactic script elaborates to ordinary numerical syntax codes and
 checked PRA proofs of `FOL.Provable`.
 
-Import `LeanPRA.Library.FOL.DSL.Tactic.Basic`, `LeanPRA.Library.FOL.DSL.Tactic.Rewrite`,
-`LeanPRA.Library.FOL.DSL.Tactic.Substitution`, `LeanPRA.Library.FOL.DSL.Tactic.Induction`, or
-`LeanPRA.Library.FOL.DSL.Tactic.SchemaApplication` for the first-order proof tactics, or import a
-theory module that re-exports them.
+Import `LeanPRA.Library.FOL.DSL.Tactic` for the first-order proof tactics. Theory modules
+that re-export it also make those tactics available.
 
 ## Module organization
 
@@ -73,9 +71,9 @@ fol_theory AddTheory over Arith extends Base where
   theory can be used directly in any extending theory.
 - Axiom schemas take syntax parameters `(p : formula of n)` or `(t : term of n)`. For membership
   checking, each parameter must have a recoverable occurrence in the axiom template where it is
-  applied to the surrounding bound variables in outermost-first order (with term parameters
-  occurring as one side of an equation). Static `fol_def` abbreviations without PRA parameters or
-  splices can appear inside axiom templates.
+  applied to the surrounding bound variables in outermost-first order. A term parameter may
+  occur inside a function or relation application. Static `fol_def` abbreviations without PRA
+  parameters or splices can appear inside axiom templates.
 
 ## Syntax parameters, definitions, and quotations
 
@@ -104,11 +102,14 @@ fol_def above over Arith (w x : term) : formula :=
   diagonal (p := fun u v => add(u, v) = w)(x)
 ```
 
-Term parameters of arity zero are passed positionally in parentheses, as in `double(x)` or
-`le(x, y)`. All other parameters (ordinary PRA parameters, `formula` parameters, and higher-arity
-`term of n` parameters) precede the positional list and use named arguments `(name := ...)`. A
-syntax parameter can be supplied as a lambda `(p := fun u v => ...)`, a formula or partial
-application `(p := R)`, or an injected numerical code `(p := ${code})`.
+In a quotation, arity-zero term inputs are passed positionally, as in `double(x)` or
+`le(x, y)`. All other inputs use named actuals `(name := ...)` before the positional list.
+A syntax input can be supplied as a lambda `(p := fun u v => ...)`, a formula or partial
+application `(p := R)`, or an injected numerical code `(p := ${code})`. A named actual is read
+as first-order syntax whenever it parses that way, and as a PRA expression otherwise. A `Nat`
+input written as a name, an application with spaces, or a parenthesized form is converted
+from that first-order reading; any other PRA expression for a `Nat` input is written as a braced
+splice `(n := ${expr})`.
 
 Results also accept `term of n` and `formula of n`. A lambda names the explicit result slots:
 
@@ -126,6 +127,29 @@ Write `equation(x, y)` to fill its slots, or pass `equation` to a `formula of 2`
 Ordinary declaration term arguments come first, followed by the result slots. A computed term
 such as `numeral (n := n)()` can likewise be used directly in FOL syntax.
 
+Inputs in the declaration header become PRA declaration parameters. Arrow domains become
+ordinary PRA arguments. Both support syntax inputs, and ordinary inputs may mix `Nat`,
+`term of n`, and `formula of n` in any order. Each becomes a numerical argument to the
+generated PRA function. Header parameters and ordinary arguments each keep their source order.
+The body lambda names the ordinary arguments first, then any explicit slots of the result.
+
+`derive_primrec` can compile an ordinary input as part of the program's runtime input.
+
+```lean
+fol_def numeralFunction over Arith : Nat → term := fun n =>
+  ${primrec (FOL.Term.const Arith.language 0)
+    (fun _ t => FOL.Term.app Arith.language 0 t) n}
+
+derive_primrec numeralFunction
+
+fol_def specialize over Arith (t : term) (p : formula of 1) :
+    formula of 1 → term → formula := fun q x => p(x) → q(t)
+```
+
+Write `numeralFunction n` in a PRA expression and `numeralFunction (n := n)()` in a quotation.
+In a quotation, `specialize (p := R) (q := S)(u, v)` supplies `u` for `t` and `v` for `x`.
+The returned formula is `R(v) → S(u)`.
+
 The entire body may be `${...}`, including when the result has explicit slots. The author of
 the PRA expression supplies its variable context and slot layout: the last result argument
 occupies position zero, and captured variables follow the result slots. The annotation records
@@ -139,9 +163,12 @@ pushes substitutions directly into the arguments of `D` without unfolding its bo
 substitution needs the body of a term definition, it can use a registered equation or open the
 definition. Definitions with explicit result slots use unfolding and registered equations.
 
-`Formula.subst f L A` replaces free variables by terms and lifts `f` beneath quantifiers to avoid
-capture. The lower-level `Formula.substWithDepth f L A d` passes each binder depth and variable
-index to `f`, which determines the replacement term and how bound variables are handled.
+The definitions and their constructor equations are in
+[Common/Substitution.lean](../Common/Substitution.lean).
+`Term.subst f L t` replaces each variable of index `i` in the term `t` by `f i`.
+`Formula.subst f L A` lifts `f` beneath quantifiers to avoid capture. Its underlying operation,
+`Formula.substWithDepth f L A d`, passes the current binder depth and variable index to `f`,
+which determines the replacement term.
 
 ### Quotations and splices
 

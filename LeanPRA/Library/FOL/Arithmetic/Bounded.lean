@@ -1,8 +1,7 @@
 module
 
 public import LeanPRA.Library.FOL.Arithmetic.Division
-public import LeanPRA.Library.FOL.DSL.Tactic.Substitution
-public meta import LeanPRA.Library.FOL.DSL.Tactic.SchemaApplication
+public import LeanPRA.Library.FOL.DSL.Tactic
 
 /-!
 # Bounded induction and finite bounds in PA

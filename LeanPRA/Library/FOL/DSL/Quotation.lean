@@ -117,9 +117,13 @@ The static template uses fresh names for its term parameters. -/
 structure DefinitionInfo where
   name : Name
   language : Name
-  parameters : Array Name
-  arguments : Array Name
+  /-- The declaration parameters followed by the ordinary arguments, in source order. -/
+  binders : Array Name
+  /-- The binders supplied by the positional term list in a quotation. -/
+  positional : Array Name
   isFormula : Bool
+  /-- The number of ordinary inputs to the PRA function. -/
+  arity : Nat := 0
   /-- Explicit term slots in the returned code, after the declaration's term arguments. -/
   resultArity : Nat := 0
   syntaxParameters : Array SyntaxParameter := #[]
@@ -131,10 +135,17 @@ structure DefinitionInfo where
   termPositions : List Nat := []
   deriving Inhabited
 
-/-- The syntax type of an argument in the numerical definition's parameter order. -/
+/-- The syntax type of a binder at its position in the numerical definition. -/
 def DefinitionInfo.syntaxAt? (d : DefinitionInfo) (i : Nat) : Option SyntaxParameter := do
-  let name ← (d.parameters ++ d.arguments)[i]?
+  let name ← d.binders[i]?
   d.syntaxParameters.find? (·.name == name)
+
+/-- Apply the numerical definition to its parameters and ordinary arguments in source order. -/
+def DefinitionInfo.apply (d : DefinitionInfo) (values : List Term) : Term :=
+  if d.arity == 0 then .definition d.name values
+  else
+    let (parameters, arguments) := values.splitAt (d.binders.size - d.arity)
+    applyDefinition d.name arguments parameters
 
 /-- Move a syntax parameter along a substitution, protecting its explicit argument slots. -/
 def SyntaxParameter.transport (p : SyntaxParameter) (L f value : Term) : Term :=
@@ -148,6 +159,13 @@ initialize definitions : SimplePersistentEnvExtension DefinitionInfo (Array Defi
     addEntryFn := Array.push
     addImportedFn := fun entries => entries.foldl (· ++ ·) #[]
   }
+
+/-- Find a FOL definition at a saturated numerical application and return all its inputs. -/
+def appliedDefinition? (t : Term) : CommandElabM (Option (DefinitionInfo × List Term)) := do
+  let (.definition name parameters, args) := getAppFnArgs t | return none
+  let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
+  unless d.arity == args.length do return none
+  return some (d, if args.isEmpty then parameters else parameters ++ args)
 
 def findDefinition (name : Name) : CommandElabM (Option DefinitionInfo) := do
   let some declaration ← LeanPRA.Surface.resolveDeclaration?
@@ -217,29 +235,20 @@ def FormulaView.variables : FormulaView → List Name
   | .imp a b => a.variables ++ b.variables
   | .all x a => a.variables.filter (· != x)
 
-private def replacementFunction (L : Term) (values : List Term) (targetSize : Nat) : Term :=
-  let tail := applyDefinition `FOL.Term.var [L.shift,
-    applyDefinition `add
-      [applyDefinition `sub [.bvar 0, numeral values.length], numeral targetSize]]
-  let body := values.zipIdx.foldr (fun (value, i) rest => applyDefinition `ite
-    [applyDefinition `eqb [.bvar 0, numeral i], value.shift, rest]) tail
-  .lam `i body
-
 /-- Rebuild a closed definition from the explicit term arguments in its view. -/
 private def definitionCode? (formula : Bool) (L value : Term) (values : List Term) :
     CommandElabM (Option Term) := do
-  let .definition name parameters := value | return none
-  let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
+  let some (d, inputs) ← appliedDefinition? value | return none
   if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
   unless L == applyDefinition (d.language ++ `language) && d.isFormula == formula do return none
-  let positions := if d.template.isSome then List.range d.arguments.size else d.termPositions
+  let positions := if d.template.isSome then List.range d.positional.size else d.termPositions
   unless (d.template.isSome || d.substitution.isSome) && values.length == positions.length do
     return none
   unless positions.zipIdx.all (fun (position, i) =>
-      parameters[position]? == some (applyDefinition `FOL.Term.var [L, numeral i])) do
+      inputs[position]? == some (applyDefinition `FOL.Term.var [L, numeral i])) do
     return none
-  return some (.definition name (positions.zipIdx.foldl (fun parameters (position, i) =>
-    parameters.set position values[i]!) parameters))
+  return some (d.apply (positions.zipIdx.foldl (fun inputs (position, i) =>
+    inputs.set position values[i]!) inputs))
 
 partial def TermView.encode (L : Term) (bound fvars : List Name) : TermView → CommandElabM Term
   | .parameter _ _ => throwError "a term parameter requires a schema instance"
@@ -249,7 +258,7 @@ partial def TermView.encode (L : Term) (bound fvars : List Name) : TermView → 
     let values ← args.mapM (encode L bound fvars)
     if let some applied ← definitionCode? false L value values then return applied
     return applyDefinition `FOL.Term.subst [L, value]
-      [replacementFunction L values scope.length]
+      [SubstitutionView.encode L ⟨values, scope.length⟩]
   | .var n => do
     if let some i := bound.idxOf? n then return applyDefinition `FOL.Term.var [L, numeral i]
     if let some i := fvars.idxOf? n then
@@ -319,7 +328,7 @@ private def abbreviation (L : LanguageInfo) (ctx : TemplateContext) (d : Definit
     let language := languageTerm L
     let slots := (List.range values.length).map (fun i =>
       applyDefinition `FOL.Term.var [language, numeral i])
-    let code := Term.definition d.name slots
+    let code := d.apply slots
     return if d.isFormula then .inr (.code language code values)
       else .inl (.code language code values)
   return match body with

@@ -52,6 +52,7 @@ public import LeanPRA.Library.FOL.DSL.Reduction
 public import LeanPRA.Library.FOL.DSL.Schema
 public import LeanPRA.Library.FOL.DSL.Substitution
 public import LeanPRA.Library.FOL.DSL.Syntax
+public import LeanPRA.Library.FOL.DSL.Tactic
 public import LeanPRA.Library.FOL.DSL.Tactic.Basic
 public import LeanPRA.Library.FOL.DSL.Tactic.Context
 public import LeanPRA.Library.FOL.DSL.Tactic.Induction

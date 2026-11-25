@@ -64,14 +64,14 @@ partial def freePositions (closed : Array DefinitionInfo) (t : Term) (depth : Na
     substituted (freePositions closed a) f
   | .definition `FOL.consSubst [t, rest], [] =>
     max (freePositions closed t depth) (freePositions closed rest depth)
-  | .definition name values, [] =>
+  | .definition name parameters, args =>
     match closed.find? (·.name == name) with
     | some d =>
-      values.zipIdx.foldl (fun n (value, i) =>
+      (parameters ++ args).zipIdx.foldl (fun n (value, i) =>
         if let some p := d.syntaxAt? i then
           max n (freePositions closed value (depth + p.arity))
         else n) (d.resultArity - depth)
-    | none => 0
+    | none => args.foldl (fun n a => max n (freePositions closed a depth)) 0
   | _, _ => args.foldl (fun n a => max n (freePositions closed a depth)) 0
 
 /-- The definitions that stay closed when terms and formulas are read in the current scope. -/
@@ -120,7 +120,7 @@ partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
         let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
           values.set position (applyDefinition `FOL.Term.var [language, numeral i])) values
         let arguments ← terms.mapM (readTerm L bound free · (fuel - 1))
-        return .code language (.definition d.name variables) arguments
+        return .code language (d.apply variables) arguments
       return .code language value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
   if reduced.value != value then return ← readTerm L bound free reduced.value (fuel - 1)
@@ -167,10 +167,10 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
       let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
         values.set position (applyDefinition `FOL.Term.var [languageTerm L, numeral i])) values
       let arguments ← terms.mapM (readTerm L bound free ·)
-      return .code (languageTerm L) (.definition d.name variables) arguments
+      return .code (languageTerm L) (d.apply variables) arguments
   if fol.preserveDisplayNames.get (← getOptions) then
-    if let .definition name _ := value then
-      if (definitions.getState (← getEnv)).any (fun d => d.name == name && d.isFormula) then
+    if let some (d, _) ← appliedDefinition? value then
+      if d.isFormula then
         return .code (languageTerm L) value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
   if reduced.value != value then return ← readFormula L bound free reduced.value (fuel - 1)

@@ -294,8 +294,7 @@ abbrev CalculationM := StateRefT CalculationState CommandElabM
 theorem. Terms with no result slots can also be opened when a substitution needs their body. -/
 def definitionApplication? (t : Term) :
     CommandElabM (Option (DefinitionInfo × List Term)) := do
-  let .definition name values := t | return none
-  let some d := (definitions.getState (← getEnv)).find? (·.name == name) | return none
+  let some (d, values) ← appliedDefinition? t | return none
   unless !(← opensDefinitions) &&
       (if d.isFormula then d.substitution.isSome else d.resultArity == 0) do return none
   return some (d, values)
@@ -429,8 +428,8 @@ mutual
 
   private partial def calculateFresh (input : Term) : CalculationM Calculation := do
     if fol.preserveDisplayNames.get (← getOptions) then
-      if let .definition name _ := input then
-        if (definitions.getState (← getEnv)).any (fun d => d.name == name && d.isFormula) then
+      if let some (d, _) ← appliedDefinition? input then
+        if d.isFormula then
           return ⟨input, .forallElim .eqRefl input⟩
     let beta := Core.betaReduceTerm 2048 input
     if beta != input then return ← follow input beta (.forallElim .eqRefl input)
@@ -498,19 +497,18 @@ mutual
   /-- Calculate the arguments of a definition that stays closed. -/
   private partial def calculateDefinition (t : Term) (d : DefinitionInfo)
       (values : List Term) : CalculationM Calculation := do
-    let name := d.name
     let mut current := values
     let mut proof := Proof.forallElim .eqRefl t
     for (value, i) in values.zipIdx do
       let r ← calculate value
       if r.value == value then continue
-      let hole := Term.definition name
+      let hole := d.apply
         ((current.take i).map (·.shift) ++ [.bvar 0] ++ (current.drop (i + 1)).map (·.shift))
       let next := current.set i r.value
-      proof := joinEqualities t (.definition name current) (.definition name next) proof
+      proof := joinEqualities t (d.apply current) (d.apply next) proof
         (mkEqCongr (.lam `x hole) value r.value r.proof)
       current := next
-    return ⟨.definition name current, proof⟩
+    return ⟨d.apply current, proof⟩
 
   /-- Apply the checked substitution theorem while keeping the definition closed. -/
   private partial def substDefinition (L f : Term) (d : DefinitionInfo) (values : List Term) :
@@ -519,7 +517,7 @@ mutual
     let some theoremName := d.substitution | return none
     let arguments := values.zipIdx.map fun (value, i) =>
       if let some p := d.syntaxAt? i then p.transport L f value else value
-    return some ⟨.definition d.name arguments,
+    return some ⟨d.apply arguments,
       applyTheorem theoremName [] (f :: values)⟩
 
   private partial def calculateHead (t : Term) : CalculationM Calculation := do
@@ -955,7 +953,7 @@ partial def reconcile (a b : Term) (fuel : Nat := 64) :
   match ← closedDefinition? a, ← closedDefinition? b with
   | some (d, values), some (e, values') =>
     if d.name == e.name then
-      if let some result ← entrywise (.definition d.name) values values' then
+      if let some result ← entrywise d.apply values values' then
         return some result
       let some oa ← opened a | return none
       let some ob ← opened b | return none

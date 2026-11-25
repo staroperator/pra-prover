@@ -131,8 +131,7 @@ def declareTheory (name lang : Name) (parent : Option Name) (entries : Array Syn
       let template ← parseFormula L [] a parameters.toList (useDefinitions := true)
       T := { T with axioms := T.axioms.push ⟨axiomName, parameters, template⟩ }
     | _ => throwUnsupportedSyntax
-  let Lt := languageTerm L
-  for info in T.axioms do compileAxiom T.name Lt info source
+  for info in T.axioms do compileAxiom T.name L info source
   let body := (T.axioms.toList.drop T.inherited).foldr (fun info rest => applyDefinition `bor
     [applyDefinition (T.name ++ info.name ++ `isAxiom) [.bvar 0], rest]) (numeral 0)
   let body := if let some parent := T.parent then
