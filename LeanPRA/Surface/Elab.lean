@@ -2049,6 +2049,27 @@ def elaborateDeclaration (stx : Syntax) : CommandElabM Unit := withDeferredDispl
   modifyEnv (declarationMetadata.addEntry · (name, metadata))
   if let some d := environment.lookup name then addDeclarationInfo id d
 
+/-- Elaborate a numerical expression of the given arity without publishing a declaration.
+The optional binders are PRA declaration parameters; the result refers to them as Core
+parameters in declaration order, as the body of a `def` with those parameters would. -/
+def elaborateNumericalExpression (body : Syntax) (arity : Nat) (binders : Array Syntax := #[]) :
+    CommandElabM Core.Term :=
+  withDeferredDisplays do
+    let environment := CoreEnvironment.getState (← getEnv)
+    let (s, _) ← parameterScope environment binders
+    unless s.context.predicates.isEmpty do
+      throwErrorAt body "a numerical expression cannot take predicate parameters"
+    runObject { s with parentExpression := body } do
+      let body ← expandPraSyntax body
+      let draft ← term body arity
+      finishPendingChecks
+      let term ← match Metavariable.Frontend.completeTerm (← resolvedTerm draft) with
+        | .ok value => pure value
+        | .error error => throwErrorAt body "{error}"
+      checked body (Core.checkTerm (← getMaxDepth) environment
+        ((← projection).encodeContext (← currentContext)) term arity)
+      pure term
+
 /-- Elaborate `#check stx` and log its inferred Core type. -/
 def elaborateCheck (stx : Syntax) : CommandElabM Unit := do
   let stx ← expandPraSyntax stx

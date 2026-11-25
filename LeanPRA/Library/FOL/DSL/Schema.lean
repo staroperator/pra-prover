@@ -4,23 +4,25 @@ public meta import LeanPRA.Library.FOL.DSL.Quotation
 public import LeanPRA.Library.FOL.Common.Proof
 
 /-!
-# Axiom schemas with syntax parameters
+# Axiom schemas with syntax and numerical parameters
 
 A declaration `axiom name (p : formula of n) := ...` describes a formula template. Arguments to `p`
 fill its `n` substitution slots; additional surrounding positions are allowed. Parameters may
-produce terms or formulas, and arity zero allows captured free variables.
+produce terms or formulas, and arity zero allows captured free variables. A `Nat` parameter
+supplies a family index or appears in a computation of an index.
 
-- `AxiomInfo` stores the template and its named syntax parameters.
-- `FormulaActual` stores a term or formula with the named variables used for its slots.
-- `instantiateSchema` substitutes actual formulas into a template without capturing variables.
+- `AxiomInfo` stores the template, its parameters and its optional numerical guard.
+- `FormulaActual` stores a numerical argument or a term or formula with named slots.
+- `instantiateSchema` substitutes arguments into a template without capturing variables.
 - `compileAxiom` emits numerical instance and membership functions and checked introduction lemmas.
 
-To recover an argument, the compiler follows the enclosing constructors to an occurrence applied
-to exactly the surrounding binders in outermost-first order. A term parameter may occur as an
-equality side or inside a function or relation application. The generated test recovers the
-arguments and compares the reconstructed formula with the candidate.
+To recover a term or formula argument, the compiler follows the enclosing constructors to an
+occurrence applied to exactly the surrounding binders in outermost-first order. Numerical
+parameters can occur directly in family indices or inside constructors with registered projections.
+The test recovers the arguments, compares
+the reconstructed formula with the candidate, and checks that any guard returns exactly one.
 `TheoryName.schema.isAxiom` also accepts universal closures of instances. The compiler uses the
-constructor equations to prove membership from the arguments.
+constructor equations to prove membership from the arguments and any guard premise.
 -/
 
 public meta section
@@ -39,6 +41,8 @@ structure AxiomInfo where
   name : Name
   parameters : Array SyntaxParameter := #[]
   template : FormulaView
+  /-- A numerical function of all arguments in declaration order, accepting when it returns `1`. -/
+  guard? : Option Term := none
   deriving Inhabited
 
 private def AxiomInfo.sentenceName? (info : AxiomInfo) : Option Name :=
@@ -55,33 +59,43 @@ structure FormulaActual where
   body : FormulaView
   binders : List Name
   termBody : Option TermView := none
+  number : Option Term := none
   deriving BEq, Hashable, Repr, Inhabited
 
 def FormulaActual.encode (actual : FormulaActual) (L : Term) (bound free : List Name) :
     CommandElabM Term :=
-  match actual.termBody with
-  | some t => t.encode L (actual.binders.reverse ++ bound) free
-  | none => actual.body.encode L (actual.binders.reverse ++ bound) free
+  match actual.number, actual.termBody with
+  | some n, _ => pure n
+  | none, some t => t.encode L (actual.binders.reverse ++ bound) free
+  | none, none => actual.body.encode L (actual.binders.reverse ++ bound) free
 
-private partial def instantiateTerm (actuals : Array FormulaActual) : TermView → TermView
+private partial def instantiateTerm (actuals : Array FormulaActual) (numbers : List Term) :
+    TermView → TermView
   | .parameter i args =>
     let actual := actuals[i]!
-    let values := args.map (instantiateTerm actuals)
+    let values := args.map (instantiateTerm actuals numbers)
     (actual.termBody.getD (.constant 0)).substitute (actual.binders.zip values)
-  | .app i args => .app i (args.map (instantiateTerm actuals))
-  | .indexedApp i k args => .indexedApp i k (args.map (instantiateTerm actuals))
+  | .app i args => .app i (args.map (instantiateTerm actuals numbers))
+  | .indexedConst i k => .indexedConst i (k.instantiate numbers)
+  | .indexedApp i k args =>
+    .indexedApp i (k.instantiate numbers) (args.map (instantiateTerm actuals numbers))
   | t => t
 
-def instantiateSchema (actuals : Array FormulaActual) : FormulaView → FormulaView
+private def instantiateFormula (actuals : Array FormulaActual) (numbers : List Term) :
+    FormulaView → FormulaView
   | .parameter i args =>
     let actual := actuals[i]!
-    actual.body.substitute (actual.binders.zip (args.map (instantiateTerm actuals)))
-  | .equal t u => .equal (instantiateTerm actuals t) (instantiateTerm actuals u)
-  | .relation i args => .relation i (args.map (instantiateTerm actuals))
-  | .indexedRelation i k args => .indexedRelation i k (args.map (instantiateTerm actuals))
-  | .imp a b => .imp (instantiateSchema actuals a) (instantiateSchema actuals b)
-  | .all x a => .all x (instantiateSchema actuals a)
+    actual.body.substitute (actual.binders.zip (args.map (instantiateTerm actuals numbers)))
+  | .equal t u => .equal (instantiateTerm actuals numbers t) (instantiateTerm actuals numbers u)
+  | .relation i args => .relation i (args.map (instantiateTerm actuals numbers))
+  | .indexedRelation i k args =>
+    .indexedRelation i (k.instantiate numbers) (args.map (instantiateTerm actuals numbers))
+  | .imp a b => .imp (instantiateFormula actuals numbers a) (instantiateFormula actuals numbers b)
+  | .all x a => .all x (instantiateFormula actuals numbers a)
   | a => a
+
+def instantiateSchema (actuals : Array FormulaActual) (template : FormulaView) : FormulaView :=
+  instantiateFormula actuals (actuals.toList.map fun a => a.number.getD .zero) template
 
 private def canonicalArguments (bound : List Name) (args : List TermView) : Bool :=
   args == bound.reverse.map TermView.var
@@ -98,8 +112,13 @@ private partial def encodeTemplateTerm (L : Term) (actuals : Array Term) (bound 
       [L, numeral i, tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | .indexedApp i k args => do
     return applyDefinition `FOL.Term.app
-      [L, applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, k],
+      [L, applyDefinition `FOL.Language.functionFamilyMember [L, numeral i,
+        k.instantiate actuals.toList],
        tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
+  | .indexedConst i k =>
+    return applyDefinition `FOL.Term.const
+      [L, applyDefinition `FOL.Language.constantFamilyMember [L, numeral i,
+        k.instantiate actuals.toList]]
   | t => t.encode L bound []
 
 private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name) :
@@ -124,7 +143,8 @@ private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name)
       [L, numeral i, tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | .indexedRelation i k args => do
     return applyDefinition `FOL.Formula.rel
-      [L, applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, k],
+      [L, applyDefinition `FOL.Language.relationFamilyMember [L, numeral i,
+        k.instantiate actuals.toList],
        tupleCode (← args.mapM (encodeTemplateTerm L actuals bound))]
   | a => a.encode L bound []
 
@@ -139,6 +159,65 @@ private def applyProjection (project value : Term) : Term :=
   | .lam _ body => body.subst0 value
   | _ => .app project value
 
+private structure IndexProjection where
+  theoremName : Name
+  builder : Name
+  arity : Nat
+  argument : Nat
+  project : Term
+  deriving Inhabited
+
+private initialize indexProjections :
+    SimplePersistentEnvExtension IndexProjection (Array IndexProjection) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (· ++ ·) #[]
+    addEntryFn := Array.push
+  }
+
+private partial def projectionBody (constructorCall : Term) (term : Term) : Option Term := do
+  if term == constructorCall then return .bvar 0
+  let .app (.definition name []) arg := term | none
+  return .app (.definition name []) (← projectionBody constructorCall arg)
+
+/-- Register a checked equation such as `∀ a b, project (build a b) = a`.
+The projection may be a composition of named unary functions. Axiom membership uses it to read
+the selected argument and checks the entire reconstructed formula. -/
+def registerAxiomIndexProjection (builder theoremName : Name) : CommandElabM Unit := do
+  let env := LeanPRA.Surface.CoreEnvironment.getState (← getEnv)
+  let some (.theoremE theoremDecl) := env.lookup theoremName |
+    throwError "expected a checked PRA theorem `{theoremName}`"
+  unless theoremDecl.parameters.isEmpty do
+    throwError "an index projection theorem must use universal quantifiers for its arguments"
+  let mut type := Core.betaReducePredicate 2048 theoremDecl.type
+  let mut arity := 0
+  while let .all (.lam _ body) := type do
+    arity := arity + 1
+    type := body
+  let .equal lhs (.bvar index) := type |
+    throwError "an index projection theorem must equate a projection with a bound variable"
+  unless index < arity do throwError "the result must be a builder argument"
+  let inputs := (List.range arity).reverse.map Term.bvar
+  let constructorCall := applyDefinition builder inputs
+  let some body := projectionBody constructorCall lhs |
+    throwError "expected a projection of `{builder}` applied to all binders in order"
+  let rule : IndexProjection := ⟨theoremName, builder, arity, arity - 1 - index,
+    .lam `code body⟩
+  modifyEnv (indexProjections.addEntry · rule)
+
+private partial def recoverIndex (rules : Array IndexProjection) (actuals : Array Term)
+    (parameter : Nat) (index : Term) : Option (List RecoveryStep) := do
+  if index == .parameter parameter then return []
+  let (.definition name [], args) := getAppFnArgs index | none
+  for rule in rules do
+    if rule.builder == name && rule.arity == args.length then
+      let arg := args[rule.argument]!
+      if let some rest := recoverIndex rules actuals parameter arg then
+        let values := args.map (·.instantiate actuals.toList)
+        let step : RecoveryStep := ⟨rule.project, values[rule.argument]!,
+          applyTheorem rule.theoremName values⟩
+        return step :: rest
+  none
+
 private def pairStep (lhs rhs : Term) (takeRight : Bool) : RecoveryStep :=
   if takeRight then
     ⟨applyDefinition `unpairRight, rhs, applyTheorem `unpairRight_pair [lhs, rhs]⟩
@@ -151,11 +230,20 @@ private def tupleSteps (index : Nat) : List Term → List RecoveryStep
     else pairStep lhs rhs true :: tupleSteps (index - 1) rest
   | _ => []
 
+private def tupleComponents (value : Term) : Nat → List Term
+  | n + 2 =>
+    match getAppFnArgs value with
+    | (.definition `pair [], [lhs, rhs]) => lhs :: tupleComponents rhs (n + 1)
+    | _ => []
+  | 1 => [value]
+  | 0 => []
+
 private structure RecoveryContext where
   language : LanguageInfo
   actuals : Array Term
   parameter : Nat
   bound : List Name := []
+  indexProjections : Array IndexProjection := #[]
 
 private def RecoveryContext.term (ctx : RecoveryContext) (t : TermView) : CommandElabM Term :=
   encodeTemplateTerm (languageTerm ctx.language) ctx.actuals ctx.bound t
@@ -219,6 +307,81 @@ private def familyBound (L : LanguageInfo) (kind : FamilyKind) (i : Nat) : Comma
   | .relation => proveSymbolBound L i `FOL.Language.relationFamilyCount
       `FOL.Language.relationFamilies_make 5 (some `FOL.Language.relationFamilies)
 
+private def familyMemberStep (prefixCount familyCount symbol family member : Term) (bound : Proof) :
+    RecoveryStep := Id.run do
+  let quotient := Term.lam `j (applyDefinition `div
+    [applyDefinition `sub [.bvar 0, prefixCount], familyCount])
+  let payload := applyDefinition `add [applyDefinition `mul [familyCount, member], family]
+  let subtract := applyDefinition `sub [symbol, prefixCount]
+  let division := applyDefinition `div [payload, familyCount]
+  let positive := applyTheorem `lt_of_le_of_lt [.zero, family, familyCount] []
+    [applyTheorem `zero_le [family], bound]
+  let nonzero := applyTheorem `ne_zero_of_pos [familyCount] [] [positive]
+  let subtractPrefix := applyTheorem `add_sub_self_left [prefixCount, payload]
+  let proof := mkEqTrans (applyProjection quotient symbol) division member
+    (mkEqCongr (.lam `n (applyDefinition `div [.bvar 0, familyCount]))
+      subtract payload subtractPrefix)
+    (applyTheorem `div_mul_add_of_lt [familyCount, member, family] [] [nonzero, bound])
+  return ⟨quotient, member, proof⟩
+
+private def RecoveryContext.member (ctx : RecoveryContext) (kind : FamilyKind) (i : Nat)
+    (packed : Term) (args : List TermView := []) :
+    CommandElabM (Option (List RecoveryStep)) := do
+  let language := ctx.language
+  let L := languageTerm language
+  let families := match kind with
+    | .constant => language.constantFamilies
+    | .function => language.functionFamilies
+    | .relation => language.relationFamilies
+  let components := tupleComponents packed families[i]!.indexArity
+  let recoverComponent (component : Term) :=
+    recoverIndex ctx.indexProjections ctx.actuals ctx.parameter component
+  let some (position, recovery) := components.zipIdx.findSome? (fun (component, position) =>
+    (recoverComponent component).map fun path => (position, path)) | return none
+  let family := numeral i
+  let values := components.map (·.instantiate ctx.actuals.toList)
+  let member := tupleCode values
+  let (symbol, prefixCount, familyCount) := match kind with
+    | .constant =>
+      (`FOL.Language.constantFamilyMember, `FOL.Language.constants,
+        `FOL.Language.constantFamilyCount)
+    | .function =>
+      (`FOL.Language.functionFamilyMember, `FOL.Language.functionCount,
+        `FOL.Language.functionFamilyCount)
+    | .relation =>
+      (`FOL.Language.relationFamilyMember, `FOL.Language.relationCount,
+        `FOL.Language.relationFamilyCount)
+  let j := applyDefinition symbol [L, family, member]
+  let prefixCount := applyDefinition prefixCount [L]
+  let familyCount := applyDefinition familyCount [L]
+  let arguments := tupleCode (← args.mapM ctx.term)
+  let bound ← familyBound language kind i
+  let step := match kind with
+    | .constant =>
+      ⟨applyDefinition `FOL.Term.constantIndex [L], j,
+        applyTheorem `FOL.Term.constantIndex_const_of_le [L, j] []
+          [applyTheorem `le_add_right [prefixCount,
+            applyDefinition `add [applyDefinition `mul [familyCount, member], family]]]⟩
+    | .function =>
+      let head := applyDefinition `FOL.Term.head
+        [L, applyDefinition `FOL.Term.app [L, j, arguments]]
+      let isFunction := applyTheorem `FOL.Language.isFunction_familyMember [L, family, member] []
+        [bound]
+      let pred := applyDefinition `pred
+      let next := Term.app .succ j
+      ⟨.lam `t (applyDefinition `pred [applyDefinition `FOL.Term.head [L, .bvar 0]]), j,
+        mkEqTrans (.app pred head) (.app pred next) j
+          (mkEqCongr pred head next (applyTheorem `FOL.Term.head_app [L, j, arguments] []
+            [isFunction]))
+          (applyTheorem `pred_succ [j])⟩
+    | .relation =>
+      let isRelation := applyTheorem `FOL.Language.isRelation_familyMember [L, family, member] []
+        [bound]
+      ⟨applyDefinition `FOL.Formula.relationIndex [L], j,
+        applyTheorem `FOL.Formula.relationIndex_rel [L, j, arguments] [] [isRelation]⟩
+  return some (step :: familyMemberStep prefixCount familyCount j family member bound ::
+    (tupleSteps position values ++ recovery))
+
 mutual
 
 private partial def RecoveryContext.inTerm (ctx : RecoveryContext) (t : TermView) :
@@ -227,16 +390,19 @@ private partial def RecoveryContext.inTerm (ctx : RecoveryContext) (t : TermView
   match t with
   | .parameter i args =>
     return if ctx.isCanonical i args then some [] else none
+  | .indexedConst i k => ctx.member .constant i k
   | .app i args =>
     ctx.inSymbolArguments false args (numeral i) do
       let bound ← proveSymbolBound ctx.language i `FOL.Language.functionCount
         `FOL.Language.functions_make 1 (some `FOL.Language.functions)
       return applyTheorem `FOL.Language.isFunction_of_lt [L, numeral i] [] [bound]
   | .indexedApp i k args =>
-    let symbol := applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, k]
+    if let some steps ← ctx.member .function i k args then return some steps
+    let member := k.instantiate ctx.actuals.toList
+    let symbol := applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, member]
     ctx.inSymbolArguments false args symbol do
       let bound ← familyBound ctx.language .function i
-      return applyTheorem `FOL.Language.isFunction_familyMember [L, numeral i, k] [] [bound]
+      return applyTheorem `FOL.Language.isFunction_familyMember [L, numeral i, member] [] [bound]
   | _ => return none
 
 private partial def RecoveryContext.inArguments (ctx : RecoveryContext) (args : List TermView) :
@@ -294,10 +460,12 @@ private partial def RecoveryContext.inFormula (ctx : RecoveryContext) (a : Formu
         `FOL.Language.relations_make 2 (some `FOL.Language.relations)
       return applyTheorem `FOL.Language.isRelation_of_lt [L, numeral i] [] [bound]
   | .indexedRelation i k args =>
-    let symbol := applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, k]
+    if let some steps ← ctx.member .relation i k args then return some steps
+    let member := k.instantiate ctx.actuals.toList
+    let symbol := applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, member]
     ctx.inSymbolArguments true args symbol do
       let bound ← familyBound ctx.language .relation i
-      return applyTheorem `FOL.Language.isRelation_familyMember [L, numeral i, k] [] [bound]
+      return applyTheorem `FOL.Language.isRelation_familyMember [L, numeral i, member] [] [bound]
   | _ => return none
 
 private def recover (input : Term) (path : List RecoveryStep) : Term :=
@@ -321,6 +489,9 @@ private def quantifyProof (names : List Name) (type : Predicate) (proof : Proof)
   names.foldr (fun (name : Name) (type, proof) =>
     let motive := Predicate.lam name type
     (.all motive, .forallIntro name motive proof)) (type, proof)
+
+private def applyGuard (guard : Term) (actuals : List Term) : Term :=
+  actuals.foldl applyProjection guard
 
 private def reconstruct (build : List Term → Term) (actuals recovered : Array Term)
     (proofs : Array Proof) : Proof := Id.run do
@@ -348,18 +519,25 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
   let actuals := (List.range n).map (fun i => Term.bvar (n - i - 1))
   let parameters := actuals.toArray
   let mut paths : Array (List RecoveryStep) := #[]
+  let projections := indexProjections.getState (← getEnv)
   for i in [:n] do
     let parameter := info.parameters[i]!
     let ctx : RecoveryContext := { language, actuals := parameters, parameter := i }
-    let some path ← ctx.inFormula info.template |
-      throwError "syntax parameter `{parameter.name}` needs a recoverable occurrence applied \
+    let direct ← ctx.inFormula info.template
+    let path ← if direct.isNone && parameter.isNumeric && !projections.isEmpty then
+        ({ ctx with indexProjections := projections }).inFormula info.template
+      else pure direct
+    let some path := path |
+      if parameter.isNumeric then
+        throwError "cannot recover numerical parameter `{parameter.name}` from a family index"
+      else throwError "syntax parameter `{parameter.name}` needs a recoverable occurrence applied \
         to its enclosing binders in outermost-first order"
     paths := paths.push path
   if info.sentenceName?.isNone then
     let body ← encodeTemplate L actuals.toArray [] info.template
     let body := info.parameters.toList.foldr (fun p body => Term.lam p.name body) body
     publishChecked (.function ⟨formulaName, [], n, body⟩) source
-  if n == 0 then
+  if n == 0 && info.guard?.isNone then
     publishChecked (.function ⟨testName, [], 1,
       .lam `A (applyDefinition `eqb [.bvar 0, applyDefinition formulaName])⟩) source
     let formula := applyDefinition formulaName
@@ -368,8 +546,13 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
       applyTheorem `eqb_self [formula]⟩) source
     return
   let recovered := paths.toList.map (recover (.bvar 0))
+  let shapeTest := applyDefinition `eqb [.bvar 0, applyDefinition formulaName recovered]
+  let test := match info.guard? with
+    | none => shapeTest
+    | some guard => applyDefinition `band
+      [shapeTest, applyDefinition `eqb [applyGuard guard recovered, numeral 1]]
   publishChecked (.function ⟨name ++ `isInstance, [], 1,
-    .lam `A (applyDefinition `eqb [.bvar 0, applyDefinition formulaName recovered])⟩) source
+    .lam `A test⟩) source
   let instanceCode := applyDefinition formulaName actuals
   let recoveredArgs := paths.map (recover instanceCode)
   let recoveryProofs := paths.map (proveRecovery instanceCode)
@@ -381,10 +564,34 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
     (mkEqSymm reconstructed instanceCode equalCode)
   let instanceType := Predicate.equal
     (applyDefinition (name ++ `isInstance) [instanceCode]) (numeral 1)
+  let mut instanceProof := checkedCode
+  let mut guardPremise := none
+  if let some guard := info.guard? then
+    let value := applyGuard guard actuals
+    let recoveredValue := applyGuard guard recoveredArgs.toList
+    let equalGuard := reconstruct (applyGuard guard) parameters recoveredArgs recoveryProofs
+    let accepts := mkEqTrans recoveredValue value (numeral 1) equalGuard (.hyp 0)
+    let guardCharacterization ← projectTheorem true `eqb_eq_one [recoveredValue, numeral 1]
+    let checkedGuard := Proof.impElim guardCharacterization accepts
+    let tests := [applyDefinition `eqb [instanceCode, reconstructed],
+      applyDefinition `eqb [recoveredValue, numeral 1]]
+    instanceProof := applyTheorem `band_eq_one_of_eq_one tests [] [checkedCode, checkedGuard]
+    guardPremise := some (Predicate.equal value (numeral 1))
+  let withGuard (type : Predicate) (proof : Proof) := match guardPremise with
+    | none => (type, proof)
+    | some premise => (.imp premise type, .impIntro `guard premise proof)
   let names := info.parameters.toList.map (·.name)
-  let (instanceType, checkedInstance) := quantifyProof names instanceType checkedCode
+  let (instanceType, checkedInstance) := withGuard instanceType instanceProof
+  let (instanceType, checkedInstance) := quantifyProof names instanceType checkedInstance
   publishChecked (.theoremE ⟨name ++ `isInstance_of_instance, [],
     instanceType, checkedInstance⟩) source
+  if n == 0 then
+    publishChecked (.function ⟨testName, [], 1, applyDefinition (name ++ `isInstance)⟩) source
+    let axiomType := Predicate.equal (applyDefinition testName [instanceCode]) (numeral 1)
+    let (axiomType, proof) := withGuard axiomType
+      (applyTheorem (name ++ `isInstance_of_instance) [] [] [.hyp 0])
+    publishChecked (.theoremE ⟨name ++ `isAxiom_of_instance, [], axiomType, proof⟩) source
+    return
   let candidate := Term.bvar 1
   let history := Term.bvar 0
   let isAll := applyDefinition `band [applyDefinition `isPos [candidate],
@@ -406,9 +613,11 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
     (applyTheorem `bor_eq_one_of_left_eq_one disjuncts [] [.hyp 0]))
   publishChecked (.theoremE ⟨name ++ `isAxiom_of_isInstance, [], .all motive, proof⟩) source
   let checkedAxiom := applyTheorem (name ++ `isAxiom_of_isInstance) [instanceCode] []
-    [applyTheorem (name ++ `isInstance_of_instance) actuals]
-  let (axiomType, checkedAxiom) := quantifyProof names
+    [applyTheorem (name ++ `isInstance_of_instance) actuals []
+      (if guardPremise.isSome then [.hyp 0] else [])]
+  let (axiomType, checkedAxiom) := withGuard
     (.equal (applyDefinition testName [instanceCode]) (numeral 1)) checkedAxiom
+  let (axiomType, checkedAxiom) := quantifyProof names axiomType checkedAxiom
   publishChecked (.theoremE ⟨name ++ `isAxiom_of_instance, [], axiomType, checkedAxiom⟩) source
   let allA := applyDefinition `FOL.Formula.all [A]
   let history := applyDefinition `Sequence.generate [allA] [step]

@@ -752,6 +752,34 @@ theorem subst_all (f : Nat → Nat) : ∀ L A,
   exact eq_congr all (eq_trans (substWithDepth_offset g L 1 A 0)
     (substWithDepth_congr (fun d i => g (d + 1) i) h L pointwise A 0))
 
+theorem isQuantifierFree_substWithDepth (f : Nat → Nat → Nat) : ∀ L A d,
+    isQuantifierFree L (substWithDepth f L A d) = isQuantifierFree L A := by
+  intro L
+  apply induction_eq (fun A d => isQuantifierFree L (substWithDepth f L A d))
+    (fun A _ => isQuantifierFree L A) L
+  · intro d
+    rw [substWithDepth_falsum f L d]
+  · intro t u d
+    rw [substWithDepth_equal f L t u d, isQuantifierFree_equal L (Term.subst (f d) L t)
+      (Term.subst (f d) L u), isQuantifierFree_equal L t u]
+  · intro j xs d hj
+    rw [substWithDepth_rel f L j xs d hj, isQuantifierFree_rel L j
+      (Tuple.map (Term.subst (f d) L) (Language.relationSymbolArity L j) xs) hj,
+      isQuantifierFree_rel L j xs hj]
+  · intro A B d hA hB
+    rw [substWithDepth_imp f L A B d, isQuantifierFree_imp L (substWithDepth f L A d)
+      (substWithDepth f L B d), isQuantifierFree_imp L A B, hA, hB]
+  · intro A d hA
+    rw [substWithDepth_all f L A d, isQuantifierFree_all L (substWithDepth f L A (S d)),
+      isQuantifierFree_all L A]
+
+/-- Substitution never introduces or removes quantifiers. -/
+theorem isQuantifierFree_subst (f : Nat → Nat) : ∀ L A,
+    isQuantifierFree L (subst f L A) = isQuantifierFree L A := by
+  intro L A
+  rw [subst]
+  exact isQuantifierFree_substWithDepth (FOL.liftSubst f L) L A 0
+
 /-- Shifting a quantified formula shifts its body beneath the quantifier. -/
 theorem shift_all : ∀ L A,
     shift L (all A) = all (subst (FOL.liftSubst (FOL.shiftSubst L 1) L 1) L A) := by

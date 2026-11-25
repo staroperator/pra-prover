@@ -177,6 +177,21 @@ def arg : Nat → Nat → Nat := fun L t =>
   let args := ite (ltb b (functionCount L)) xs (unpairRight xs);
   ite (u % m) args xs
 
+/-- `Term.constantIndex L t` recovers the symbol index from a constant term code. -/
+def constantIndex : Nat → Nat → Nat := fun L t =>
+  let c := constants L;
+  let s := S (functionCount L + functionFamilyCount L);
+  ite (ltb t c) t (c + (t - c) / S s)
+
+theorem constantIndex_const_of_le : ∀ L j, constants L ≤ j → constantIndex L (const L j) = j := by
+  intro L j h
+  let c := constants L
+  let s := S (functionCount L + functionFamilyCount L)
+  rw [constantIndex, const, ltb_eq_zero_of_ge j c h, ite_zero]
+  rw [ltb_eq_zero_of_ge _ c (le_add_right c _), ite_zero, add_sub_self_left,
+    div_mul_add_of_lt (S s) (j - c) s (succ_ne_zero s) (lt_succ_self s),
+    add_comm, sub_add_cancel_of_le j c h]
+
 theorem constants_le_var : ∀ L i, constants L ≤ var L i :=
   fun L i => le_add_right (constants L) _
 
@@ -1126,6 +1141,27 @@ theorem rec_all (equal rel imp : Nat → Nat → Nat) (all : Nat → Nat) : ∀ 
     (fun _ => falsum) (fun _ t s => equal t s) (fun _ j xs => rel j xs)
     (fun _ x y => imp x y) (fun _ x => all x) L A 0)
     (eq_congr all (recWithDepth_eq_zero_depth equal rel imp all L falsum A 1))
+
+/-- Test whether a formula contains no quantifiers. Equality, relation atoms, and falsity
+are quantifier-free in every language. -/
+def isQuantifierFree : Nat → Nat → Nat := fun L =>
+  rec (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1
+
+theorem isQuantifierFree_falsum : ∀ L, isQuantifierFree L falsum = 1 :=
+  fun L => rec_falsum (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1
+
+theorem isQuantifierFree_equal : ∀ L t u, isQuantifierFree L (equal L t u) = 1 :=
+  fun L t u => rec_equal (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1 t u
+
+theorem isQuantifierFree_rel : ∀ L j ts, IsRelation L j → isQuantifierFree L (rel L j ts) = 1 :=
+  fun L j ts h => rec_rel (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1 j ts h
+
+theorem isQuantifierFree_imp : ∀ L A B, isQuantifierFree L (imp A B) =
+    band (isQuantifierFree L A) (isQuantifierFree L B) :=
+  fun L A B => rec_imp (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1 A B
+
+theorem isQuantifierFree_all : ∀ L A, isQuantifierFree L (all A) = 0 :=
+  fun L A => rec_all (fun _ _ => 1) (fun _ _ => 1) band (fun _ => 0) L 1 A
 
 end Formula
 

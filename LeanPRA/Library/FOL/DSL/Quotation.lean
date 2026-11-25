@@ -53,12 +53,13 @@ inductive FormulaView where
   | code (language value : Core.Term) (arguments : List TermView)
   deriving BEq, Hashable, Repr, Inhabited
 
-/-- A syntax parameter's result kind and number of explicit term arguments.
-Surrounding free variables are allowed at every arity. -/
+/-- A formula or term parameter specifies a number of explicit term arguments and may capture
+surrounding free variables. A numerical axiom parameter supplies a natural number. -/
 structure SyntaxParameter where
   name : Name
   isFormula : Bool
   arity : Nat := 0
+  isNumeric : Bool := false
   deriving BEq, Inhabited, Repr
 
 /-- Read the syntax type of a declaration parameter. -/
@@ -82,7 +83,8 @@ def declarationParameters (ps : Array (TSyntax `praParam)) :
       | _ => throwUnsupportedSyntax
     if let some (formula, arity) := syntaxParameterType? type then
       for id in ids do
-        syntaxParameters := syntaxParameters.push ⟨id.getId.eraseMacroScopes, formula, arity⟩
+        syntaxParameters := syntaxParameters.push
+          ⟨id.getId.eraseMacroScopes, formula, arity, false⟩
       binders := binders.push (← `(praParam| ($ids:ident* : Nat)))
     else binders := binders.push p
   return (binders, syntaxParameters)
@@ -147,12 +149,14 @@ def DefinitionInfo.apply (d : DefinitionInfo) (values : List Term) : Term :=
     let (parameters, arguments) := values.splitAt (d.binders.size - d.arity)
     applyDefinition d.name arguments parameters
 
-/-- Move a syntax parameter along a substitution, protecting its explicit argument slots. -/
+/-- Move a syntax parameter along a substitution, protecting its explicit slots.
+Numerical parameters keep their value. -/
 def SyntaxParameter.transport (p : SyntaxParameter) (L f value : Term) : Term :=
-  let substitution := if p.arity == 0 then f else
-    applyDefinition `FOL.liftSubst [L, numeral p.arity] [f]
-  applyDefinition (if p.isFormula then `FOL.Formula.subst else `FOL.Term.subst)
-    [L, value] [substitution]
+  if p.isNumeric then value else
+    let substitution := if p.arity == 0 then f else
+      applyDefinition `FOL.liftSubst [L, numeral p.arity] [f]
+    applyDefinition (if p.isFormula then `FOL.Formula.subst else `FOL.Term.subst)
+      [L, value] [substitution]
 
 initialize definitions : SimplePersistentEnvExtension DefinitionInfo (Array DefinitionInfo) ←
   registerSimplePersistentEnvExtension {
@@ -310,10 +314,20 @@ keep their full syntax so schemas can recover parameters inside an abbreviation.
 private structure TemplateContext where
   parameters : List SyntaxParameter := []
   useDefinitions : Bool := false
+  numericalBinders : Array (TSyntax `praParam) := #[]
+
+private partial def hasNumericalParameter : Core.Term → Bool
+  | .parameter _ => true
+  | .lam _ body => hasNumericalParameter body
+  | .app f a | .primrec f a | .letE _ f a => hasNumericalParameter f || hasNumericalParameter a
+  | .definition _ arguments => arguments.any hasNumericalParameter
+  | _ => false
 
 private partial def containsParameter : TermView → Bool
   | .parameter .. => true
-  | .app _ args | .indexedApp _ _ args | .code _ _ args => args.any containsParameter
+  | .indexedConst _ k => hasNumericalParameter k
+  | .indexedApp _ k args => hasNumericalParameter k || args.any containsParameter
+  | .app _ args | .code _ _ args => args.any containsParameter
   | _ => false
 
 private def abbreviation (L : LanguageInfo) (ctx : TemplateContext) (d : DefinitionInfo)
@@ -335,11 +349,15 @@ private def abbreviation (L : LanguageInfo) (ctx : TemplateContext) (d : Definit
     | .inl t => .inl (t.substitute (arguments.toList.zip values))
     | .inr a => .inr (a.substitute (arguments.toList.zip values))
 
-private def templateMember (indices : Array (TSyntax `praExpr)) : CommandElabM Term := do
+private def TemplateContext.member (ctx : TemplateContext) (indices : Array (TSyntax `praExpr)) :
+    CommandElabM Term := do
+  let slots := ctx.parameters.zipIdx.filterMap fun (p, i) =>
+    if p.isNumeric then some (Term.parameter i) else none
   let values ← indices.toList.mapM fun (index : TSyntax `praExpr) => do
-    let `(praExpr| $value:num) := index |
-      throwErrorAt index "a family index in an axiom template must be a natural number literal"
-    return numeral value.getNat
+    if let `(praExpr| $value:num) := index then return numeral value.getNat
+    let value ← LeanPRA.Surface.elaborateNumericalExpression index 0
+      (ctx.numericalBinders.map (·.raw))
+    return value.instantiate slots
   return tupleCode values
 
 private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageInfo)
@@ -355,18 +373,18 @@ private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageIn
   | `(folTerm| $n:ident[$indices:praExpr,*]) => do
     let i ← withRef n <|
       familyIndex L.constantFamilies n.getId.eraseMacroScopes indices.getElems.size 0
-    return .indexedConst i (← templateMember indices.getElems)
+    return .indexedConst i (← ctx.member indices.getElems)
   | `(folTerm| $n:ident[$indices:praExpr,*]($args:folTerm,*)) => do
     let i ← withRef n <|
       familyIndex L.functionFamilies n.getId.eraseMacroScopes indices.getElems.size
         args.getElems.size
-    return .indexedApp i (← templateMember indices.getElems)
+    return .indexedApp i (← ctx.member indices.getElems)
       (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folTerm| $n:ident($args:folTerm,*)) =>
     let values ← args.getElems.toList.mapM (fun t => ctx.term L vars t)
     if let some i := ctx.parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
       let p := ctx.parameters[i]!
-      unless !p.isFormula && p.arity == values.length do
+      unless !p.isNumeric && !p.isFormula && p.arity == values.length do
         throwError "term parameter kind or arity mismatch"
       return .parameter i values
     if values.isEmpty then
@@ -380,7 +398,8 @@ private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageIn
       return .var v
     if let some i := ctx.parameters.findIdx? (·.name == n.getId.eraseMacroScopes) then
       let p := ctx.parameters[i]!
-      unless !p.isFormula && p.arity == 0 do throwError "expected a term of arity zero"
+      unless !p.isNumeric && !p.isFormula && p.arity == 0 do
+        throwError "expected a term of arity zero"
       return .parameter i []
     if let some i := L.constants.toList.idxOf? n.getId.eraseMacroScopes then return .constant i
     if let some d ← findDefinition n.getId.eraseMacroScopes then
@@ -449,7 +468,7 @@ private partial def TemplateContext.formula (ctx : TemplateContext) (L : Languag
     let i ← withRef n <|
       familyIndex L.relationFamilies n.getId.eraseMacroScopes indices.getElems.size
         args.getElems.size
-    return .indexedRelation i (← templateMember indices.getElems)
+    return .indexedRelation i (← ctx.member indices.getElems)
       (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folFormula| $n:ident($args:folTerm,*)) =>
     ctx.formulaApplication L vars n.getId.eraseMacroScopes args.getElems.toList
@@ -463,8 +482,33 @@ def parseTerm (L : LanguageInfo) (vars : List (Name × Name)) (s : TSyntax `folT
   TemplateContext.term { parameters } L vars s
 
 def parseFormula (L : LanguageInfo) (vars : List (Name × Name)) (s : TSyntax `folFormula)
-    (parameters : List SyntaxParameter := []) (useDefinitions : Bool := false) :
+    (parameters : List SyntaxParameter := []) (useDefinitions : Bool := false)
+    (numericalBinders : Array (TSyntax `praParam) := #[]) :
     CommandElabM FormulaView :=
-  TemplateContext.formula { parameters, useDefinitions } L vars s
+  TemplateContext.formula { parameters, useDefinitions, numericalBinders } L vars s
+
+private partial def unparenGuard : TSyntax `praExpr → TSyntax `praExpr
+  | `(praExpr| ($inner:praExpr)) => unparenGuard inner
+  | expr => expr
+
+/-- Elaborate an axiom restriction to a numerical lambda over the original axiom parameters.
+Its value is `1` exactly when the restriction holds. For a test compared to `1`, the test
+itself supplies the body. Other numerical equalities use `eqb`. -/
+def elaborateAxiomGuard (ps : Array (TSyntax `praParam)) (guard : Option (TSyntax `praExpr)) :
+    CommandElabM (Option Term) := do
+  let some guard := guard | return none
+  withRef guard do
+    let expanded := unparenGuard ⟨← expandPraSyntax guard⟩
+    let `(praExpr| $lhs:praExpr = $rhs:praExpr) := expanded |
+      throwError "an axiom restriction must be an equality of numerical expressions"
+    let isOne := match unparenGuard rhs with
+      | `(praExpr| $n:num) => n.getNat == 1
+      | _ => false
+    let expr ← if isOne then pure lhs else `(praExpr| $(mkIdent `_root_.eqb):ident ($lhs) ($rhs))
+    let (binders, _) ← declarationParameters ps
+    let names := (dataParameterNames binders).toList
+    let value ← LeanPRA.Surface.elaborateNumericalExpression expr 0 (binders.map (·.raw))
+    let vars := (List.range names.length).reverse.map Term.bvar
+    return some (names.foldr Term.lam (value.instantiate vars))
 
 end LeanPRA.Library.FOL.DSL

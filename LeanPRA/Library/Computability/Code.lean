@@ -77,6 +77,16 @@ theorem args_binary : ∀ k f g, k < 3 → args (binary k f g) = _root_.pair f g
   intro k f g hk
   rw [args, binary, add_sub_self_left, div_mul_add_of_lt 3 _ k (succ_ne_zero 2) hk]
 
+theorem left_rec : ∀ f g, unpairLeft (args (rec f g)) = f := by
+  intro f g
+  have children : args (rec f g) = _root_.pair f g := args_binary 2 f g rfl
+  rw [children, unpairLeft_pair]
+
+theorem right_rec : ∀ f g, unpairRight (args (rec f g)) = g := by
+  intro f g
+  have children : args (rec f g) = _root_.pair f g := args_binary 2 f g rfl
+  rw [children, unpairRight_pair]
+
 theorem left_lt_binary : ∀ k f g, f < binary k f g := by
   intro k f g
   have h := le_trans f (3 * _root_.pair f g) (3 * _root_.pair f g + k)

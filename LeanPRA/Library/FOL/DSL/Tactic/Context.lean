@@ -46,20 +46,23 @@ def axiomIndex (T : TheoryInfo) (name : Name) : CommandElabM Nat := do
     throwError "unknown axiom schema `{name}` for `{T.name}`"
   return i
 
-/-- Add an instantiated axiom and report the free variables used to close it. -/
-def addAxiomInstance (T : TheoryInfo) (index : Nat) (actuals : Array FormulaActual) :
-    DeriveM (Nat × List Name) := do
+/-- Add an instantiated axiom and report the free variables used to close it. An optional PRA
+proof discharges the schema's `assuming` restriction at the supplied arguments. -/
+def addAxiomInstance (T : TheoryInfo) (index : Nat) (actuals : Array FormulaActual)
+    (guard : Option (Core.Proof × Core.Predicate) := none) : DeriveM (Nat × List Name) := do
   let info := T.axioms[index]!
   unless actuals.size == info.parameters.size do
-    throwError "axiom `{info.name}` expects {info.parameters.size} syntax parameters"
+    throwError "axiom `{info.name}` expects {info.parameters.size} parameters"
   for (actual, parameter) in actuals.zip info.parameters do
-    unless actual.binders.length == parameter.arity &&
-        actual.termBody.isNone == parameter.isFormula do
-      throwError "syntax parameter kind or arity mismatch"
+    unless actual.number.isSome == parameter.isNumeric do
+      throwError "axiom parameter `{parameter.name}` has the wrong kind"
+    unless parameter.isNumeric || (actual.binders.length == parameter.arity &&
+        actual.termBody.isNone == parameter.isFormula) do
+      throwError "axiom parameter `{parameter.name}` has the wrong kind or arity"
   let formula := instantiateSchema actuals info.template
   let parameters := formula.variables.eraseDups
   let closed := parameters.foldr FormulaView.all formula
-  let root ← addNode closed (.theory index actuals parameters)
+  let root ← addNode closed (.theory index actuals parameters guard)
   return (root, parameters)
 
 /-- The selected theory, numerical formula code, and decoded view of a PRA provability goal. -/
@@ -91,6 +94,15 @@ def closedFirst (tactic : Tactic) : Tactic := fun stx => do
 def coreTerm (stx : TSyntax `praExpr) : TacticM Core.Term := do
   let value ← elaborateTerm stx
   return (← getGoal).projection.encodeTerm value
+
+/-- Elaborate a PRA proof expression in the goal's context and return it with its statement. -/
+def coreProof (stx : TSyntax `praExpr) : TacticM (Core.Proof × Core.Predicate) := do
+  let (proof, type) ← elaborateProof stx
+  let goal ← getGoal
+  let proof ← match goal.projection.encodeProof proof with
+    | .ok proof => pure proof
+    | .error message => throwErrorAt stx "{message}"
+  return (proof, goal.projection.encodePredicate type)
 
 /-- Read a provability statement of a declared theory, including its optional assumption list. -/
 private def provability (type : Core.Predicate) :
@@ -253,10 +265,15 @@ private def goalPredicate (g : ProofGoal) (code : Core.Term) : CommandElabM Pred
   let T := applyDefinition (g.theory.name ++ `isAxiom)
   return provableUnder L T g.context.code code
 
-private def goalProof (g : ProofGoal) (graph : Derivation) (root : Nat) :
-    CommandElabM Core.Proof := do
-  if g.context.code == emptyList then derivationProof g.theory graph root g.formula g.free
-  else contextualProof g.theory graph root g.formula g.context g.free
+private def proofInContext (g : ProofGoal) (graph : Derivation) (root : Nat)
+    (formula : FormulaView) (hypotheses : List Predicate) : CommandElabM Core.Proof := do
+  if g.context.code == emptyList then
+    derivationProof g.theory graph root formula g.free (hypotheses := hypotheses)
+  else contextualProof g.theory graph root formula g.context g.free hypotheses
+
+private def goalHypotheses : TacticM (List Predicate) := do
+  let goal ← getGoal
+  return (goal.projection.encodeContext goal.context).proofs
 
 private def transportGoal (g : ProofGoal) (encoded : Core.Term) (p : Core.Proof) :
     CommandElabM Core.Proof := do
@@ -267,11 +284,9 @@ private def transportGoal (g : ProofGoal) (encoded : Core.Term) (p : Core.Proof)
 /-- A proof that the formula at `root` of a derivation follows from the goal's assumptions,
 together with that formula. -/
 def derivedProof (g : ProofGoal) (graph : Derivation) (root : Nat) :
-    CommandElabM (FormulaView × Core.Proof) := do
+    TacticM (FormulaView × Core.Proof) := do
   let formula := graph.nodes[root]!.formula
-  let proof ← if g.context.code == emptyList then
-      derivationProof g.theory graph root formula g.free
-    else contextualProof g.theory graph root formula g.context g.free
+  let proof ← proofInContext g graph root formula (← goalHypotheses)
   return (formula, proof)
 
 /-- Reduce the goal by one rule. The new goals state the formula codes `premises` under the
@@ -397,7 +412,7 @@ def openNamed (names : List Name) (location : Option Ident) : TacticM Unit := do
 /-- Close the PRA goal with the checked proof generated from a completed derivation. -/
 def finish (g : ProofGoal) (action : DeriveM Nat) : TacticM Unit := do
   let (root, graph) ← action.run {}
-  let proof ← goalProof g graph root
+  let proof ← proofInContext g graph root g.formula (← goalHypotheses)
   let L := languageTerm g.theory.language
   let encoded ← g.formula.encode L [] g.free
   let proof ← transportGoal g encoded proof
@@ -480,14 +495,20 @@ def refineDerivation (g : ProofGoal)
     assemble inputs
   let (root, graph) ← action.run graph
   let L := languageTerm g.theory.language
-  let mut proof ← goalProof g graph root
+  let premises ← children.mapM fun a => do goalPredicate g (← a.encode L [] g.free)
+  let hypotheses := premises.reverse ++ (← goalHypotheses)
+  -- Supplied restriction proofs refer to the goal's hypotheses, which now follow the premises.
+  let shiftGuard (node : Node) : Node := match node.reason with
+    | .theory index actuals parameters (some (proof, type)) =>
+      let guard := some (shiftHypotheses premises.length proof, type)
+      { node with reason := .theory index actuals parameters guard }
+    | _ => node
+  let graph := { graph with nodes := graph.nodes.map shiftGuard }
+  let mut proof ← proofInContext g graph root g.formula hypotheses
   let encoded ← g.formula.encode L [] g.free
   proof ← transportGoal g encoded proof
-  let mut premises := []
-  for a in children.reverse do
-    let premise ← goalPredicate g (← a.encode L [] g.free)
+  for premise in premises.reverse do
     proof := .impIntro `_folPremise premise proof
-    premises := premise :: premises
   let view := (← getGoal).projection
   Tactic.applyProof (view.decodeProof proof) (premises.map view.decodePredicate)
 

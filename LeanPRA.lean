@@ -60,6 +60,8 @@ public import LeanPRA.Library.FOL.DSL.Tactic.Rewrite
 public import LeanPRA.Library.FOL.DSL.Tactic.SchemaApplication
 public import LeanPRA.Library.FOL.DSL.Tactic.Substitution
 public import LeanPRA.Library.FOL.DSL.Theory
+public import LeanPRA.Library.FOL.PRA.Defs
+public import LeanPRA.Library.FOL.PRA.Numeral
 public import LeanPRA.Library.Logic
 public import LeanPRA.Library.Nat.Beta
 public import LeanPRA.Library.Nat.Boolean

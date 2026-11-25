@@ -741,6 +741,33 @@ mutual
           let lemma := name.getPrefix ++ Name.mkSimple (name.getString! ++ "_of_lt")
           return ← follow t (.app .succ (applyDefinition `Sequence.get [entries, j]))
             (applyTheorem lemma [L, j] [] [← lessProof j count])
+    if name == `FOL.Formula.isQuantifierFree then
+      if let [L, A] := args then
+        match getAppFnArgs A with
+        | (.definition `FOL.Formula.falsum [], []) | (.zero, []) =>
+          return ⟨numeral 1, applyTheorem `FOL.Formula.isQuantifierFree_falsum [L]⟩
+        | (.definition `FOL.Formula.equal [], [L', x, y]) =>
+          if L == L' then
+            return ⟨numeral 1, applyTheorem `FOL.Formula.isQuantifierFree_equal [L, x, y]⟩
+        | (.definition `FOL.Formula.rel [], [L', j, xs]) =>
+          if L == L' then
+            return ⟨numeral 1, applyTheorem `FOL.Formula.isQuantifierFree_rel [L, j, xs] []
+              [← symbolProof L j true]⟩
+        | (.definition `FOL.Formula.imp [], [a, b]) =>
+          let quantifierFree := fun formula => applyDefinition name [L, formula]
+          let both := applyDefinition `band [quantifierFree a, quantifierFree b]
+          return ← follow t both (applyTheorem `FOL.Formula.isQuantifierFree_imp [L, a, b])
+        | (.definition `FOL.Formula.all [], [p]) =>
+          return ⟨numeral 0, applyTheorem `FOL.Formula.isQuantifierFree_all [L, p]⟩
+        | (.definition `FOL.Formula.subst [f], [L', B]) =>
+          if L == L' then
+            return ← follow t (applyDefinition name [L, B])
+              (applyTheorem `FOL.Formula.isQuantifierFree_subst [L, B] [f])
+        | (.definition `FOL.Formula.substWithDepth [f], [L', B, d]) =>
+          if L == L' then
+            return ← follow t (applyDefinition name [L, B])
+              (applyTheorem `FOL.Formula.isQuantifierFree_substWithDepth [L, B, d] [f])
+        | _ => pure ()
     if name == `FOL.Formula.equalPremises then
       if let [L, n, xs, ys, A] := args then
         if numeralValue? n == some 1 then

@@ -50,9 +50,8 @@ fol_theory AddTheory over Arith extends Base where
 - `d (k : Nat) : constant` declares a family of constants. Write `d[k]` for member `k`.
 - `f (k : Nat) : function of n` and `R (k : Nat) : relation of n` (with `n ≥ 1`) declare
   indexed function and relation families. Write `f[k](t₁, ..., tₙ)` or `R[k](t₁, ..., tₙ)` to
-  apply member `k`. Inside the brackets, ordinary quotations accept any numerical PRA expression.
-  Axiom templates require natural-number literals. Object-variable substitution leaves the member
-  indices unchanged.
+  apply member `k`. Inside the brackets, a numerical PRA expression selects the member.
+  Object-variable substitution leaves the member indices unchanged.
 - A family may take multiple index parameters, such as `f (a b : Nat) : function of 3`,
   applied as `f[a, b](x, y, z)`. Multiple indices are packed in declaration order using the
   fixed-length tuple encoding (for example, `[a, b]` encodes as `pair a b`, while a single index
@@ -74,6 +73,21 @@ fol_theory AddTheory over Arith extends Base where
   applied to the surrounding bound variables in outermost-first order. A term parameter may
   occur inside a function or relation application. Static `fol_def` abbreviations without PRA
   parameters or splices can appear inside axiom templates.
+- A numerical parameter such as `(a : Nat)` can occur as a family index. Include an occurrence
+  from which the checker can recover `a`. Other indices can be computed from it.
+  For example, in `∀ x, f[a + 1](x) = f[a](x)` the checker reads `a` on the right and compares
+  the entire formula with the instance at that value.
+- To recover a parameter inside a constructor application, call
+  `registerAxiomIndexProjection` with the constructor name and the name of a checked PRA theorem
+  of the form `∀ a b, project (build a b) = a`. The checker uses the registered projection to
+  read that argument from the index, then compares the entire reconstructed formula.
+- An `assuming` clause restricts the parameters by an equality of numerical PRA expressions.
+  For example,
+  `assuming FOL.Formula.isQuantifierFree Arith.language p = 1` permits induction on a
+  quantifier-free formula. The axiom checker applies the test to the recovered formula code.
+  A restriction `test = 1` is checked as written; any other equality `a = b` is checked as
+  `eqb a b = 1`. The generated theorem for introducing an instance requires a proof of the
+  restriction.
 
 ## Syntax parameters, definitions, and quotations
 
@@ -244,6 +258,7 @@ brackets can be omitted.
 | `passumption` | Close the goal using a matching object assumption (or an implication premise in the goal). |
 | `pexact h[t₁, ...]` | Close the goal with an assumption, axiom, or theorem `h` instantiated at `t₁, ...`. |
 | `pexact ax (p := ...) [t₁, ...]` | Instantiate syntax parameters of an axiom schema `ax` and close the goal. |
+| `pexact ax (p := ...) (assuming := h) [t₁, ...]` | Also supply a PRA proof `h` of the restriction of `ax` at these arguments. |
 | `pexact (e)[t₁, ...]` | Close the goal with a parenthesized PRA proof expression `e` instantiated at `t₁, ...`. |
 | `papply e[t₁, ...]` | Apply `e` (instantiated at `t₁, ...`) backward, projecting through conjunctions if needed and leaving premises as subgoals. |
 | `papply thm (p := ...) [t₁, ...]` | Instantiate syntax parameters of a PRA theorem `thm`, calculate the resulting formula, and apply it backward. |
@@ -254,6 +269,13 @@ brackets can be omitted.
 | `phave h : A` | Open a subgoal to prove `A`, then add `h : A` to the local assumptions of the main goal. |
 | `pexfalso` | Replace the current object goal with `⊥`. |
 | `pcontradiction` | When the goal is `⊥`, close it by modus ponens among local assumptions; otherwise replace the goal `A` with `¬¬ A`. |
+
+For a schema with an `assuming` restriction, the restriction must hold at the supplied
+arguments. `(assuming := h)` names a PRA proof expression for it, written like an argument of
+`exact`. Without it, the tactic looks for a local PRA hypothesis that states the restriction
+(or, for a restriction `eqb a b = 1`, the equation `a = b`), then calculates the test; a value
+`1` closes it, and a simplified test is compared with the hypotheses again. Otherwise the tactic
+reports the required equation.
 
 `pcases e with pat` combines elimination and introductions:
 
@@ -356,6 +378,11 @@ pinduction x using AddTheory.strong_ind with
 
 - `x` must be an introduced object variable in the current goal.
 - `using schema` is optional when the theory has a single induction schema.
+- `(assuming := h)` supplies a PRA proof of the schema's restriction for the motive. Without it,
+  the restriction is discharged like an axiom application: from a local PRA hypothesis or by
+  calculation. A restriction on quantifier-freeness holds for a motive `${P}[x]` whenever
+  `FOL.Formula.isQuantifierFree L P = 1` is a hypothesis, because substitution preserves
+  quantifier-freeness.
 - `(motive := fun n => A)` is optional and checks that the written motive matches the current goal
   with `x` replaced by `n`.
 - In the `succ k ih` (or `step k ih`) branch, `k` is introduced as the object variable and `ih` is

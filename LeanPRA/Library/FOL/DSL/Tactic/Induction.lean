@@ -7,7 +7,9 @@ public meta import LeanPRA.Library.FOL.DSL.Tactic.Context
 
 `evalInductionTactic` applies a declared schema with `zero`/`succ` branches or a single `step`
 branch. The schema supplies the terms and the induction hypothesis. Each branch is an ordinary
-PRA tactic proof of the required object derivation.
+PRA tactic proof of the required object derivation. When the schema has an `assuming`
+restriction, `(assuming := h)` supplies a PRA proof of it for the motive; without it, the
+restriction is discharged from the local PRA hypotheses or by calculation.
 -/
 
 public meta section
@@ -27,7 +29,7 @@ private structure InductionPattern where
 
 private def inductionPattern (info : AxiomInfo) : Option InductionPattern := do
   unless info.parameters.size == 1 && info.parameters[0]!.arity == 1 &&
-      info.parameters[0]!.isFormula do none
+      info.parameters[0]!.isFormula && !info.parameters[0]!.isNumeric do none
   match info.template with
   | .imp (.parameter 0 [base])
       (.imp (.all x (.imp (.parameter 0 [.var z]) (.parameter 0 [next])))
@@ -59,8 +61,9 @@ private def runBranch (goal : GoalId) (steps : TSyntax ``praTacticSeq) : TacticM
   unless (← get).isEmpty do throwErrorAt steps "unfinished FOL induction branch"
 
 private def inductionTactic (g : ProofGoal) (x : Ident) (selected binder : Option Ident)
-    (explicitMotive : Option (TSyntax `folFormula)) (k ih : Ident)
-    (base : Option (TSyntax ``praTacticSeq)) (step : TSyntax ``praTacticSeq) : TacticM Unit := do
+    (explicitMotive : Option (TSyntax `folFormula)) (guard : Option (TSyntax `praExpr))
+    (k ih : Ident) (base : Option (TSyntax ``praTacticSeq)) (step : TSyntax ``praTacticSeq) :
+    TacticM Unit := do
   let (index, pattern) ← selectInduction g.theory selected
   unless pattern.base.isSome == base.isSome do throwError "induction branch shape mismatch"
   let variableCode ← coreTerm (← `(praExpr| $x:ident))
@@ -74,15 +77,16 @@ private def inductionTactic (g : ProofGoal) (x : Ident) (selected binder : Optio
       throwError "the induction motive does not match the goal"
   let fresh ← liftCoreM (mkFreshUserName k.getId.eraseMacroScopes)
   let motive := g.formula.replace y (.var fresh)
-  let actuals := #[FormulaActual.mk motive [fresh] none]
+  let actuals : Array FormulaActual := #[{ body := motive, binders := [fresh] }]
   let hypothesis := (instantiateSchema actuals pattern.hypothesis).replace
     pattern.binder (.var fresh)
   let next := pattern.next.replace pattern.binder (.var fresh)
   let stepGoal := FormulaView.all fresh (.imp hypothesis (motive.replace fresh next))
   let baseGoal := pattern.base.map (fun t => g.formula.replace y t)
+  let guard ← guard.mapM coreProof
   let rest := (← get).drop 1
   refineDerivation g do
-    let (root, parameters) ← addAxiomInstance g.theory index actuals
+    let (root, parameters) ← addAxiomInstance g.theory index actuals guard
     let mut p := root
     for param in parameters do p ← instantiate p (.var param)
     return (baseGoal.toList ++ [stepGoal], fun inputs => do
@@ -103,14 +107,16 @@ private def inductionTactic (g : ProofGoal) (x : Ident) (selected binder : Optio
 def evalInductionTactic : Tactic := closedFirst fun stx => do
   match stx with
   | `(praTactic| pinduction $x:ident $[using $selected:ident]?
-      $[(motive := fun $binder:ident => $motive:folFormula)]? with
+      $[(motive := fun $binder:ident => $motive:folFormula)]?
+      $[(assuming := $guard:praExpr)]? with
       | zero => $base:praTacticSeq
       | succ $k:ident $ih:ident => $step:praTacticSeq) =>
-    inductionTactic (← currentGoal) x selected binder motive k ih (some base) step
+    inductionTactic (← currentGoal) x selected binder motive guard k ih (some base) step
   | `(praTactic| pinduction $x:ident $[using $selected:ident]?
-      $[(motive := fun $binder:ident => $motive:folFormula)]? with
+      $[(motive := fun $binder:ident => $motive:folFormula)]?
+      $[(assuming := $guard:praExpr)]? with
       | step $k:ident $ih:ident => $step:praTacticSeq) =>
-    inductionTactic (← currentGoal) x selected binder motive k ih none step
+    inductionTactic (← currentGoal) x selected binder motive guard k ih none step
   | _ => throwUnsupportedSyntax
 
 end LeanPRA.Library.FOL.DSL

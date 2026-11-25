@@ -116,20 +116,28 @@ def declareTheory (name lang : Name) (parent : Option Name) (entries : Array Syn
     T := { T with axioms := P.axioms, parent := some P.name, inherited := P.axioms.size }
   for s in entries do
     match s with
-    | `(folAxiom| axiom $n:ident $ps:praParam* := $a:folFormula) =>
+    | `(folAxiom| axiom $n:ident $ps:praParam* $[assuming $guard:praExpr]?
+        := $a:folFormula) =>
       let axiomName := n.getId.eraseMacroScopes
       if T.axioms.any (fun entry => entry.name == axiomName) then throwErrorAt n "duplicate axiom"
-      let (_, parameters) ← declarationParameters ps
-      let mut names : List Name := []
-      for parameter in parameters do
-        if names.contains parameter.name then throwErrorAt s "duplicate syntax parameter"
-        names := parameter.name :: names
+      let mut parameters : Array SyntaxParameter := #[]
+      let mut numericalBinders := #[]
       for p in ps do
-        let `(praParam| ($_:ident* : $type:praExpr)) := p | throwUnsupportedSyntax
-        unless (syntaxParameterType? type).isSome do
-          throwErrorAt p "an axiom parameter must have a term or formula type"
+        let `(praParam| ($ids:ident* : $type:praExpr)) := p | throwUnsupportedSyntax
+        let numeric := match type with | `(praExpr| Nat) => true | _ => false
+        let (isFormula, arity) ← if numeric then pure (false, 0) else do
+          let some kind := syntaxParameterType? type |
+            throwErrorAt type "an axiom parameter must have a Nat, term, or formula type"
+          pure kind
+        if numeric then numericalBinders := numericalBinders.push p
+        for id in ids do
+          let name := id.getId.eraseMacroScopes
+          if parameters.any (·.name == name) then throwErrorAt id "duplicate axiom parameter"
+          parameters := parameters.push ⟨name, isFormula, arity, numeric⟩
       let template ← parseFormula L [] a parameters.toList (useDefinitions := true)
-      T := { T with axioms := T.axioms.push ⟨axiomName, parameters, template⟩ }
+        (numericalBinders := numericalBinders)
+      let guard? ← elaborateAxiomGuard ps guard
+      T := { T with axioms := T.axioms.push { name := axiomName, parameters, template, guard? } }
     | _ => throwUnsupportedSyntax
   for info in T.axioms do compileAxiom T.name L info source
   let body := (T.axioms.toList.drop T.inherited).foldr (fun info rest => applyDefinition `bor

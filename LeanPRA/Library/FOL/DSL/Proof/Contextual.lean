@@ -163,7 +163,8 @@ partial def shiftedListEquality (L Γ shifted : Core.Term) : CommandElabM Core.P
 
 /-- Emit a checked PRA proof under a list of local assumptions. -/
 partial def contextualProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
-    (expected : FormulaView) (context : LocalContext) (free : List Name) :
+    (expected : FormulaView) (context : LocalContext) (free : List Name)
+    (hypotheses : List Core.Predicate := []) :
     CommandElabM Core.Proof := do
   let L := languageTerm T.language
   let theory := applyDefinition (T.name ++ `isAxiom)
@@ -213,7 +214,7 @@ partial def contextualProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
     | .hypothesis h => throwError "undischarged first-order hypothesis `{h}`"
     | _ => do
       let leaf := { graph with nodes := #[node] }
-      let p ← derivationProof T leaf 0 node.formula positions
+      let p ← derivationProof T leaf 0 node.formula positions (hypotheses := hypotheses)
       pure (applyTheorem `FOL.Sequent.lift [G, A] [L, theory] [shiftHypotheses n p])
     formulas := formulas.push (G, A)
     if uses[references.size]! > 1 then

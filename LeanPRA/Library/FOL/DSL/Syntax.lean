@@ -79,7 +79,8 @@ syntax (name := formulaValueActual) atomic("(" ident " := ") folFormula ")" : fo
 syntax (name := formulaCodeActual) (priority := high) atomic("(" ident " := ")
   "$" "{" praExpr "}" ")" : folPraActual
 
-syntax "axiom " ident (ppSpace praParam)* " := " folFormula : folAxiom
+syntax "axiom " ident (ppSpace praParam)* (" assuming " praExpr)? " := "
+  folFormula : folAxiom
 syntax folAxiomSeq := sepBy1IndentSemicolon(folAxiom)
 syntax (name := theoryDecl) "fol_theory " ident " over " ident
   (" extends " ident)? " where" ppIndent(colGt folAxiomSeq) : praDecl
@@ -106,6 +107,9 @@ declare_syntax_cat folSchemaActual
 
 syntax "(" ident " := " "fun " ident+ " => " folFormula ")" : folSchemaActual
 syntax "(" ident " := " folFormula ")" : folSchemaActual
+syntax (name := numericalSchemaActual) (priority := low)
+  "(" ident " := " praExpr ")" : folSchemaActual
+syntax (name := guardActual) "(" "assuming" " := " praExpr ")" : folSchemaActual
 syntax (name := pintroTac) "pintro" (ppSpace colGt ident)+ : praTactic
 syntax (name := papplyTac) "papply " praExpr ("[" folTerm,* "]")? : praTactic
 syntax (name := passumptionTac) "passumption" : praTactic
@@ -128,11 +132,13 @@ syntax (name := pexactTac) "pexact " ident folSchemaActual*
 syntax (name := pexactProofTac) "pexact " "(" praExpr ")"
   ("[" folTerm,* "]")? : praTactic
 syntax (name := pinductionTac) "pinduction " ident (" using " ident)?
-  (" (" &"motive" " := " "fun " ident " => " folFormula ")")? " with"
+  (atomic(" (" &"motive") " := " "fun " ident " => " folFormula ")")?
+  (atomic(" (" "assuming") " := " praExpr ")")? " with"
   ppLine "| " &"zero" "=>" ppIndent(colGt praTacticSeq)
   ppLine "| " &"succ" ident ident " =>" ppIndent(colGt praTacticSeq) : praTactic
 syntax (name := pstrongInductionTac) "pinduction " ident (" using " ident)?
-  (" (" &"motive" " := " "fun " ident " => " folFormula ")")? " with"
+  (atomic(" (" &"motive") " := " "fun " ident " => " folFormula ")")?
+  (atomic(" (" "assuming") " := " praExpr ")")? " with"
   ppLine "| " &"step" ident ident " =>" ppIndent(colGt praTacticSeq) : praTactic
 
 end LeanPRA.Library.FOL.DSL

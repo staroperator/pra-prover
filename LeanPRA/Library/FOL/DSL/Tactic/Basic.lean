@@ -28,29 +28,49 @@ open LeanPRA.Library.Tactic.Construction
 open LeanPRA.Library.Tactic
 open TacticSupport
 
+/-- Read the named arguments of a schema application. First-order syntax is preferred when an
+argument parses both ways; a numerical argument written that way is converted directly from its
+syntax tree. `(assuming := h)` supplies a PRA proof of the schema's restriction. -/
 private def parseActuals (g : ProofGoal) (index : Nat)
-    (args : Array (TSyntax `folSchemaActual)) : TacticM (Array FormulaActual) := do
+    (args : Array (TSyntax `folSchemaActual)) :
+    TacticM (Array FormulaActual × Option (Core.Proof × Core.Predicate)) := do
   let info := g.theory.axioms[index]!
   let mut parsed : List (Name × FormulaActual) := []
+  let mut guard := none
   for arg in args do
+    if let `(folSchemaActual| (assuming := $proof:praExpr)) := arg then
+      if info.guard?.isNone then throwErrorAt arg "axiom `{info.name}` has no restriction"
+      if guard.isSome then throwErrorAt arg "duplicate restriction proof"
+      guard := some (← coreProof proof)
+      continue
     let (name, binders, body) ← match arg with
       | `(folSchemaActual| ($name:ident := fun $xs:ident* => $body:folFormula)) =>
-        pure (name, xs.toList.map (·.getId.eraseMacroScopes), body)
-      | `(folSchemaActual| ($name:ident := $body:folFormula)) => pure (name, [], body)
+        pure (name, xs.toList.map (·.getId.eraseMacroScopes), Sum.inl body)
+      | `(folSchemaActual| ($name:ident := $body:folFormula)) =>
+        pure (name, [], .inl body)
+      | `(folSchemaActual| ($name:ident := $body:praExpr)) =>
+        pure (name, [], .inr body)
       | _ => throwUnsupportedSyntax
     let some parameter := info.parameters.find? (·.name == name.getId.eraseMacroScopes) |
-      throwErrorAt name "unknown syntax parameter"
+      throwErrorAt name "unknown axiom parameter"
     if (parsed.lookup name.getId.eraseMacroScopes).isSome then
-      throwErrorAt name "duplicate formula parameter"
-    let actual ← syntaxArgument g parameter binders body
+      throwErrorAt name "duplicate axiom parameter"
+    let actual ← if parameter.isNumeric then do
+        let number ← match body with
+          | .inr expr => coreTerm expr
+          | .inl expr => do
+            unless binders.isEmpty do throwErrorAt arg "expected a PRA numerical expression"
+            coreTerm (← formulaAsNumerical expr)
+        pure { body := .falsum, binders := [], number := some number }
+      else match body with
+      | .inl expr => syntaxArgument g parameter binders expr
+      | .inr expr => throwErrorAt expr "expected a FOL term or formula"
     parsed := (name.getId.eraseMacroScopes, actual) :: parsed
-  info.parameters.mapM fun parameter => do
+  let actuals ← info.parameters.mapM fun parameter => do
     let name := parameter.name
-    let arity := parameter.arity
-    let some actual := parsed.lookup name | throwError "missing formula argument `{name}`"
-    unless actual.binders.length == arity do
-      throwError "formula parameter `{name}` expects {arity} binders"
+    let some actual := parsed.lookup name | throwError "missing axiom argument `{name}`"
     return actual
+  return (actuals, guard)
 
 private def dischargeResult (goal : FormulaView) (p : Nat) : DeriveM Nat := do
   let (hs, _) := assumptions goal
@@ -208,12 +228,15 @@ def formulaInstance (g : ProofGoal) (name : Ident)
       | `(folSchemaActual| ($p:ident := fun $xs:ident* => $body:folFormula)) =>
         pure (p, xs.toList.map (·.getId.eraseMacroScopes), body)
       | `(folSchemaActual| ($p:ident := $body:folFormula)) => pure (p, [], body)
+      | `(folSchemaActual| (assuming := $_:praExpr)) =>
+        throwErrorAt actual "a PRA theorem has no restriction; its premises become goals"
       | _ => throwUnsupportedSyntax
     if (values.lookup parameter.getId.eraseMacroScopes).isSome then
       throwErrorAt parameter "duplicate formula parameter"
     let expected := signature.bind (fun ps => ps.find?
       (·.name == parameter.getId.eraseMacroScopes))
-    let expected := expected.getD ⟨parameter.getId.eraseMacroScopes, true, binders.length⟩
+    let expected := expected.getD
+      { name := parameter.getId.eraseMacroScopes, isFormula := true, arity := binders.length }
     let actual ← syntaxArgument g expected binders body
     let value ← actual.encode (languageTerm g.theory.language) [] g.free
     values := values ++ [(parameter.getId.eraseMacroScopes, value)]
@@ -511,8 +534,8 @@ def evalBasicTactic : Tactic := closedFirst fun stx => do
     let g ← currentGoal
     let initial ← if actuals.isEmpty then rule g (← `(praExpr| $name:ident)) else do
       let index ← axiomIndex g.theory name.getId.eraseMacroScopes
-      let values ← parseActuals g index actuals
-      pure (do return (← addAxiomInstance g.theory index values).1)
+      let (values, guard) ← parseActuals g index actuals
+      pure (do return (← addAxiomInstance g.theory index values guard).1)
     exactStep g (← instantiated g initial (args.map (·.getElems) |>.getD #[]))
   | `(praTactic| pexact ($proof:praExpr) $[[$args:folTerm,*]]?) =>
     let g ← currentGoal

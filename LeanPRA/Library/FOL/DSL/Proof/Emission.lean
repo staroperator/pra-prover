@@ -81,10 +81,71 @@ def shiftHypotheses (count : Nat) (p : Proof) (depth : Nat := 0) : Proof :=
   mapProof (fun _ t => t) (fun _ p => p)
     (fun _ d i => .hyp (if i < d then i else i + count)) 0 depth p
 
-/-- Build a PRA proof in the caller's context, sharing intermediate derivations with proof lets. -/
+/-- Prove `value = 1` from candidate equations, splitting boolean conjunctions and
+disjunctions and reading `eqb a b` from an equation `a = b`. -/
+private partial def dischargeTest (candidate? : Predicate → Option Proof) (value : Term) :
+    CommandElabM (Option Proof) := do
+  let one := numeral 1
+  if numeralValue? value == some 1 then return some (.forallElim .eqRefl one)
+  if let some p := candidate? (.equal value one) then return some p
+  match getAppFnArgs value with
+  | (.definition `eqb [], [a, b]) =>
+    if let some p := candidate? (.equal a b) then
+      return some (.impElim (← projectTheorem true `eqb_eq_one [a, b]) p)
+    return none
+  | (.definition `band [], [a, b]) =>
+    let some pa ← dischargeTest candidate? a | return none
+    let some pb ← dischargeTest candidate? b | return none
+    return some (applyTheorem `band_eq_one_of_eq_one [a, b] [] [pa, pb])
+  | (.definition `bor [], [a, b]) =>
+    if let some pa ← dischargeTest candidate? a then
+      return some (applyTheorem `bor_eq_one_of_left_eq_one [a, b] [] [pa])
+    if let some pb ← dischargeTest candidate? b then
+      return some (applyTheorem `bor_eq_one_of_right_eq_one [a, b] [] [pb])
+    return none
+  | _ => return none
+
+/-- Prove that the restriction `test` of a schema holds, as the equation `test = 1`.
+A proof supplied with the application and the caller's PRA hypotheses are the candidates. A
+candidate is accepted when it states the equation or, for a test `eqb a b`, the equation
+`a = b`. The test is also calculated: a value `1` closes the goal, a conjunction `band a b` needs
+both parts, and a disjunction `bor a b` needs one part. Comparisons are syntactic, up to beta
+reduction. Definitional unfolding is avoided because a test on an opaque formula code has no
+bound on its unfolding. -/
+private def guardProof (axiomName : Name) (test : Term) (hypotheses : List Predicate)
+    (supplied : Option (Proof × Predicate)) : CommandElabM Proof := do
+  let depth := pra.maxDepth.get (← getOptions)
+  let test := betaReduceTerm depth test
+  let one := numeral 1
+  let candidates := supplied.toList ++ hypotheses.zipIdx.map fun (h, i) => (Proof.hyp i, h)
+  let candidates := candidates.map fun (p, h) => (p, Core.betaReducePredicate depth h)
+  let candidate? (type : Predicate) : Option Proof :=
+    (candidates.find? fun (_, h) => h == type).map (·.1)
+  let discharge := dischargeTest candidate?
+  if let some p ← discharge test then return p
+  let calculated ← try some <$> (calculate test).run' {} catch error =>
+    if error.isInterrupt then throw error else pure none
+  if let some ⟨value, equation⟩ := calculated then
+    if value != test then
+      if let some p ← discharge value then return mkEqTrans test value one equation p
+  try calculateClosedEquality test one
+  catch error =>
+    if error.isInterrupt then throw error
+    let statement ← Surface.formatSyntax `praExpr
+      (← Surface.delabPredicate {} (.equal test one))
+    if let some (_, given) := supplied then
+      let shown ← Surface.formatSyntax `praExpr
+        (← Surface.delabPredicate {} (Core.betaReducePredicate depth given))
+      throwError "the supplied proof shows {shown}, but axiom `{axiomName}` requires a PRA \
+        proof of {statement}"
+    throwError "axiom `{axiomName}` requires a PRA proof of {statement}"
+
+/-- Build a PRA proof in the caller's context, sharing intermediate derivations with proof lets.
+The caller's PRA hypotheses are supplied innermost first for use as axiom restrictions. -/
 def derivationProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
     (expected : FormulaView) (freeVariables : List Name)
-    (parameters : Option (Term × Term) := none) : CommandElabM Proof := do
+    (parameters : Option (Term × Term) := none) (hypotheses : List Predicate := []) :
+    CommandElabM Proof := do
   let (L, theory) := parameters.getD
     (languageTerm T.language, applyDefinition (T.name ++ `isAxiom))
   let scheduled := scheduleDerivation graph root freeVariables
@@ -162,7 +223,7 @@ def derivationProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
               else pure []
             let proof := applyTheorem lemma [] (L :: theory :: params.tail) conditions
             transportProvable L theory schema A proof
-          | .theory index actuals parameters => do
+          | .theory index actuals parameters supplied => do
             let mut owner := T
             let mut extensions : List TheoryInfo := []
             while index < owner.inherited do
@@ -175,6 +236,9 @@ def derivationProof (T : TheoryInfo) (graph : Derivation) (root : Nat)
               actual.encode L [] (parameters.reverse ++ localPositions)
             let mut instanceCode := applyDefinition (info.formulaName owner.name) values
             let mut membership := applyTheorem (axiomName ++ `isAxiom_of_instance) values
+            if let some guard := info.guard? then
+              let proof ← guardProof axiomName (values.foldl Term.app guard) hypotheses supplied
+              membership := .impElim membership (shiftHypotheses n proof)
             for _ in parameters do
               membership := applyTheorem (axiomName ++ `isAxiom_of_all)
                 [instanceCode] [] [membership]
