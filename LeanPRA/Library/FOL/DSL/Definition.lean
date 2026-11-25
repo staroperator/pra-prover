@@ -411,9 +411,10 @@ def proveSubstitution (L : LanguageInfo) (info : DefinitionInfo) (source : Synta
   let language := languageTerm L
   let f := Term.parameter 0
   let values := (List.range count).map fun i => Term.parameter (1 + i)
+  let depth ← Surface.getMaxDepth
   let body := fun inputs : List Term =>
     let instantiated := declaration.body.instantiate (inputs.take declaration.parameters.length)
-    Core.betaReduceTerm 2048 ((inputs.drop declaration.parameters.length).foldl .app instantiated)
+    Core.betaReduceTerm depth ((inputs.drop declaration.parameters.length).foldl .app instantiated)
   try
     let syntaxParameters := values.zipIdx.filterMap fun (value, i) =>
       (info.syntaxAt? i).map (value, ·)

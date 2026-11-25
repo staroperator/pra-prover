@@ -188,7 +188,7 @@ def registerAxiomIndexProjection (builder theoremName : Name) : CommandElabM Uni
     throwError "expected a checked PRA theorem `{theoremName}`"
   unless theoremDecl.parameters.isEmpty do
     throwError "an index projection theorem must use universal quantifiers for its arguments"
-  let mut type := Core.betaReducePredicate 2048 theoremDecl.type
+  let mut type := Core.betaReducePredicate (← Surface.getMaxDepth) theoremDecl.type
   let mut arity := 0
   while let .all (.lam _ body) := type do
     arity := arity + 1
@@ -604,7 +604,8 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
   let A := Term.bvar 0
   let instanceTest := applyDefinition (name ++ `isInstance) [A]
   let history := applyDefinition `Sequence.generate [A] [step]
-  let expanded := Core.betaReduceTerm 2048 (.app (.app step A) history)
+  let depth ← Surface.getMaxDepth
+  let expanded := Core.betaReduceTerm depth (.app (.app step A) history)
   let disjuncts := (getAppFnArgs expanded).2
   let premise := Predicate.equal instanceTest (numeral 1)
   let conclusion := Predicate.equal (applyDefinition testName [A]) (numeral 1)
@@ -621,7 +622,7 @@ def compileAxiom (theory : Name) (language : LanguageInfo) (info : AxiomInfo) (s
   publishChecked (.theoremE ⟨name ++ `isAxiom_of_instance, [], axiomType, checkedAxiom⟩) source
   let allA := applyDefinition `FOL.Formula.all [A]
   let history := applyDefinition `Sequence.generate [allA] [step]
-  let expanded := Core.betaReduceTerm 2048 (.app (.app step allA) history)
+  let expanded := Core.betaReduceTerm depth (.app (.app step allA) history)
   let disjuncts := (getAppFnArgs expanded).2
   let tail := disjuncts[1]!
   let conditional := (getAppFnArgs tail).2

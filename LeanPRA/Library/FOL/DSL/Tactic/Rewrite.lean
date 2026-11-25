@@ -62,18 +62,19 @@ private def rewriteRoot (rules : List Nat) (t : TermView) : DeriveM (Option Nat)
             return some proof
   return none
 
-private partial def rewriteTerm (rules : List Nat) (t : TermView) (fuel : Nat := 100) :
+private partial def rewriteTerm (rules : List Nat) (t : TermView) (fuel? : Option Nat := none) :
     DeriveM Nat := do
+  let fuel ← match fuel? with | some fuel => pure fuel | none => maxSteps
   if fuel == 0 then throwError "first-order rewriting exceeded its step limit"
   let initial ← match t with
-    | .app i args => eqCongr i (← args.mapM (fun a => rewriteTerm rules a (fuel - 1)))
+    | .app i args => eqCongr i (← args.mapM (fun a => rewriteTerm rules a (some (fuel - 1))))
     | .indexedApp i k args =>
-      eqCongr i (← args.mapM (fun a => rewriteTerm rules a (fuel - 1))) (some k)
+      eqCongr i (← args.mapM (fun a => rewriteTerm rules a (some (fuel - 1)))) (some k)
     | _ => eqRefl t
   let .equal _ u ← conclusion initial | throwError "invalid rewrite result"
   if let some step ← rewriteRoot rules u then
     let .equal _ v ← conclusion step | throwError "invalid rewrite result"
-    return ← eqTrans initial (← eqTrans step (← rewriteTerm rules v (fuel - 1)))
+    return ← eqTrans initial (← eqTrans step (← rewriteTerm rules v (some (fuel - 1))))
   return initial
 
 private def rewriteSides (goal : FormulaView) (rules : List Nat) : DeriveM (Nat × Nat) := do

@@ -30,7 +30,8 @@ private def unfoldCode (t : Term) : CommandElabM (Option Term) := do
   let (head, args) := getAppFnArgs t
   if let .definition n actuals := head then
     if let some (.function d) := (Surface.CoreEnvironment.getState (← getEnv)).lookup n then
-      return some (Core.betaReduceTerm 2048 (args.foldl .app (d.body.instantiate actuals)))
+      return some (Core.betaReduceTerm (← Surface.getMaxDepth)
+        (args.foldl .app (d.body.instantiate actuals)))
   return none
 
 /-- Read a fixed number of tuple components, using projections on an opaque tuple code. -/
@@ -82,9 +83,10 @@ def closedDefinitions : CommandElabM (Array DefinitionInfo) := do
     if d.isFormula then d.substitution.isSome || preserve else d.resultArity == 0
 
 partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
-    (fuel : Nat := 64) : CommandElabM TermView := do
+    (fuel? : Option Nat := none) : CommandElabM TermView := do
+  let fuel ← match fuel? with | some fuel => pure fuel | none => maxSteps
   if fuel == 0 then return .code (languageTerm L) input ((bound ++ free).map TermView.var)
-  let value := Core.betaReduceTerm 2048 input
+  let value := Core.betaReduceTerm (← Surface.getMaxDepth) input
   let (head, args) := getAppFnArgs value
   match head, args with
   | .definition `FOL.Term.var _, [_, i] =>
@@ -104,13 +106,15 @@ partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
       let some index := numeralValue? b | throwError "expected a literal family number"
       let some family := L.functionFamilies[index]? | throwError "invalid family number"
       return .indexedApp index k
-        (← (← tupleEntries family.arity values).mapM (fun t => readTerm L bound free t (fuel - 1)))
+        (← (← tupleEntries family.arity values).mapM
+          (fun t => readTerm L bound free t (some (fuel - 1))))
     if let some index := numeralValue? i then
       let some (_, arity) := L.functions[index]? | throwError "invalid function index"
       return .app index (← (← tupleEntries arity values).mapM
-        (fun t => readTerm L bound free t (fuel - 1)))
+        (fun t => readTerm L bound free t (some (fuel - 1))))
   | _, _ => pure ()
-  if let .letE _ v body := value then return ← readTerm L bound free (body.subst0 v) (fuel - 1)
+  if let .letE _ v body := value then
+    return ← readTerm L bound free (body.subst0 v) (some (fuel - 1))
   if let some (d, values) ← definitionApplication? value then
     unless d.isFormula do
       let language := languageTerm L
@@ -119,22 +123,25 @@ partial def readTerm (L : LanguageInfo) (bound free : List Name) (input : Term)
         let terms := d.termPositions.map fun i => values[i]!
         let variables := d.termPositions.zipIdx.foldl (fun values (position, i) =>
           values.set position (applyDefinition `FOL.Term.var [language, numeral i])) values
-        let arguments ← terms.mapM (readTerm L bound free · (fuel - 1))
+        let arguments ← terms.mapM (readTerm L bound free · (some (fuel - 1)))
         return .code language (d.apply variables) arguments
       return .code language value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
-  if reduced.value != value then return ← readTerm L bound free reduced.value (fuel - 1)
+  if reduced.value != value then
+    return ← readTerm L bound free reduced.value (some (fuel - 1))
   if ← isRegisteredClosedTerm (languageTerm L) value then
     return .code (languageTerm L) value []
   if let .definition n _ := head then
     if (definitions.getState (← getEnv)).any (fun d => d.name == n) then
-      if let some next ← unfoldCode value then return ← readTerm L bound free next (fuel - 1)
+      if let some next ← unfoldCode value then
+        return ← readTerm L bound free next (some (fuel - 1))
   return .code (languageTerm L) value ((bound ++ free).map TermView.var)
 
 partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Term)
-    (fuel : Nat := 64) : CommandElabM FormulaView := do
+    (fuel? : Option Nat := none) : CommandElabM FormulaView := do
+  let fuel ← match fuel? with | some fuel => pure fuel | none => maxSteps
   if fuel == 0 then throwError "FOL formula unfolding limit exhausted"
-  let value := Core.betaReduceTerm 2048 input
+  let value := Core.betaReduceTerm (← Surface.getMaxDepth) input
   let (head, args) := getAppFnArgs value
   match head, args with
   | .definition `FOL.Formula.falsum _, [] => return .falsum
@@ -145,19 +152,20 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
       let some index := numeralValue? b | throwError "expected a literal family number"
       let some family := L.relationFamilies[index]? | throwError "invalid family number"
       return .indexedRelation index k
-        (← (← tupleEntries family.arity values).mapM (fun t => readTerm L bound free t (fuel - 1)))
+        (← (← tupleEntries family.arity values).mapM
+          (fun t => readTerm L bound free t (some (fuel - 1))))
     if let some index := numeralValue? i then
       let some (_, arity) := L.relations[index]? | throwError "invalid relation index"
       return .relation index (← (← tupleEntries arity values).mapM (readTerm L bound free ·))
   | .definition `FOL.Formula.imp _, [a, b] =>
-    return .imp (← readFormula L bound free a fuel)
-      (← readFormula L bound free b fuel)
+    return .imp (← readFormula L bound free a (some fuel))
+      (← readFormula L bound free b (some fuel))
   | .definition `FOL.Formula.all _, [a] =>
     let name ← liftCoreM (mkFreshUserName `x)
-    return .all name (← readFormula L (name :: bound) free a fuel)
+    return .all name (← readFormula L (name :: bound) free a (some fuel))
   | _, _ => pure ()
   if let .letE _ v body := value then
-    return ← readFormula L bound free (body.subst0 v) (fuel - 1)
+    return ← readFormula L bound free (body.subst0 v) (some (fuel - 1))
   -- Explicit term arguments give closed definitions a substitution context of their own.
   if let some (d, values) ← definitionApplication? value then
     if d.isFormula then
@@ -173,7 +181,7 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
       if d.isFormula then
         return .code (languageTerm L) value ((bound ++ free).map TermView.var)
   let reduced ← (calculate value).run' {}
-  if reduced.value != value then return ← readFormula L bound free reduced.value (fuel - 1)
+  if reduced.value != value then return ← readFormula L bound free reduced.value (some (fuel - 1))
   if let .definition `FOL.Formula.subst [f] := head then
     if let [language, body] := args then
       let identity (t : Term) := pure (t, Core.Proof.forallElim .eqRefl t)
@@ -188,7 +196,8 @@ partial def readFormula (L : LanguageInfo) (bound free : List Name) (input : Ter
   if let .definition n _ := head then
     if (definitions.getState (← getEnv)).any (fun d => d.name == n) ||
         [`FOL.Formula.neg, `FOL.Formula.conj, `FOL.Formula.disj, `FOL.Formula.ex].contains n then
-      if let some next ← unfoldCode value then return ← readFormula L bound free next (fuel - 1)
+      if let some next ← unfoldCode value then
+        return ← readFormula L bound free next (some (fuel - 1))
   return .code (languageTerm L) value ((bound ++ free).map TermView.var)
 
 end LeanPRA.Library.FOL.DSL

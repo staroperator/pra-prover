@@ -114,7 +114,7 @@ reduction. Definitional unfolding is avoided because a test on an opaque formula
 bound on its unfolding. -/
 private def guardProof (axiomName : Name) (test : Term) (hypotheses : List Predicate)
     (supplied : Option (Proof × Predicate)) : CommandElabM Proof := do
-  let depth := pra.maxDepth.get (← getOptions)
+  let depth ← Surface.getMaxDepth
   let test := betaReduceTerm depth test
   let one := numeral 1
   let candidates := supplied.toList ++ hypotheses.zipIdx.map fun (h, i) => (Proof.hyp i, h)

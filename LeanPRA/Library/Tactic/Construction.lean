@@ -66,12 +66,13 @@ def projectTheorem (right : Bool) (name : Name) (args : List Term := [])
     match result with
     | .ok value => pure value
     | .error error => throwError "{error.message}"
+  let depth ← Surface.getMaxDepth
   let mut type := declaration.type.instantiate parameters []
   for arg in args do
-    let .all motive ← checked (whnfPredicate 2048 env type)
+    let .all motive ← checked (whnfPredicate depth env type)
       | throwError "expected universal theorem {name}"
     type := .app motive arg
-  let .and left rightType ← checked (whnfPredicate 2048 env type)
+  let .and left rightType ← checked (whnfPredicate depth env type)
     | throwError "expected conjunction theorem {name}"
   let head := if right then Proof.andRight left rightType else Proof.andLeft left rightType
   return .impElim head (applyTheorem name args parameters)
@@ -198,7 +199,7 @@ def tupleCode : List Term → Term
 def publishChecked (decl : Core.Declaration) (source : Syntax) : CommandElabM Unit :=
     withRef source do
   let env := Surface.CoreEnvironment.getState (← getEnv)
-  let depth := pra.maxDepth.get (← getOptions)
+  let depth ← Surface.getMaxDepth
   -- Generated declarations can contain many copies of the same syntax.
   let decl := ShareCommon.shareCommon' decl
   match Core.checkDeclaration depth env decl with

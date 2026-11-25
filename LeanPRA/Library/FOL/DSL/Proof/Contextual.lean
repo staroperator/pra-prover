@@ -64,10 +64,11 @@ def sequent (L theory Γ A : Core.Term) : Predicate :=
   .app (.app (.definition `FOL.Sequent [L, theory] []) Γ) A
 
 /-- Read the language, theory, conclusion, and optional assumption list of a provability statement.
-Both `Sequent` and the expanded `Provable` form are accepted. -/
-def provabilityParts? (type : Predicate) :
+Both `Sequent` and the expanded `Provable` form are accepted. `depth` bounds the beta reduction
+that exposes the statement. -/
+def provabilityParts? (depth : Nat) (type : Predicate) :
     Option (Core.Term × Core.Term × Core.Term × Option Core.Term) :=
-  match Core.betaReducePredicate 2048 type with
+  match Core.betaReducePredicate depth type with
   | .app (.app (.definition `FOL.Sequent [L, theory] []) Γ) A =>
     some (L, theory, A, some Γ)
   | .app (.definition `FOL.Provable [L, theory] []) code =>

@@ -107,7 +107,8 @@ def coreProof (stx : TSyntax `praExpr) : TacticM (Core.Proof × Core.Predicate) 
 /-- Read a provability statement of a declared theory, including its optional assumption list. -/
 private def provability (type : Core.Predicate) :
     CommandElabM (TheoryInfo × Core.Term × Option Core.Term) := do
-  let some (L, theory, code, context) := provabilityParts? type |
+  let depth ← Surface.getMaxDepth
+  let some (L, theory, code, context) := provabilityParts? depth type |
     throwError "expected an FOL provability goal"
   let some T := (theories.getState (← getEnv)).find? fun T =>
       theory == applyDefinition (T.name ++ `isAxiom) && L == languageTerm T.language |
@@ -186,7 +187,8 @@ definition with a substitution theorem stays closed unless every definition is o
 current scope. A list of local assumptions in the statement stays as it is. -/
 def normalizeProvable (proof : Core.Proof) (type : Core.Predicate) :
     CommandElabM (Core.Proof × Core.Predicate) := do
-  let some (L, theory, conclusion, context) := provabilityParts? type |
+  let depth ← Surface.getMaxDepth
+  let some (L, theory, conclusion, context) := provabilityParts? depth type |
     throwError "expected a proof of FOL.Provable or FOL.Sequent"
   let context := context.getD emptyList
   let normalized ← (calculate conclusion).run' {}

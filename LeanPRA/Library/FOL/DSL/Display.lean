@@ -236,7 +236,9 @@ private def withDisplayNames {α : Type} (action : CommandElabM α) : CommandEla
 /-- Format a provability statement of a declared theory as a sequent in FOL notation. -/
 @[pra_display FOL.Provable, pra_display FOL.Sequent]
 def displayProvable : PredicateDisplay := fun names predicate => withDisplayNames do
-  let some (language, theory, conclusion, context) := provabilityParts? predicate | return none
+  let depth ← Surface.getMaxDepth
+  let some (language, theory, conclusion, context) := provabilityParts? depth predicate |
+    return none
   let some T := (theories.getState (← getEnv)).find? fun T =>
       theory == applyDefinition (T.name ++ `isAxiom) && language == languageTerm T.language |
     return none

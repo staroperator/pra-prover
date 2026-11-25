@@ -49,6 +49,16 @@ register_option fol.preserveDisplayNames : Bool := {
   descr := "preserve named formula codes during goal display"
 }
 
+/-- The number of unfolding, reconciliation, or rewriting steps a first-order reading may take
+before it stops. -/
+register_option fol.maxSteps : Nat := {
+  defValue := 100
+  descr := "step limit for reading, reconciling, and rewriting first-order codes"
+}
+
+/-- The step limit from `fol.maxSteps`. -/
+def maxSteps [Monad m] [MonadOptions m] : m Nat := return fol.maxSteps.get (← getOptions)
+
 /-- Whether every FOL definition is opened in the current scope. -/
 def opensDefinitions : CommandElabM Bool := return fol.openDefinitions.get (← getOptions)
 
@@ -84,7 +94,7 @@ def registerClosedTerm (symbol theoremName : Name) : CommandElabM Unit := do
     throwError "expected a checked PRA theorem `{theoremName}`"
   unless declaration.functions == [1] && declaration.predicates.isEmpty do
     throwError "a closed-term rule requires one unary function parameter"
-  let mut type := Core.betaReducePredicate 2048 declaration.type
+  let mut type := Core.betaReducePredicate (← Surface.getMaxDepth) declaration.type
   let mut arity := 0
   while let .all (.lam _ body) := type do
     arity := arity + 1
@@ -163,7 +173,7 @@ def registerCalculation (theoremName : Name) : CommandElabM Unit := do
     throwError "expected a checked PRA theorem `{theoremName}`"
   unless declaration.predicates.isEmpty do
     throwError "a calculation equation may have only numerical parameters"
-  let mut type := Core.betaReducePredicate 2048 declaration.type
+  let mut type := Core.betaReducePredicate (← Surface.getMaxDepth) declaration.type
   let mut variables := 0
   while let .all (.lam _ body) := type do
     variables := variables + 1
@@ -187,7 +197,7 @@ def registerFormulaBuilder (symbol theoremName : Name) : CommandElabM Unit := do
   let some (.theoremE declaration) :=
       (Surface.CoreEnvironment.getState (← getEnv)).lookup theoremName |
     throwError "expected a checked PRA theorem `{theoremName}`"
-  let mut type := Core.betaReducePredicate 2048 declaration.type
+  let mut type := Core.betaReducePredicate (← Surface.getMaxDepth) declaration.type
   while let .all (.lam _ body) := type do type := body
   let .equal lhs rhs := type | throwError "expected a substitution equation"
   let (.definition `FOL.Formula.substWithDepth [f], [L, source, depth]) := getAppFnArgs lhs |
@@ -316,7 +326,8 @@ private def unfoldOnce (t : Term) : CommandElabM (Option Term) := do
   | .definition n fs =>
     match (Surface.CoreEnvironment.getState (← getEnv)).lookup n with
     | some (.function d) =>
-      return some (Core.betaReduceTerm 2048 (args.foldl .app (d.body.instantiate fs)))
+      return some (Core.betaReduceTerm (← Surface.getMaxDepth)
+        (args.foldl .app (d.body.instantiate fs)))
     | _ => return none
   | _ => return none
 
@@ -431,7 +442,7 @@ mutual
       if let some (d, _) ← appliedDefinition? input then
         if d.isFormula then
           return ⟨input, .forallElim .eqRefl input⟩
-    let beta := Core.betaReduceTerm 2048 input
+    let beta := Core.betaReduceTerm (← Surface.getMaxDepth) input
     if beta != input then return ← follow input beta (.forallElim .eqRefl input)
     match input with
     | .letE _ value body =>
@@ -948,9 +959,10 @@ definitions are opened in turn, starting with the one declared later. Two uses o
 definition are compared argument by argument, and both are opened when the arguments do not
 agree. Returns the common form `c` with proofs of `a = c` and `b = c`, or `none` when the codes
 differ at a place without a definition. -/
-partial def reconcile (a b : Term) (fuel : Nat := 64) :
+partial def reconcile (a b : Term) (fuel? : Option Nat := none) :
     CalculationM (Option (Term × Proof × Proof)) := do
   if a == b then return some (a, .forallElim .eqRefl a, .forallElim .eqRefl a)
+  let fuel ← match fuel? with | some fuel => pure fuel | none => maxSteps
   if fuel == 0 then return none
   let opened (t : Term) : CalculationM (Option Calculation) := do
     let some next ← unfoldOnce t | return none
@@ -959,11 +971,11 @@ partial def reconcile (a b : Term) (fuel : Nat := 64) :
       joinEqualities t next result.value (.forallElim .eqRefl t) result.proof⟩
   let openLeft : CalculationM (Option (Term × Proof × Proof)) := do
     let some oa ← opened a | return none
-    let some (c, pa, pb) ← reconcile oa.value b (fuel - 1) | return none
+    let some (c, pa, pb) ← reconcile oa.value b (some (fuel - 1)) | return none
     return some (c, joinEqualities a oa.value c oa.proof pa, pb)
   let openRight : CalculationM (Option (Term × Proof × Proof)) := do
     let some ob ← opened b | return none
-    let some (c, pa, pb) ← reconcile a ob.value (fuel - 1) | return none
+    let some (c, pa, pb) ← reconcile a ob.value (some (fuel - 1)) | return none
     return some (c, pa, joinEqualities b ob.value c ob.proof pb)
   let entrywise (assemble : List Term → Term) (xs ys : List Term) :
       CalculationM (Option (Term × Proof × Proof)) := do
@@ -971,7 +983,7 @@ partial def reconcile (a b : Term) (fuel : Nat := 64) :
     let mut proofs := []
     let mut proofs' := []
     for (x, y) in xs.zip ys do
-      let some (c, px, py) ← reconcile x y (fuel - 1) | return none
+      let some (c, px, py) ← reconcile x y (some (fuel - 1)) | return none
       common := common ++ [c]
       proofs := proofs ++ [px]
       proofs' := proofs' ++ [py]
@@ -984,7 +996,7 @@ partial def reconcile (a b : Term) (fuel : Nat := 64) :
         return some result
       let some oa ← opened a | return none
       let some ob ← opened b | return none
-      let some (c, pa, pb) ← reconcile oa.value ob.value (fuel - 1) | return none
+      let some (c, pa, pb) ← reconcile oa.value ob.value (some (fuel - 1)) | return none
       return some (c, joinEqualities a oa.value c oa.proof pa,
         joinEqualities b ob.value c ob.proof pb)
     let all := definitions.getState (← getEnv)

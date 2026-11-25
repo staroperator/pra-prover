@@ -248,7 +248,8 @@ private def blockOn (type : Predicate) (reason : String) : ObjectElabM Unit := d
     modify fun s => { s with blocking := some ⟨dependencies, reason⟩ }
     throw (.internal blockedExceptionId)
 
-private def getMaxDepth : ObjectElabM Nat :=
+/-- The recursion-depth limit of core checking and reduction, read from `pra.maxDepth`. -/
+def getMaxDepth [Monad m] [MonadOptions m] : m Nat :=
   return pra.maxDepth.get (← getOptions)
 
 private def objectName (stx : Syntax) : Name := stx.getId.eraseMacroScopes
