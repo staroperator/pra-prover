@@ -1,25 +1,27 @@
 module
 
 public import LeanPRA.Library.Computability.Code
-public import LeanPRA.Library.Nat.Sequence
 
 /-!
 # Primitive-recursive computations
 
-Finite computation trees describe the evaluation of unary programs, with numerical pairing
-supplying multiple arguments.
+Given the code of a primitive recursive function, PRA can not directly define a total evaluation
+function for it. Instead, we rely on the concept of computation tree (or trace), which records the
+steps of a computation.
 
-- `Computation.node` stores a program, its input and output, and its child computations.
-- `Computation.isValid` checks a tree by course-of-values recursion on smaller children;
-  `Computation.Evaluates e x y t` states its program, input, and output as a
-  quantifier-free formula.
-- `Computation.constTrace`, `Computation.idTrace`, `Computation.compTrace`,
-  `Computation.pairTrace`, and `Computation.recTrace` build trees. Their correctness proofs use
-  explicit builders and quantifier-free induction.
-- `Computation.recTraceAt`, `Computation.recValue`, `Computation.recBaseTrace`, and
-  `Computation.recStepTrace` extract a recursion's computations and intermediate outputs.
-- `Computes e x y` asserts existence of a checked tree, and `Primrec f` asserts that one program
-  computes `f` on every input. `Primrec.of_evaluates` supplies such a program from a tree builder.
+A computation tree is a binary tree where null nodes are encoded as `0`, and nodes are encoded as
+`S (pair (pair e (pair x y)) (pair p q))` with a program code `e`, an input `x` and an output `y`
+and the two childrens `p` and `q`.
+
+A valid computation tree node witnesses `y = eval e x` for function `e` and is decomposed by steps:
+- When `e` is basic operations `zero`, `succ`, `left` or `right`, the node is a leaf (has no child).
+- When `e` is `pair f g` or `comp f g`, the children encodes the computations of `f` and `g`
+  correspondingly.
+- When `e` is `rec f g` and `x = 0`, `p` encodes computation of `f` while `q = 0`; when `x = S n`,
+  `p` encodes a recursive computation on `n` while `q` encodes a computation of `g`.
+
+The validity of a computation tree node can be checked primitive rescurively; therefore, relation
+`y = eval e x` can then be defined as a Σ₁ formula in PRA (which is in `Primrec.lean`).
 -/
 
 @[expose] public section
@@ -30,7 +32,12 @@ namespace Primrec
 
 namespace Computation
 
-/-! ## Tree encoding -/
+/-! ## Tree encoding
+
+- `node` packs the code, input, output, and children.
+- `program`, `input`, and `output` read the data at the root.
+- `childLeft` and `childRight` recover the two child trees.
+-/
 
 /-- `node e x y p q` stores program code `e`, input `x`, output `y`, and child trees `p`, `q`.
 Unused children are zero. The encoding is `S (pair (pair e (pair x y)) (pair p q))`. -/
@@ -101,7 +108,11 @@ theorem childRight_lt : ∀ t, ¬ t = 0 → childRight t < t := by
   rw [node_eta t ht] at h
   exact h
 
-/-! ## Checking computation trees -/
+/-! ## Checking computation trees
+
+- `checkNode` checks a single evaluation rule using the children's validation results.
+- `isValid` checks the entire tree and returns zero or one.
+-/
 
 /-- `checkNode e x y p q hp hq` checks one evaluation rule. The numbers `hp` and `hq` are
 validation results for the child computations; unused children must have code zero. -/
@@ -186,7 +197,12 @@ theorem ne_zero_of_isValid : ∀ t, isValid t = 1 → ¬ t = 0 := by
   rw [hz, isValid_zero] at h
   exact zero_ne_succ 0 h
 
-/-! ## Evaluation rules -/
+/-! ## Evaluation rules
+
+- `Evaluates e x y t` checks that `t` records code `e` taking input `x` to output `y`.
+- The rules for pairing, composition, and recursion build valid parent nodes from valid
+  child computations.
+-/
 
 /-- `Evaluates e x y t` states that tree code `t` is a valid computation of program `e` from
 input `x` to output `y`. All four conditions are quantifier-free. -/
@@ -245,7 +261,7 @@ theorem evaluates_pair : ∀ f g x y z p q,
   rcases hp with (hp, hpe, hpx, hpy)
   rcases hq with (hq, hqe, hqx, hqy)
   apply evaluates_node
-  rw [Code.pair, checkNode, Code.tag_binary 0 f g rfl, Code.args_binary 0 f g rfl,
+  rw [checkNode, Code.tag_pair f g, Code.args_pair f g,
     unpairLeft_pair, unpairRight_pair]
   rw [hp, hpe, hpx, hpy, hq, hqe, hqx, hqy]
   change band (band 1 (eqb x x)) (band 1 (band (eqb f f)
@@ -260,7 +276,7 @@ theorem evaluates_comp : ∀ f g x y z p q,
   rcases hp with (hp, hpe, hpx, hpy)
   rcases hq with (hq, hqe, hqx, hqy)
   apply evaluates_node
-  rw [Code.comp, checkNode, Code.tag_binary 1 f g rfl, Code.args_binary 1 f g rfl,
+  rw [checkNode, Code.tag_comp f g, Code.args_comp f g,
     unpairLeft_pair, unpairRight_pair]
   rw [hp, hpe, hpx, hpy, hq, hqe, hqx, hqy]
   change band (band 1 (eqb x x)) (band (band 1 (eqb z z))
@@ -274,7 +290,7 @@ theorem evaluates_rec_zero : ∀ f g x y p,
   intro f g x y p hp
   rcases hp with (hp, hpe, hpx, hpy)
   apply evaluates_node
-  rw [Code.rec, checkNode, Code.tag_binary 2 f g rfl, Code.args_binary 2 f g rfl,
+  rw [checkNode, Code.tag_rec f g, Code.args_rec f g,
     unpairLeft_pair, unpairRight_pair,
     unpairRight_pair, unpairLeft_pair]
   rw [hp, hpe, hpx, hpy]
@@ -290,7 +306,7 @@ theorem evaluates_rec_succ : ∀ f g x n y z p q,
   rcases hp with (hp, hpe, hpx, hpy)
   rcases hq with (hq, hqe, hqx, hqy)
   apply evaluates_node
-  rw [Code.rec, checkNode, Code.tag_binary 2 f g rfl, Code.args_binary 2 f g rfl,
+  rw [checkNode, Code.tag_rec f g, Code.args_rec f g,
     unpairLeft_pair, unpairRight_pair,
     unpairRight_pair, unpairLeft_pair]
   rw [hp, hpe, hpx, hpy, hq, hqe, hqx, hqy]
@@ -300,7 +316,12 @@ theorem evaluates_rec_succ : ∀ f g x n y z p q,
   repeat rw [eqb_self]
   rfl
 
-/-! ## Constructing computation trees -/
+/-! ## Constructing computation trees
+
+- `constTrace` and `idTrace` build traces for constant and identity codes.
+- `compTrace` and `pairTrace` combine traces for two codes.
+- `recTrace` assembles a trace from the base computation and successive step computations.
+-/
 
 /-- `constTrace n x` constructs the computation of the constant program `Code.const n` at `x`. -/
 def constTrace : Nat → Nat → Nat := fun n x =>
@@ -383,6 +404,14 @@ theorem evaluates_pairTrace (f g tf tg : Nat → Nat) : ∀ a b,
   intro a b hf hg x
   exact evaluates_pair a b x (f x) (g x) (tf x) (tg x) (hf x) (hg x)
 
+/-- `binaryTrace f a b ta tb tf c l r x` runs `l` and `r` on `x` with traces `ta x`
+and `tb x`. It then uses `tf` to run `c` on `pair (a x) (b x)`. The output is
+`f (a x) (b x)`. -/
+def binaryTrace (f : Nat → Nat → Nat) (a b ta tb tf : Nat → Nat) :
+    Nat → Nat → Nat → Nat → Nat := fun c l r x =>
+  node (Code.comp c (Code.pair l r)) x (f (a x) (b x))
+    (pairTrace a b ta tb l r x) (tf (pair (a x) (b x)))
+
 theorem evaluates_rec_unary (base step tb ts : Nat → Nat) : ∀ a b,
     (∀ x, Evaluates a x (base x) (tb x)) → (∀ x, Evaluates b x (step x) (ts x)) →
     ∀ z, Evaluates (Code.rec a b) z
@@ -397,7 +426,12 @@ theorem evaluates_rec_unary (base step tb ts : Nat → Nat) : ∀ a b,
   rw [pair_unpair] at h
   exact h
 
-/-! ## Recovering child computations -/
+/-! ## Recovering child computations
+
+- The basic evaluation rules determine the root output.
+- The elimination rules for pairing, composition, and recursion recover valid child
+  computations from a checked parent tree.
+-/
 
 theorem checkNode_of_evaluates : ∀ e x y t, Evaluates e x y t →
     checkNode e x y (childLeft t) (childRight t) (isValid (childLeft t))
@@ -449,12 +483,12 @@ theorem checkNode_pair : ∀ f g x y p q hp hq,
           (eqb y (_root_.pair (output p) (output q))))))) := by
   intro f g x y p q hp hq
   have select : ∀ a b c d e rest,
-      ite (eqb (4 + 0) 0) a (ite (eqb (4 + 0) 1) b
-        (ite (eqb (4 + 0) 2) c (ite (eqb (4 + 0) 3) d
-        (ite (eqb (4 + 0) 4) e rest)))) = e :=
+      ite (eqb 4 0) a (ite (eqb 4 1) b
+        (ite (eqb 4 2) c (ite (eqb 4 3) d
+        (ite (eqb 4 4) e rest)))) = e :=
     fun a b c d e rest => rfl
-  unfold Code.pair checkNode
-  rw [Code.tag_binary 0 f g rfl, select, Code.args_binary 0 f g rfl,
+  unfold checkNode
+  rw [Code.tag_pair f g, select, Code.args_pair f g,
     unpairLeft_pair, unpairRight_pair]
 
 theorem evaluates_pair_elim : ∀ f g x y t, Evaluates (Code.pair f g) x y t →
@@ -483,12 +517,12 @@ theorem checkNode_comp : ∀ f g x y p q hp hq,
           (eqb (input q) (output p))))) := by
   intro f g x y p q hp hq
   have select : ∀ a b c d e f rest,
-      ite (eqb (4 + 1) 0) a (ite (eqb (4 + 1) 1) b
-        (ite (eqb (4 + 1) 2) c (ite (eqb (4 + 1) 3) d
-        (ite (eqb (4 + 1) 4) e (ite (eqb (4 + 1) 5) f rest))))) = f :=
+      ite (eqb 5 0) a (ite (eqb 5 1) b
+        (ite (eqb 5 2) c (ite (eqb 5 3) d
+        (ite (eqb 5 4) e (ite (eqb 5 5) f rest))))) = f :=
     fun a b c d e f rest => rfl
-  unfold Code.comp checkNode
-  rw [Code.tag_binary 1 f g rfl, select, Code.args_binary 1 f g rfl,
+  unfold checkNode
+  rw [Code.tag_comp f g, select, Code.args_comp f g,
     unpairLeft_pair, unpairRight_pair]
 
 theorem evaluates_comp_elim : ∀ f g x y t, Evaluates (Code.comp f g) x y t →
@@ -514,7 +548,7 @@ theorem checkNode_rec_zero : ∀ f g x y p q hp hq,
       band hp (band (eqb q 0) (band (eqb (program p) f)
         (band (eqb (input p) x) (eqb (output p) y)))) := by
   intro f g x y p q hp hq
-  rw [Code.rec, checkNode, Code.tag_binary 2 f g rfl, Code.args_binary 2 f g rfl,
+  rw [checkNode, Code.tag_rec f g, Code.args_rec f g,
     unpairLeft_pair, unpairRight_pair,
     unpairRight_pair, unpairLeft_pair]
   rfl
@@ -539,7 +573,7 @@ theorem checkNode_rec_succ : ∀ f g x n y p q hp hq,
           (band (eqb (input p) (_root_.pair x n))
             (eqb (input q) (_root_.pair x (_root_.pair n (output p)))))))) := by
   intro f g x n y p q hp hq
-  rw [Code.rec, checkNode, Code.tag_binary 2 f g rfl, Code.args_binary 2 f g rfl,
+  rw [checkNode, Code.tag_rec f g, Code.args_rec f g,
     unpairLeft_pair, unpairRight_pair,
     unpairRight_pair, unpairLeft_pair]
   rfl
@@ -563,7 +597,11 @@ theorem evaluates_rec_succ_elim : ∀ f g x n y t,
     and_left (eqb_ne_zero _ _) hqe, and_left (eqb_ne_zero _ _) hqx,
     and_left (eqb_ne_zero _ _) hqy))
 
-/-! ## Recursion histories -/
+/-! ## Recursion histories
+
+- `recTraceAt` and `recValue` read the trace and result at an intermediate index.
+- `recBaseTrace` and `recStepTrace` recover the base and step computations.
+-/
 
 /-- `followLeft k t` follows `childLeft` from computation tree `t` for `k` steps. -/
 def followLeft : Nat → Nat → Nat := fun k t =>
@@ -655,39 +693,136 @@ theorem recStepTrace_evaluates : ∀ f g x n y t i,
     (ne_zero_of_isValid (recTraceAt t n (S i)) (and_left ht))
   exact (hv, lt_of_lt_of_le _ _ _ less (and_right hc))
 
+/-! ## Uniqueness of outputs
+
+- `sameComputation` tests whether two trees are valid for the same code and input.
+- `evaluates_unique` proves that two such trees have the same output.
+-/
+
+/-- `sameComputation k` returns one when the two trees paired in `k` are valid computations of
+the same program on the same input, and zero otherwise. -/
+def sameComputation : Nat → Nat := fun k =>
+  band (isValid (unpairLeft k)) (band (isValid (unpairRight k))
+    (band (eqb (program (unpairLeft k)) (program (unpairRight k)))
+      (eqb (input (unpairLeft k)) (input (unpairRight k)))))
+
+theorem sameComputation_pair : ∀ e x y z t u,
+    Evaluates e x y t → Evaluates e x z u → sameComputation (pair t u) = 1 := by
+  rintro e x y z t u (vt, pt, it, ot) (vu, pu, iu, ou)
+  rw [sameComputation, unpairLeft_pair, unpairRight_pair, vt, vu, pt, pu, it, iu, eqb_self,
+    eqb_self]
+  rfl
+
+theorem evaluates_unique_of_children : ∀ e x y z t u,
+    (∀ e' x' y' z' t' u', pair t' u' < pair t u →
+      Evaluates e' x' y' t' → Evaluates e' x' z' u' → y' = z') →
+    Evaluates e x y t → Evaluates e x z u → y = z := by
+  intro e x y z t u earlier ht hu
+  have tz := ne_zero_of_isValid t (and_left ht)
+  have uz := ne_zero_of_isValid u (and_left hu)
+  have below : ∀ t' u', t' < t → u' < u → pair t' u' < pair t u :=
+    fun t' u' htt huu => pair_lt_left t' u' t u htt (le_of_lt u' u huu)
+  have lefts := below (childLeft t) (childLeft u) (childLeft_lt t tz) (childLeft_lt u uz)
+  have rights := below (childRight t) (childRight u) (childRight_lt t tz) (childRight_lt u uz)
+  rcases Code.cases e with h0 | h1 | h2 | h3 | rest
+  · rw [h0] at ht
+    rw [h0] at hu
+    rw [output_zero_of_evaluates x y t ht, output_zero_of_evaluates x z u hu]
+  · rw [h1] at ht
+    rw [h1] at hu
+    rw [output_succ_of_evaluates x y t ht, output_succ_of_evaluates x z u hu]
+  · rw [h2] at ht
+    rw [h2] at hu
+    rw [output_left_of_evaluates x y t ht, output_left_of_evaluates x z u hu]
+  · rw [h3] at ht
+    rw [h3] at hu
+    rw [output_right_of_evaluates x y t ht, output_right_of_evaluates x z u hu]
+  · rcases rest with (f, g, cases)
+    rcases cases with he | he | he
+    · rw [he] at ht
+      rw [he] at hu
+      rcases evaluates_pair_elim f g x y t ht with (htl, htr, hy)
+      rcases evaluates_pair_elim f g x z u hu with (hul, hur, hz)
+      have el := earlier f x _ _ (childLeft t) (childLeft u) lefts htl hul
+      have er := earlier g x _ _ (childRight t) (childRight u) rights htr hur
+      rw [hy, hz, el, er]
+    · rw [he] at ht
+      rw [he] at hu
+      rcases evaluates_comp_elim f g x y t ht with (htl, htr)
+      rcases evaluates_comp_elim f g x z u hu with (hul, hur)
+      have el := earlier g x _ _ (childLeft t) (childLeft u) lefts htl hul
+      rw [← el] at hur
+      exact earlier f (output (childLeft t)) y z (childRight t) (childRight u) rights htr hur
+    · rw [he] at ht
+      rw [he] at hu
+      rcases zero_or_succ_pred (unpairRight x) with hn | hn
+      · have hx : x = pair (unpairLeft x) 0 := by
+          rw [← hn, pair_unpair]
+        rw [hx] at ht
+        rw [hx] at hu
+        have htl := evaluates_rec_zero_elim f g (unpairLeft x) y t ht
+        have hul := evaluates_rec_zero_elim f g (unpairLeft x) z u hu
+        exact earlier f (unpairLeft x) y z (childLeft t) (childLeft u) lefts htl hul
+      · have hx : x = pair (unpairLeft x) (S (pred (unpairRight x))) := by
+          rw [← hn, pair_unpair]
+        rw [hx] at ht
+        rw [hx] at hu
+        rcases evaluates_rec_succ_elim f g (unpairLeft x) (pred (unpairRight x)) y t ht with
+          (htl, htr)
+        rcases evaluates_rec_succ_elim f g (unpairLeft x) (pred (unpairRight x)) z u hu with
+          (hul, hur)
+        have el := earlier (Code.rec f g) (pair (unpairLeft x) (pred (unpairRight x))) _ _
+          (childLeft t) (childLeft u) lefts htl hul
+        rw [← el] at hur
+        exact earlier g (pair (unpairLeft x) (pair (pred (unpairRight x)) (output (childLeft t))))
+          y z (childRight t) (childRight u) rights htr hur
+
+/-- A program has at most one output on each input: two computations of the same program on the
+same input end with the same output. -/
+theorem evaluates_unique : ∀ e x y z t u, Evaluates e x y t → Evaluates e x z u → y = z := by
+  have invariant : ∀ k, ite (sameComputation k) (output (unpairLeft k)) 0 =
+      ite (sameComputation k) (output (unpairRight k)) 0 := by
+    apply strong_induction_eq (fun k => ite (sameComputation k) (output (unpairLeft k)) 0)
+      (fun k => ite (sameComputation k) (output (unpairRight k)) 0)
+    intro k ih
+    have earlier : ∀ e x y z t u, pair t u < k →
+        Evaluates e x y t → Evaluates e x z u → y = z := by
+      intro e x y z t u hlt ht hu
+      have h : ite (sameComputation (pair t u)) (output (unpairLeft (pair t u))) 0 =
+          ite (sameComputation (pair t u)) (output (unpairRight (pair t u))) 0 := ih (pair t u) hlt
+      rw [sameComputation_pair e x y z t u ht hu, unpairLeft_pair, unpairRight_pair] at h
+      rw [← and_right (and_right (and_right ht)), ← and_right (and_right (and_right hu))]
+      exact h
+    change ite (sameComputation k) (output (unpairLeft k)) 0 =
+      ite (sameComputation k) (output (unpairRight k)) 0
+    by_cases hs : sameComputation k = 0
+    · rw [hs, ite_zero (output (unpairLeft k)) 0, ite_zero (output (unpairRight k)) 0]
+    rcases band_ne_zero _ _ hs with (vt, rest)
+    rcases band_ne_zero _ _ rest with (vu, rest)
+    rcases band_ne_zero _ _ rest with (hp, hi)
+    have ht : Evaluates (program (unpairLeft k)) (input (unpairLeft k))
+        (output (unpairLeft k)) (unpairLeft k) :=
+      (and_right (bool_eq_one _ (isValid_bool _)) vt, rfl, rfl, rfl)
+    have hu : Evaluates (program (unpairLeft k)) (input (unpairLeft k))
+        (output (unpairRight k)) (unpairRight k) :=
+      (and_right (bool_eq_one _ (isValid_bool _)) vu, eq_symm (and_left (eqb_ne_zero _ _) hp),
+        eq_symm (and_left (eqb_ne_zero _ _) hi), rfl)
+    have bound : ∀ e' x' y' z' t' u', pair t' u' < pair (unpairLeft k) (unpairRight k) →
+        Evaluates e' x' y' t' → Evaluates e' x' z' u' → y' = z' := by
+      rw [pair_unpair]
+      exact earlier
+    rw [ite_of_ne_zero _ _ _ hs, ite_of_ne_zero _ _ _ hs]
+    exact evaluates_unique_of_children (program (unpairLeft k)) (input (unpairLeft k))
+      (output (unpairLeft k)) (output (unpairRight k)) (unpairLeft k) (unpairRight k) bound ht hu
+  intro e x y z t u ht hu
+  have h : ite (sameComputation (pair t u)) (output (unpairLeft (pair t u))) 0 =
+      ite (sameComputation (pair t u)) (output (unpairRight (pair t u))) 0 := invariant (pair t u)
+  rw [sameComputation_pair e x y z t u ht hu, unpairLeft_pair, unpairRight_pair] at h
+  rw [← and_right (and_right (and_right ht)), ← and_right (and_right (and_right hu))]
+  exact h
+
 end Computation
 
-/-! ## Computed functions -/
-
-/-- `Computes e x y` means that program code `e` has a finite computation from `x` to `y`. -/
-def Computes : Nat → Nat → Nat → Prop := fun e x y => ∃ t, Computation.Evaluates e x y t
-
-theorem computes_pair : ∀ f g x y z,
-    Computes f x y → Computes g x z → Computes (Code.pair f g) x (pair y z) := by
-  rintro f g x y z (p, hp) (q, hq)
-  exact (Computation.node (Code.pair f g) x (pair y z) p q,
-    Computation.evaluates_pair f g x y z p q hp hq)
-
-theorem computes_comp : ∀ f g x y z,
-    Computes g x y → Computes f y z → Computes (Code.comp f g) x z := by
-  rintro f g x y z (p, hp) (q, hq)
-  exact (Computation.node (Code.comp f g) x z p q,
-    Computation.evaluates_comp f g x y z p q hp hq)
-
 end Primrec
-
-/-- `Primrec f` means that a program using basic functions, composition, pairing, and primitive
-recursion computes `f x` for every input `x`. -/
-def Primrec (f : Nat → Nat) : Prop :=
-  ∃ e, ∀ x, Primrec.Computes e x (f x)
-
-/-- A primitive-recursive program with an explicit correct computation for every input witnesses
-primitive recursiveness. The tree builder is a numerical function in the PRA language. -/
-theorem Primrec.of_evaluates (f trace : Nat → Nat) : ∀ e,
-    (∀ x, Primrec.Computation.Evaluates e x (f x) (trace x)) → Primrec f := by
-  intro e h
-  exists e
-  intro x
-  exact (trace x, h x)
 
 end

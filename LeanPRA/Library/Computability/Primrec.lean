@@ -1,23 +1,93 @@
 module
 
-public meta import LeanPRA.Library.Computability.Tactic
+public import LeanPRA.Library.Computability.Computation
 
 /-!
 # Primitive-recursive functions
 
-Basic numerical functions and operations that preserve primitive recursiveness.
+A function is primitive recursive when some program code computes it, witnessed by a valid
+computation trees. This module defines that notion on top of the computation trees and proves
+closure properties for basic functions and combinations.
 
-- `Primrec.congr` transfers primitive recursiveness along pointwise equality.
-- `Primrec.const`, `Primrec.id`, `Primrec.succ`, `Primrec.unpairLeft`, and `Primrec.unpairRight`
-  give the basic functions.
-- `Primrec.comp` and `Primrec.pair` close the class under composition and pairing.
-- `Primrec.eqb_pair` computes equality on a paired input; `Primrec.eqb` compares the outputs
-  of two primitive-recursive functions.
+- `Primrec.Evaluates e x y` says that there is a valid computation of code `e` that gives output `y`
+  on the input `x`.
+- `Primrec.Encodes f e` says that code `e` encodes the function `f`, that it evaluates to `f x` for
+  every input `x`.
+- `Primrec f` asserts that some code encodes `f`.
+- `Primrec.ComputedBy f e tr` says that `e` encodes the function `f` for all inputs, and that fact
+  is witnessed by a trace builder `tr`. `tr` is the Skolem function of `Primrec.Encodes f e`.
 -/
 
 @[expose] public section
 
 pra
+
+namespace Primrec
+
+/-! ## Encoded functions -/
+
+/-- Code `e` evaluates at input `x` to output `y` if it has a checked computation tree. -/
+def Evaluates : Nat → Nat → Nat → Prop := fun e x y =>
+  ∃ t, Computation.Evaluates e x y t
+
+/-- Code `e` encodes `f` if every input has a checked computation with output `f x`. -/
+def Encodes (f : Nat → Nat) (e : Nat) : Prop :=
+  ∀ x, Evaluates e x (f x)
+
+end Primrec
+
+/-- A function is primitive recursive if some primitive-recursive program encodes it. -/
+def Primrec (f : Nat → Nat) : Prop := ∃ e, Primrec.Encodes f e
+
+/-- `Primrec.ComputedBy f e tr` says that for each input `x`, `tr x` is a checked computation
+tree for code `e` with result `f x`. Thus `tr` chooses the tree whose existence is asserted by
+`Primrec.Encodes f e`. Quantifier-free induction can use this explicit builder to assemble
+computation trees, for example when a recursion calls the function encoded by `e`.
+The command `derive_primrec` supplies a builder and its correctness theorem. -/
+def Primrec.ComputedBy (f : Nat → Nat) (e : Nat) (tr : Nat → Nat) : Prop :=
+  ∀ x, Primrec.Computation.Evaluates e x (f x) (tr x)
+
+namespace Primrec.Computation
+
+theorem computedBy_binary (f : Nat → Nat → Nat) (a b ta tb tf : Nat → Nat)
+    (c l r : Nat) :
+    ComputedBy (fun p => f (unpairLeft p) (unpairRight p)) c tf →
+    ComputedBy a l ta → ComputedBy b r tb →
+    ComputedBy (fun x => f (a x) (b x)) (Code.comp c (Code.pair l r))
+      (binaryTrace f a b ta tb tf c l r) := by
+  intro hf ha hb x
+  have value := hf (pair (a x) (b x))
+  rw [unpairLeft_pair, unpairRight_pair] at value
+  exact evaluates_comp c (Code.pair l r) x (pair (a x) (b x)) (f (a x) (b x)) _ _
+    (evaluates_pairTrace a b ta tb l r ha hb x) value
+
+end Primrec.Computation
+
+/-- A checked trace builder gives an encoding certificate. -/
+theorem Primrec.encodes_of_computedBy (f tr : Nat → Nat) (e : Nat) :
+    Primrec.ComputedBy f e tr → Primrec.Encodes f e :=
+  fun h x => (tr x, h x)
+
+/-- An encoding witnesses primitive recursiveness. -/
+theorem Primrec.of_encodes (f : Nat → Nat) (e : Nat) :
+    Primrec.Encodes f e → Primrec f :=
+  fun h => (e, h)
+
+/-- A program with a checked trace builder witnesses primitive recursiveness. -/
+theorem Primrec.of_computedBy (f tr : Nat → Nat) :
+    ∀ e, Primrec.ComputedBy f e tr → Primrec f :=
+  fun e h => Primrec.of_encodes f e (Primrec.encodes_of_computedBy f tr e h)
+
+/-- A primitive-recursive program with an explicit correct computation for every input witnesses
+primitive recursiveness. The tree builder is a numerical function in the PRA language. -/
+theorem Primrec.of_evaluates (f tr : Nat → Nat) : ∀ e,
+    (∀ x, Primrec.Computation.Evaluates e x (f x) (tr x)) → Primrec f := by
+  intro e h
+  exists e
+  intro x
+  exact (tr x, h x)
+
+/-! ## Closure properties -/
 
 theorem Primrec.congr (f g : Nat → Nat) :
     (∀ x, f x = g x) → Primrec f → Primrec g := by
@@ -42,40 +112,24 @@ theorem Primrec.succ : Primrec S :=
   Primrec.of_evaluates S (fun x => Primrec.Computation.node Primrec.Code.succ x (S x) 0 0)
     Primrec.Code.succ Primrec.Computation.evaluates_succ
 
-theorem Primrec.unpairLeft : Primrec unpairLeft :=
-  Primrec.of_evaluates unpairLeft
-    (fun x => Primrec.Computation.node Primrec.Code.left x (unpairLeft x) 0 0)
-    Primrec.Code.left Primrec.Computation.evaluates_left
-
-theorem Primrec.unpairRight : Primrec unpairRight :=
-  Primrec.of_evaluates unpairRight
-    (fun x => Primrec.Computation.node Primrec.Code.right x (unpairRight x) 0 0)
-    Primrec.Code.right Primrec.Computation.evaluates_right
-
 theorem Primrec.comp (f g : Nat → Nat) :
     Primrec f → Primrec g → Primrec (fun x => f (g x)) := by
   rintro (a, ha) (b, hb)
   exists Primrec.Code.comp a b
   intro x
-  exact Primrec.computes_comp a b x (g x) (f (g x)) (hb x) (ha (g x))
+  rcases hb x with (p, hp)
+  rcases ha (g x) with (q, hq)
+  exists Primrec.Computation.node (Primrec.Code.comp a b) x (f (g x)) p q
+  exact Primrec.Computation.evaluates_comp a b x (g x) (f (g x)) p q hp hq
 
 theorem Primrec.pair (f g : Nat → Nat) :
     Primrec f → Primrec g → Primrec (fun x => pair (f x) (g x)) := by
   rintro (a, ha) (b, hb)
   exists Primrec.Code.pair a b
   intro x
-  exact Primrec.computes_pair a b x (f x) (g x) (ha x) (hb x)
-
-derive_primrec (fun x => eqb (unpairLeft x) (unpairRight x)) as Primrec.eqb_pair
-
-theorem Primrec.eqb (f g : Nat → Nat) :
-    Primrec f → Primrec g → Primrec (fun x => eqb (f x) (g x)) := by
-  intro hf hg
-  apply Primrec.congr (fun x => eqb (unpairLeft (pair (f x) (g x)))
-    (unpairRight (pair (f x) (g x)))) (fun x => eqb (f x) (g x))
-  · intro x
-    rw [unpairLeft_pair, unpairRight_pair]
-  · exact Primrec.comp (fun x => eqb (unpairLeft x) (unpairRight x))
-      (fun x => pair (f x) (g x)) Primrec.eqb_pair (Primrec.pair f g hf hg)
+  rcases ha x with (p, hp)
+  rcases hb x with (q, hq)
+  exists Primrec.Computation.node (Primrec.Code.pair a b) x (pair (f x) (g x)) p q
+  exact Primrec.Computation.evaluates_pair a b x (f x) (g x) p q hp hq
 
 end

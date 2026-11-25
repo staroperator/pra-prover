@@ -9,8 +9,11 @@ public import LeanPRA.Core.Syntax
 public import LeanPRA.Core.Utils
 public import LeanPRA.Library.Computability.Code
 public import LeanPRA.Library.Computability.Computation
+public import LeanPRA.Library.Computability.Derive.Command
+public import LeanPRA.Library.Computability.Derive.Computability
+public import LeanPRA.Library.Computability.Derive.Nat
+public import LeanPRA.Library.Computability.Derive.Prelude
 public import LeanPRA.Library.Computability.Primrec
-public import LeanPRA.Library.Computability.Tactic
 public import LeanPRA.Library.FOL.Arithmetic.Bounded
 public import LeanPRA.Library.FOL.Arithmetic.Computability
 public import LeanPRA.Library.FOL.Arithmetic.Defs
@@ -27,6 +30,7 @@ public import LeanPRA.Library.FOL.Arithmetic.Representation.Recursion
 public import LeanPRA.Library.FOL.Arithmetic.Representation.Theorems
 public import LeanPRA.Library.FOL.Arithmetic.Tactic.Ring
 public import LeanPRA.Library.FOL.Common.Bound
+public import LeanPRA.Library.FOL.Common.Computability
 public import LeanPRA.Library.FOL.Common.Language
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
 public import LeanPRA.Library.FOL.Common.Proof

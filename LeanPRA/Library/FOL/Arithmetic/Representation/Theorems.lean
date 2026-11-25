@@ -1,6 +1,6 @@
 module
 
-public import LeanPRA.Library.Computability.Computation
+public import LeanPRA.Library.Computability.Primrec
 public import LeanPRA.Library.FOL.Arithmetic.Representation.Composition
 public import LeanPRA.Library.FOL.Arithmetic.Representation.Recursion
 
@@ -78,10 +78,10 @@ theorem rep_pair :
     (FOL.Formula.subst (FOL.liftSubst (FOL.shiftSubst language 2) language
     2) language (rep g)) (Term.var language 0) (Term.var language 1) := by
   intro f g
-  rw [rep, covrec, Primrec.Code.pair, Primrec.Code.tag_binary 0 f g rfl,
-    Primrec.Code.args_binary 0 f g rfl, unpairLeft_pair, unpairRight_pair]
-  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_binary 0 f g),
-    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_binary 0 f g)]
+  rw [rep, covrec, Primrec.Code.tag_pair f g,
+        Primrec.Code.args_pair f g, unpairLeft_pair, unpairRight_pair]
+  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_pair f g),
+    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_pair f g)]
   rfl
 
 theorem rep_comp :
@@ -90,10 +90,10 @@ theorem rep_comp :
     (FOL.Formula.subst (FOL.liftSubst (FOL.shiftSubst language 2) language
     2) language (rep g)) (Term.var language 0) (Term.var language 1) := by
   intro f g
-  rw [rep, covrec, Primrec.Code.comp, Primrec.Code.tag_binary 1 f g rfl,
-    Primrec.Code.args_binary 1 f g rfl, unpairLeft_pair, unpairRight_pair]
-  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_binary 1 f g),
-    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_binary 1 f g)]
+  rw [rep, covrec, Primrec.Code.tag_comp f g,
+        Primrec.Code.args_comp f g, unpairLeft_pair, unpairRight_pair]
+  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_comp f g),
+    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_comp f g)]
   rfl
 
 theorem rep_rec :
@@ -102,10 +102,10 @@ theorem rep_rec :
     (Formula.subst (liftSubst (shiftSubst language 2) language 2) language (rep g))
     (Term.var language 0) (Term.var language 1) := by
   intro f g
-  rw [rep, covrec, Primrec.Code.rec, Primrec.Code.tag_binary 2 f g rfl,
-    Primrec.Code.args_binary 2 f g rfl, unpairLeft_pair, unpairRight_pair]
-  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_binary 2 f g),
-    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_binary 2 f g)]
+  rw [rep, covrec, Primrec.Code.tag_rec f g,
+        Primrec.Code.args_rec f g, unpairLeft_pair, unpairRight_pair]
+  rw [Sequence.rget_generate _ f _ (Primrec.Code.left_lt_rec f g),
+    Sequence.rget_generate _ g _ (Primrec.Code.right_lt_rec f g)]
   rfl
 
 /-- `isTotal (p := p)()` states that every input has an output related to it by `p`. -/
@@ -359,8 +359,8 @@ theorem representationProofStep_isProofOf :
       have rightProof := ih (Primrec.Computation.childRight t) rightLess rightValid
       rw [leftProgram, leftInput] at leftProof
       rw [rightProgram, rightInput] at rightProof
-      rw [representationProofStep, hp, Primrec.Code.pair, Primrec.Code.tag_binary 0 f g rfl,
-        Primrec.Code.args_binary 0 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [representationProofStep, hp, Primrec.Code.tag_pair f g,
+        Primrec.Code.args_pair f g, unpairLeft_pair, unpairRight_pair]
       exact representsAt_rep_pair_of_isProofOf.witness_correct f g (Primrec.Computation.input t)
         (Primrec.Computation.output (Primrec.Computation.childLeft t))
         (Primrec.Computation.output (Primrec.Computation.childRight t))
@@ -376,8 +376,8 @@ theorem representationProofStep_isProofOf :
       have rightProof := ih (Primrec.Computation.childRight t) rightLess rightValid
       rw [leftProgram, leftInput] at leftProof
       rw [rightProgram, rightInput, rightOutput] at rightProof
-      rw [representationProofStep, hc, Primrec.Code.comp, Primrec.Code.tag_binary 1 f g rfl,
-        Primrec.Code.args_binary 1 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [representationProofStep, hc, Primrec.Code.tag_comp f g,
+        Primrec.Code.args_comp f g, unpairLeft_pair, unpairRight_pair]
       exact representsAt_rep_comp_of_isProofOf.witness_correct f g (Primrec.Computation.input t)
         (Primrec.Computation.output (Primrec.Computation.childLeft t))
         (Primrec.Computation.output t) (Sequence.rget xs (Primrec.Computation.childLeft t))
@@ -393,8 +393,8 @@ theorem representationProofStep_isProofOf :
         (unpairRight (Primrec.Computation.input t)) (Primrec.Computation.output t) t xs
         recursion ih
       rw [pair_unpair] at checked
-      rw [representationProofStep, hr, Primrec.Code.rec, Primrec.Code.tag_binary 2 f g rfl,
-        Primrec.Code.args_binary 2 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [representationProofStep, hr, Primrec.Code.tag_rec f g,
+        Primrec.Code.args_rec f g, unpairLeft_pair, unpairRight_pair]
       exact checked
 
 theorem representationProof_isProofOf :
@@ -415,7 +415,8 @@ theorem representationProof_isProofOf :
 /-- At each numeral input, Q identifies every output of the program's graph with the
 numeral produced by a checked computation of that program. -/
 theorem rep_num_iff (e n m : Nat) :
-    Primrec.Computes e n m → (Q ⊢ ∀ y, ${rep e}[${num n}, y] ↔ y = ${num m}) := by
+    Primrec.Evaluates e n m →
+    (Q ⊢ ∀ y, ${rep e}[${num n}, y] ↔ y = ${num m}) := by
   rintro (t, valid, program, input, output)
   have checked := representationProof_isProofOf t valid
   rw [program, input, output] at checked
@@ -425,7 +426,7 @@ theorem rep_num_iff (e n m : Nat) :
 
 /-- The formula constructed from a code represents every function computed by that code. -/
 theorem represents (f : Nat → Nat) (e : Nat) :
-    (∀ n, Primrec.Computes e n (f n)) → Represents f (rep e) := by
+    Primrec.Encodes f e → Represents f (rep e) := by
   intro computes n
   exact rep_num_iff e n (f n) (computes n)
 
@@ -632,40 +633,40 @@ theorem totalProofStep_isProofOf :
     rcases cases with he | he | he
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 0 f g
+        exact Primrec.Code.left_lt_pair f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 0 f g
+        exact Primrec.Code.right_lt_pair f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, totalProofStep, Primrec.Code.pair, Primrec.Code.tag_binary 0 f g rfl,
-        Primrec.Code.args_binary 0 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, totalProofStep, Primrec.Code.tag_pair f g,
+        Primrec.Code.args_pair f g, unpairLeft_pair, unpairRight_pair]
       exact isTotal_rep_pair_of_isProofOf.witness_correct f g (Sequence.rget xs f) (Sequence.rget xs
           g)
         hfp hgp
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 1 f g
+        exact Primrec.Code.left_lt_comp f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 1 f g
+        exact Primrec.Code.right_lt_comp f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, totalProofStep, Primrec.Code.comp, Primrec.Code.tag_binary 1 f g rfl,
-        Primrec.Code.args_binary 1 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, totalProofStep, Primrec.Code.tag_comp f g,
+        Primrec.Code.args_comp f g, unpairLeft_pair, unpairRight_pair]
       exact isTotal_rep_comp_of_isProofOf.witness_correct f g (Sequence.rget xs f) (Sequence.rget xs
           g)
         hfp hgp
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 2 f g
+        exact Primrec.Code.left_lt_rec f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 2 f g
+        exact Primrec.Code.right_lt_rec f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, totalProofStep, Primrec.Code.rec, Primrec.Code.tag_binary 2 f g rfl,
-        Primrec.Code.args_binary 2 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, totalProofStep, Primrec.Code.tag_rec f g,
+        Primrec.Code.args_rec f g, unpairLeft_pair, unpairRight_pair]
       exact isTotal_rep_rec_of_isProofOf.witness_correct f g (Sequence.rget xs f) (Sequence.rget xs
           g)
         hfp hgp
@@ -705,38 +706,38 @@ theorem uniqueProofStep_isProofOf :
     rcases cases with he | he | he
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 0 f g
+        exact Primrec.Code.left_lt_pair f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 0 f g
+        exact Primrec.Code.right_lt_pair f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, uniqueProofStep, Primrec.Code.pair, Primrec.Code.tag_binary 0 f g rfl,
-        Primrec.Code.args_binary 0 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, uniqueProofStep, Primrec.Code.tag_pair f g,
+        Primrec.Code.args_pair f g, unpairLeft_pair, unpairRight_pair]
       exact isUnique_rep_pair_of_isProofOf.witness_correct f g (Sequence.rget xs f)
         (Sequence.rget xs g) hfp hgp
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 1 f g
+        exact Primrec.Code.left_lt_comp f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 1 f g
+        exact Primrec.Code.right_lt_comp f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, uniqueProofStep, Primrec.Code.comp, Primrec.Code.tag_binary 1 f g rfl,
-        Primrec.Code.args_binary 1 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, uniqueProofStep, Primrec.Code.tag_comp f g,
+        Primrec.Code.args_comp f g, unpairLeft_pair, unpairRight_pair]
       exact isUnique_rep_comp_of_isProofOf.witness_correct f g (Sequence.rget xs f)
         (Sequence.rget xs g) hfp hgp
     · have hfi : f < n := by
         rw [he]
-        exact Primrec.Code.left_lt_binary 2 f g
+        exact Primrec.Code.left_lt_rec f g
       have hgi : g < n := by
         rw [he]
-        exact Primrec.Code.right_lt_binary 2 f g
+        exact Primrec.Code.right_lt_rec f g
       have hfp := ih f hfi
       have hgp := ih g hgi
-      rw [he, uniqueProofStep, Primrec.Code.rec, Primrec.Code.tag_binary 2 f g rfl,
-        Primrec.Code.args_binary 2 f g rfl, unpairLeft_pair, unpairRight_pair]
+      rw [he, uniqueProofStep, Primrec.Code.tag_rec f g,
+        Primrec.Code.args_rec f g, unpairLeft_pair, unpairRight_pair]
       exact isUnique_rep_rec_of_isProofOf.witness_correct f g (Sequence.rget xs f) (Sequence.rget xs
           g)
         hfp hgp
