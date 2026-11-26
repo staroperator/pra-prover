@@ -66,48 +66,37 @@ fol_theorem ind (p : Nat) : PA ⊢ ${PA.induction.formula p} := by
   exact FOL.Provable.hypothesis language PA.isAxiom (PA.induction.formula p)
     (isAxiom_of_induction (PA.induction.formula p) (PA.induction.isAxiom_of_instance p))
 
-fol_theorem zero_or_succ : PA ⊢ ∀ x, x = 0 ∨ (∃ y, x = S y) := by
-  pintro x
-  pinduction x with
-  | zero =>
-    pleft
-    prefl
-  | succ k ih =>
-    pright
-    pexists k
-    prefl
-
 fol_theorem zero_add : PA ⊢ ∀ y, 0 + y = y := by
   pintro y
   pinduction y with
   | zero =>
-    prw [add_zero]
+    prw [Q.add_zero]
   | succ k ih =>
-    prw [add_succ, ih]
+    prw [Q.add_succ, ih]
 
 fol_theorem succ_add : PA ⊢ ∀ x y, S x + y = S (x + y) := by
   pintro x y
   pinduction y with
   | zero =>
-    prw [add_zero]
+    prw [Q.add_zero]
   | succ k ih =>
-    prw [add_succ, ih]
+    prw [Q.add_succ, ih]
 
 fol_theorem add_assoc : PA ⊢ ∀ x y z, x + y + z = x + (y + z) := by
   pintro x y z
   pinduction z with
   | zero =>
-    prw [add_zero]
+    prw [Q.add_zero]
   | succ k ih =>
-    prw [add_succ, ih]
+    prw [Q.add_succ, ih]
 
 fol_theorem add_comm : PA ⊢ ∀ x y, x + y = y + x := by
   pintro x y
   pinduction y using PA.induction (motive := fun n => x + n = n + x) with
   | zero =>
-    prw [add_zero, zero_add]
+    prw [Q.add_zero, zero_add]
   | succ k ih =>
-    prw [add_succ, ih, succ_add]
+    prw [Q.add_succ, ih, succ_add]
 
 fol_theorem one_add_comm : PA ⊢ free x | 1 + x = x + 1 := by
   pexact add_comm[1, x]
@@ -116,7 +105,7 @@ fol_theorem one_add : PA ⊢ ∀ x, 1 + x = S x := by
   pintro x
   phave h : 1 + x = x + 1
   · pexact add_comm[1, x]
-  · prw [h, add_succ, add_zero]
+  · prw [h, Q.add_succ, Q.add_zero]
 
 fol_theorem add_right_comm : PA ⊢ ∀ x y z, x + y + z = x + z + y := by
   pintro x y z
@@ -139,12 +128,12 @@ fol_theorem add_right_cancel : PA ⊢ ∀ x y z, x + z = y + z → x = y := by
   pinduction z with
   | zero =>
     pintro h
-    prw [add_zero, h]
+    prw [Q.add_zero, h]
   | succ k ih =>
     pintro h
     papply ih
     papply Q.succ_inj[x + k, y + k]
-    prw [add_succ, h]
+    prw [Q.add_succ, h]
 
 fol_theorem add_left_cancel : PA ⊢ ∀ x y z, z + x = z + y → x = y := by
   pintro x y z h
@@ -159,43 +148,43 @@ fol_theorem zero_mul : PA ⊢ ∀ y, 0 * y = 0 := by
   pintro y
   pinduction y with
   | zero =>
-    prw [mul_zero]
+    prw [Q.mul_zero]
   | succ k ih =>
-    prw [mul_succ, ih, add_zero]
+    prw [Q.mul_succ, ih, Q.add_zero]
 
 fol_theorem succ_mul : PA ⊢ ∀ x y, S x * y = x * y + y := by
   pintro x y
   pinduction y with
   | zero =>
-    prw [mul_zero, add_zero]
+    prw [Q.mul_zero, Q.add_zero]
   | succ k ih =>
     phave h : x * k + k + x = x * k + x + k
     · pexact add_right_comm[x * k, k, x]
-    · prw [mul_succ, ih, add_succ, h]
+    · prw [Q.mul_succ, ih, Q.add_succ, h]
 
 fol_theorem mul_comm : PA ⊢ ∀ x y, x * y = y * x := by
   pintro x y
   pinduction y with
   | zero =>
-    prw [mul_zero, zero_mul]
+    prw [Q.mul_zero, zero_mul]
   | succ k ih =>
-    prw [mul_succ, succ_mul, ih]
+    prw [Q.mul_succ, succ_mul, ih]
 
 fol_theorem one_mul : PA ⊢ ∀ y, 1 * y = y := by
   pintro y
   pinduction y with
   | zero =>
-    prw [mul_zero]
+    prw [Q.mul_zero]
   | succ k ih =>
-    prw [mul_succ, ih, add_succ, add_zero]
+    prw [Q.mul_succ, ih, Q.add_succ, Q.add_zero]
 
 fol_theorem mul_add : PA ⊢ ∀ x y z, x * (y + z) = x * y + x * z := by
   pintro x y z
   pinduction z with
   | zero =>
-    prw [add_zero, mul_zero]
+    prw [Q.add_zero, Q.mul_zero]
   | succ k ih =>
-    prw [add_succ, mul_succ, ih, add_assoc]
+    prw [Q.add_succ, Q.mul_succ, ih, add_assoc]
 
 fol_theorem left_distrib : PA ⊢ ∀ x y z, x * (y + z) = x * y + x * z := by
   pexact mul_add
@@ -214,9 +203,9 @@ fol_theorem mul_assoc : PA ⊢ ∀ x y z, x * y * z = x * (y * z) := by
   pintro x y z
   pinduction z with
   | zero =>
-    prw [mul_zero]
+    prw [Q.mul_zero]
   | succ k ih =>
-    prw [mul_succ, ih, mul_add]
+    prw [Q.mul_succ, ih, mul_add]
 
 fol_theorem mul_right_comm : PA ⊢ ∀ x y z, x * y * z = x * z * y := by
   pintro x y z
@@ -226,7 +215,7 @@ fol_theorem mul_right_comm : PA ⊢ ∀ x y z, x * y * z = x * z * y := by
 
 fol_theorem mul_one : PA ⊢ ∀ x, x * 1 = x := by
   pintro x
-  prw [mul_succ, mul_zero, zero_add]
+  prw [Q.mul_succ, Q.mul_zero, zero_add]
 
 fol_theorem le_refl : PA ⊢ ∀ x, x ≤ x := by
   pintro x
@@ -269,25 +258,25 @@ fol_theorem lt_iff_le_not_ge : PA ⊢ ∀ x y, x < y ↔ x ≤ y ∧ ¬ y ≤ x 
     pcases h with ⟨a, ha⟩
     pconstructor
     · pexists S a
-      prw [succ_add, add_succ, ha]
+      prw [succ_add, Q.add_succ, ha]
     · pintro hyx
       pcases hyx with ⟨b, hb⟩
       papply Q.succ_ne_zero[b + a]
       papply PA.add_right_cancel[S (b + a), 0, x]
       phave hs : (b + a) + S x = x
       · prw [add_assoc, ha, hb]
-      · prw [hs, succ_add, add_succ, zero_add]
+      · prw [hs, succ_add, Q.add_succ, zero_add]
   · pintro h
     pcases h with ⟨hle, hng⟩
     pcases hle with ⟨a, ha⟩
-    pcases zero_or_succ[a] with ha0 | hex
+    pcases Q.zero_or_succ[a] with ha0 | hex
     · pexfalso
       papply hng
       pexists 0
       prw [ha0, zero_add, ha]
     · pcases hex with ⟨b, hb⟩
       pexists b
-      prw [hb, ha, succ_add, add_succ]
+      prw [hb, ha, succ_add, Q.add_succ]
 
 fol_theorem le_total : PA ⊢ ∀ x y, x ≤ y ∨ y ≤ x := by
   pintro x y
@@ -298,14 +287,14 @@ fol_theorem le_total : PA ⊢ ∀ x y, x ≤ y ∨ y ≤ x := by
   | succ k ih =>
     pcases ih with hky | hyk
     · pcases hky with ⟨a, ha⟩
-      pcases zero_or_succ[a] with ha0 | hex
+      pcases Q.zero_or_succ[a] with ha0 | hex
       · pright
         pexists 1
         prw [ha0, ha, zero_add, one_add]
       · pcases hex with ⟨b, hb⟩
         pleft
         pexists b
-        prw [hb, ha, succ_add, add_succ]
+        prw [hb, ha, succ_add, Q.add_succ]
     · pright
       papply le_trans[y, k, S k]
       · passumption
@@ -396,7 +385,7 @@ fol_theorem add_lt_add_of_le_of_lt : PA ⊢ ∀ x y z w, x ≤ y → z < w → x
   pcases hzw with ⟨b, hb⟩
   pexists a + b
   ptrans (a + b) + (x + S z)
-  · prw [add_succ]
+  · prw [Q.add_succ]
   · ptrans ((a + b) + x) + S z
     · prw [add_assoc]
     · ptrans ((a + x) + b) + S z
@@ -415,7 +404,7 @@ fol_theorem add_lt_add_of_lt_of_le : PA ⊢ ∀ x y z w, x < y → z ≤ w → x
   pcases hzw with ⟨b, hb⟩
   pexists a + b
   ptrans (a + b) + (S x + z)
-  · prw [succ_add, add_succ]
+  · prw [succ_add, Q.add_succ]
   · ptrans ((a + b) + S x) + z
     · prw [add_assoc]
     · ptrans ((a + S x) + b) + z
@@ -540,7 +529,7 @@ fol_theorem pos_of_lt : PA ⊢ ∀ x y, x < y → 0 < y := by
 
 fol_theorem zero_or_pos : PA ⊢ ∀ x, x = 0 ∨ 0 < x := by
   pintro x
-  pcases zero_or_succ[x] with h | h
+  pcases Q.zero_or_succ[x] with h | h
   · pleft
     passumption
   · pcases h with ⟨a, ha⟩
@@ -558,7 +547,7 @@ fol_theorem add_lt_add_iff_left : PA ⊢ ∀ x y z, z + x < z + y ↔ x < y := b
     ptrans a + (z + S x)
     · pexact add_left_comm[z, a, S x]
     · ptrans a + S (z + x)
-      · prw [add_succ]
+      · prw [Q.add_succ]
       · passumption
   · pintro h
     papply add_lt_add_of_le_of_lt[z, z, x, y]
@@ -587,7 +576,7 @@ fol_theorem lt_add_of_pos_left : PA ⊢ ∀ x z, 0 < z → x < z + x := by
   pcases h with ⟨a, ha⟩
   pexists a
   ptrans S a + x
-  · prw [add_succ, succ_add]
+  · prw [Q.add_succ, succ_add]
   · pcongr
     · prw [Q.add_one, ha]
     · prefl
@@ -597,7 +586,7 @@ fol_theorem lt_add_of_pos_right : PA ⊢ ∀ x z, 0 < z → x < x + z := by
   pcases h with ⟨a, ha⟩
   pexists a
   ptrans S a + x
-  · prw [add_succ, succ_add]
+  · prw [Q.add_succ, succ_add]
   · ptrans z + x
     · pcongr
       · prw [Q.add_one, ha]
@@ -643,7 +632,7 @@ fol_theorem mul_lt_mul_left : PA ⊢ ∀ x y z, 0 < z → x < y → z * x < z * 
     pexists a
     ptrans z + (z * x)
     · ptrans S a + (z * x)
-      · prw [add_succ, succ_add]
+      · prw [Q.add_succ, succ_add]
       · pcongr
         · prw [Q.add_one, ha]
         · prefl
@@ -760,11 +749,11 @@ fol_theorem mul_eq_zero_iff : PA ⊢ ∀ x y, x * y = 0 ↔ x = 0 ∨ y = 0 := b
   pintro x y
   pconstructor
   · pintro h
-    pcases zero_or_succ[x] with hx | hx
+    pcases Q.zero_or_succ[x] with hx | hx
     · pleft
       passumption
     · pcases hx with ⟨a, ha⟩
-      pcases zero_or_succ[y] with hy | hy
+      pcases Q.zero_or_succ[y] with hy | hy
       · pright
         passumption
       · pcases hy with ⟨b, hb⟩
@@ -835,19 +824,19 @@ and later positions as surrounding parameters. -/
 fol_theorem strong_ind (p : Nat) : PA ⊢ ${strongInduction p} := by
   pintro hs
   phave hb : ${FOL.Formula.all (belowAll p)}
-  · papply (strong_ind_bounded p)
+  · papply strong_ind_bounded p
     passumption
   · pintro x
     papply hb[S x, x]
     pexact lt_succ_self[x]
 
 /-- The least-number principle in `PA`: every inhabited formula `p` has a least witness. -/
-fol_theorem exists_min (p : Nat) : PA ⊢ ${leastNumber p} := by
+fol_theorem exists_min (p : formula of 1) : PA ⊢ ${leastNumber p} := by
   pintro hex
   pcontradiction
   pintro hnone
   phave noElements : ${FOL.Formula.all (FOL.Formula.neg p)}
-  · papply (strong_ind (FOL.Formula.neg p))
+  · papply strong_ind (FOL.Formula.neg p)
     pintro x ih hp
     papply hnone
     pexists x

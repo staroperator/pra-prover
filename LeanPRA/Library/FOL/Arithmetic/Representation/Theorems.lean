@@ -108,10 +108,10 @@ theorem rep_rec :
     Sequence.rget_generate _ g _ (Primrec.Code.right_lt_rec f g)]
   rfl
 
-/-- `isTotal (p := p)()` states that every input has an output related to it by `p`. -/
+/-- `(isTotal p)` states that every input has an output related to it by `p`. -/
 fol_def isTotal over Arithmetic (p : formula of 2) : formula := ∀ x, ∃ y, p(x, y)
 
-/-- `isUnique (p := p)()` states that any two outputs related by `p` to the same input are equal. -/
+/-- `(isUnique p)` states that any two outputs related by `p` to the same input are equal. -/
 fol_def isUnique over Arithmetic (p : formula of 2) : formula :=
   ∀ x y z, p(x, y) → p(x, z) → y = z
 
@@ -149,7 +149,7 @@ theorem representsAt_rep_zero (x y t : Nat) :
   intro h
   have hy := Primrec.Computation.output_zero_of_evaluates x y t h
   rw [hy, rep_zero, representsAt]
-  pexact (constGraph_num_iff 0 x)
+  pexact constGraph_num_iff 0 x
 
 theorem representsAt_rep_succ (x y t : Nat) :
     Primrec.Computation.Evaluates Primrec.Code.succ x y t →
@@ -157,7 +157,7 @@ theorem representsAt_rep_succ (x y t : Nat) :
   intro h
   have hy := Primrec.Computation.output_succ_of_evaluates x y t h
   rw [hy, rep_succ, representsAt]
-  pexact (succGraph_num_iff x)
+  pexact succGraph_num_iff x
 
 theorem representsAt_rep_left (x y t : Nat) :
     Primrec.Computation.Evaluates Primrec.Code.left x y t →
@@ -165,7 +165,7 @@ theorem representsAt_rep_left (x y t : Nat) :
   intro h
   have hy := Primrec.Computation.output_left_of_evaluates x y t h
   rw [hy, rep_left, representsAt]
-  pexact (leftGraph_num_iff x)
+  pexact leftGraph_num_iff x
 
 theorem representsAt_rep_right (x y t : Nat) :
     Primrec.Computation.Evaluates Primrec.Code.right x y t →
@@ -173,7 +173,7 @@ theorem representsAt_rep_right (x y t : Nat) :
   intro h
   have hy := Primrec.Computation.output_right_of_evaluates x y t h
   rw [hy, rep_right, representsAt]
-  pexact (rightGraph_num_iff x)
+  pexact rightGraph_num_iff x
 
 extract_witness representsAt_rep_zero representsAt_rep_succ representsAt_rep_left
   representsAt_rep_right
@@ -213,7 +213,7 @@ theorem representsAt_rep_pair_of_isProofOf (f g x u v y a b : Nat) :
   rw [representsAt] at leftResult
   rw [representsAt] at rightResult
   rw [hy, rep_pair, representsAt]
-  papply (pairCompGraph_num_iff (rep f) (rep g) x u v)
+  papply pairCompGraph_num_iff (rep f) (rep g) x u v
   · pexact leftResult
   · pexact rightResult
 
@@ -227,7 +227,7 @@ theorem representsAt_rep_comp_of_isProofOf (f g x u y a b : Nat) :
   rw [representsAt] at inner
   rw [representsAt] at outer
   rw [rep_comp, representsAt]
-  papply (compGraph_num_iff (rep f) (rep g) x u y)
+  papply compGraph_num_iff (rep f) (rep g) x u y
   · pexact inner
   · pexact outer
 
@@ -238,7 +238,7 @@ theorem stepRepresentsAt_of_isProofOf (q x i u v proof : Nat) :
   have step : Q ⊢ ${representsAt q (pair x (pair i u)) v} := (proof, h)
   rw [representsAt] at step
   rw [stepRepresentsAt, recStepFormula]
-  papply (recStepGraph_num_iff q x i u v)
+  papply recStepGraph_num_iff ${q} x i u v
   pexact step
 
 extract_witness representsAt_rep_pair_of_isProofOf representsAt_rep_comp_of_isProofOf
@@ -440,11 +440,11 @@ open Arithmetic
 
 theorem isTotal_rep_zero : PA ⊢ ${isTotal (rep Primrec.Code.zero)} := by
   rw [rep_zero, isTotal]
-  pexact (constGraph_total 0)
+  pexact constGraph_total 0
 
 theorem isUnique_rep_zero : PA ⊢ ${isUnique (rep Primrec.Code.zero)} := by
   rw [rep_zero, isUnique]
-  pexact (constGraph_unique 0)
+  pexact constGraph_unique 0
 
 theorem isTotal_rep_succ : PA ⊢ ${isTotal (rep Primrec.Code.succ)} := by
   rw [rep_succ, isTotal]
@@ -479,8 +479,7 @@ theorem isTotal_rep_pair_of_isProofOf (f g a b : Nat) :
   rw [isTotal] at hf
   rw [isTotal] at hg
   rw [rep_pair, isTotal]
-  papply pairCompGraph_total
-    (p := fun x y => ${rep f}[x, y]) (q := fun x y => ${rep g}[x, y])
+  papply pairCompGraph_total (fun x y => ${rep f}[x, y]) (fun x y => ${rep g}[x, y])
   · pexact hf
   · pexact hg
 
@@ -493,8 +492,7 @@ theorem isUnique_rep_pair_of_isProofOf (f g a b : Nat) :
   rw [isUnique] at hf
   rw [isUnique] at hg
   rw [rep_pair, isUnique]
-  papply pairCompGraph_unique
-    (p := fun x y => ${rep f}[x, y]) (q := fun x y => ${rep g}[x, y])
+  papply pairCompGraph_unique (fun x y => ${rep f}[x, y]) (fun x y => ${rep g}[x, y])
   · pexact hf
   · pexact hg
 
@@ -507,8 +505,7 @@ theorem isTotal_rep_comp_of_isProofOf (f g a b : Nat) :
   rw [isTotal] at hf
   rw [isTotal] at hg
   rw [rep_comp, isTotal]
-  papply compGraph_total
-    (p := fun x y => ${rep f}[x, y]) (q := fun x y => ${rep g}[x, y])
+  papply compGraph_total (fun x y => ${rep f}[x, y]) (fun x y => ${rep g}[x, y])
   · pexact hf
   · pexact hg
 
@@ -521,8 +518,7 @@ theorem isUnique_rep_comp_of_isProofOf (f g a b : Nat) :
   rw [isUnique] at hf
   rw [isUnique] at hg
   rw [rep_comp, isUnique]
-  papply compGraph_unique
-    (p := fun x y => ${rep f}[x, y]) (q := fun x y => ${rep g}[x, y])
+  papply compGraph_unique (fun x y => ${rep f}[x, y]) (fun x y => ${rep g}[x, y])
   · pexact hf
   · pexact hg
 
@@ -533,7 +529,7 @@ theorem isTotal_leastRecursionGraph (p q : Nat) :
     language 1))}) := by
   intro hp hq
   rw [isTotal]
-  papply (leastRecursionGraph_total p q)
+  papply leastRecursionGraph_total ${p} ${q}
   · pexact hp
   · pexact hq
 
@@ -544,7 +540,7 @@ theorem isUnique_leastRecursionGraph (p q : Nat) :
     language 1))}) := by
   intro hp hq
   rw [isUnique]
-  papply (leastRecursionGraph_unique p q)
+  papply leastRecursionGraph_unique ${p} ${q}
   · pexact hp
   · pexact hq
 

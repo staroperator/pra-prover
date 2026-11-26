@@ -29,9 +29,8 @@ theorem subst_num (f : Nat → Nat) : ∀ n,
   intro n
   induction n with k ih
   · rw [num_zero]
-    exact Term.subst_const f language 0 Axiom.isConstant_zero
-  · rw [num_succ, Term.subst_app_one f language 0 (num k)
-      Axiom.isFunction_succ Axiom.succ_arity, ih]
+    exact Term.subst_const f language 0 isConstant_zero
+  · rw [num_succ, Term.subst_app_one f language 0 (num k) isFunction_succ succ_arity, ih]
 
 end FOL.PRA
 

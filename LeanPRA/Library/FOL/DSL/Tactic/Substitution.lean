@@ -20,15 +20,15 @@ open Lean Elab Command LeanPRA.Surface LeanPRA.Surface.Tactic
 open TacticSupport
 open LeanPRA.Library.Tactic.Construction
 
-syntax (name := psubstTac) "psubst " praExpr : praTactic
+syntax (name := psubstTac) "psubst " folRef : praTactic
 
 /-- Substitute an equal term using the checked formula-substitution theorem. -/
 @[pra_tactic psubstTac]
 def evalSubst : Tactic := closedFirst fun stx => do
-  let `(praTactic| psubst $expr:praExpr) := stx | throwUnsupportedSyntax
+  let `(praTactic| psubst $ref:folRef) := stx | throwUnsupportedSyntax
   let g ← currentGoal
   let target := g.formula
-  let equation ← rule g expr
+  let equation ← rule g ref
   let (p, graph) ← equation.run {}
   let .equal (.var x) t := graph.nodes[p]!.formula |
     throwError "psubst expects an equation with a variable on the left"

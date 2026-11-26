@@ -61,7 +61,6 @@ public import LeanPRA.Library.FOL.DSL.Tactic.Basic
 public import LeanPRA.Library.FOL.DSL.Tactic.Context
 public import LeanPRA.Library.FOL.DSL.Tactic.Induction
 public import LeanPRA.Library.FOL.DSL.Tactic.Rewrite
-public import LeanPRA.Library.FOL.DSL.Tactic.SchemaApplication
 public import LeanPRA.Library.FOL.DSL.Tactic.Substitution
 public import LeanPRA.Library.FOL.DSL.Theory
 public import LeanPRA.Library.FOL.PRA.Defs

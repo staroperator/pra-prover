@@ -53,14 +53,33 @@ inductive FormulaView where
   | code (language value : Core.Term) (arguments : List TermView)
   deriving BEq, Hashable, Repr, Inhabited
 
-/-- A formula or term parameter specifies a number of explicit term arguments and may capture
-surrounding free variables. A numerical axiom parameter supplies a natural number. -/
+/-- The kind of a declaration parameter as the frontend reads it. A term or formula parameter
+has a number of explicit slots and may capture surrounding free variables; a numerical
+parameter is an ordinary PRA number. -/
+inductive SyntaxKind where
+  | term (arity : Nat)
+  | formula (arity : Nat)
+  | nat
+  deriving BEq, Inhabited, Repr
+
+/-- The term or formula kind with `arity` slots. -/
+def SyntaxKind.syntax (formula : Bool) (arity : Nat) : SyntaxKind :=
+  if formula then .formula arity else .term arity
+
 structure SyntaxParameter where
   name : Name
-  isFormula : Bool
-  arity : Nat := 0
-  isNumeric : Bool := false
+  kind : SyntaxKind
   deriving BEq, Inhabited, Repr
+
+def SyntaxParameter.isFormula (p : SyntaxParameter) : Bool :=
+  match p.kind with | .formula _ => true | _ => false
+
+def SyntaxParameter.isNumeric (p : SyntaxParameter) : Bool :=
+  match p.kind with | .nat => true | _ => false
+
+/-- The number of explicit slots; zero for a numerical parameter. -/
+def SyntaxParameter.arity (p : SyntaxParameter) : Nat :=
+  match p.kind with | .term n | .formula n => n | .nat => 0
 
 /-- Read the syntax type of a declaration parameter. -/
 def syntaxParameterType? (type : Syntax) : Option (Bool × Nat) :=
@@ -84,7 +103,7 @@ def declarationParameters (ps : Array (TSyntax `praParam)) :
     if let some (formula, arity) := syntaxParameterType? type then
       for id in ids do
         syntaxParameters := syntaxParameters.push
-          ⟨id.getId.eraseMacroScopes, formula, arity, false⟩
+          ⟨id.getId.eraseMacroScopes, .syntax formula arity⟩
       binders := binders.push (← `(praParam| ($ids:ident* : Nat)))
     else binders := binders.push p
   return (binders, syntaxParameters)
@@ -115,14 +134,17 @@ initialize theoremParameters : SimplePersistentEnvExtension
   }
 
 /-- An abbreviation's PRA interface and, when available, its syntax without PRA splices.
-The static template uses fresh names for its term parameters. -/
+The static template uses fresh names for its result binders. -/
 structure DefinitionInfo where
   name : Name
   language : Name
   /-- The declaration parameters followed by the ordinary arguments, in source order. -/
   binders : Array Name
-  /-- The binders supplied by the positional term list in a quotation. -/
+  /-- The explicit result binders, which the slot list of a use fills. They are term parameters
+  of the generated function, after the declaration parameters. -/
   positional : Array Name
+  /-- The implicit binders, which a named argument of the application form fills. -/
+  implicit : Array Name := #[]
   isFormula : Bool
   /-- The number of ordinary inputs to the PRA function. -/
   arity : Nat := 0
@@ -366,7 +388,8 @@ private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageIn
     CommandElabM TermView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
     return ← ctx.term L vars ⟨expanded⟩
-  if s.raw.isOfKind ``termSplice || s.raw.isOfKind ``termDefinedApplication then
+  if s.raw.isOfKind ``termSplice || s.raw.isOfKind ``termApplication ||
+      s.raw.isOfKind ``termApplicationSlots then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
   | `(folTerm| ($t:folTerm)) => ctx.term L vars t
@@ -432,7 +455,8 @@ private partial def TemplateContext.formula (ctx : TemplateContext) (L : Languag
     CommandElabM FormulaView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
     return ← ctx.formula L vars ⟨expanded⟩
-  if s.raw.isOfKind ``formulaSplice || s.raw.isOfKind ``formulaDefinedApplication then
+  if s.raw.isOfKind ``formulaSplice || s.raw.isOfKind ``formulaApplication ||
+      s.raw.isOfKind ``formulaApplicationSlots then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
   | `(folFormula| ($a:folFormula)) => ctx.formula L vars a
@@ -472,8 +496,6 @@ private partial def TemplateContext.formula (ctx : TemplateContext) (L : Languag
       (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folFormula| $n:ident($args:folTerm,*)) =>
     ctx.formulaApplication L vars n.getId.eraseMacroScopes args.getElems.toList
-  | `(folFormula| $n:ident $args:folTerm*) =>
-    ctx.formulaApplication L vars n.getId.eraseMacroScopes args.toList
   | `(folFormula| $n:ident) => ctx.formulaApplication L vars n.getId.eraseMacroScopes []
   | _ => throwUnsupportedSyntax
 

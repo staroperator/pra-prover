@@ -5,11 +5,12 @@ public meta import LeanPRA.Library.FOL.DSL.Tactic.Context
 /-!
 # Applying induction schemas in declared FOL theories
 
-`evalInductionTactic` applies a declared schema with `zero`/`succ` branches or a single `step`
-branch. The schema supplies the terms and the induction hypothesis. Each branch is an ordinary
-PRA tactic proof of the required object derivation. When the schema has an `assuming`
-restriction, `(assuming := h)` supplies a PRA proof of it for the motive; without it, the
-restriction is discharged from the local PRA hypotheses or by calculation.
+`evalInductionTactic` applies the theorem of a declared induction schema with `zero`/`succ`
+branches or a single `step` branch. The schema supplies the terms and the induction hypothesis.
+Each branch is an ordinary PRA tactic proof of the required object derivation. When the schema
+has an `assuming` restriction, `(assuming := h)` supplies a PRA proof of it for the motive;
+without it, the restriction is discharged like any PRA antecedent of a theorem, from the local
+PRA hypotheses or by calculation.
 -/
 
 public meta section
@@ -41,19 +42,32 @@ private def inductionPattern (info : AxiomInfo) : Option InductionPattern := do
     if x == z && y == w then some ⟨none, x, hypothesis, .var x⟩ else none
   | _ => none
 
+/-- The theorems of induction shape among the axioms of the theory and its parents. -/
+private def inductionTheorems (T : TheoryInfo) :
+    CommandElabM (List (Name × InductionPattern)) := do
+  let mut choices := []
+  let mut theory := some T
+  while let some current := theory do
+    for info in current.axioms.toList.drop current.inherited do
+      if let some pattern := inductionPattern info then
+        choices := choices ++ [(current.name ++ info.name, pattern)]
+    theory ← current.parent.mapM fun parent => (findTheory parent : CommandElabM TheoryInfo)
+  return choices
+
 private def selectInduction (T : TheoryInfo) (selected : Option Ident) :
-    CommandElabM (Nat × InductionPattern) := do
+    TacticM (Name × InductionPattern) := do
+  let choices ← inductionTheorems T
   if let some selected := selected then
-    let i ← axiomIndex T selected.getId.eraseMacroScopes
-    let some pattern := inductionPattern T.axioms[i]! |
-      throwErrorAt selected "the selected schema has no supported induction shape"
-    return (i, pattern)
-  let choices := T.axioms.toList.zipIdx.filterMap fun (info, i) =>
-    (inductionPattern info).map (i, ·)
+    let name := selected.getId.eraseMacroScopes
+    let some declaration ← resolveDeclaration? (← getGoal).environment name |
+      throwErrorAt selected "unknown induction theorem `{name}`"
+    let some choice := choices.find? (·.1 == declaration.name) |
+      throwErrorAt selected "the selected theorem has no supported induction shape"
+    return choice
   match choices with
   | [choice] => return choice
-  | [] => throwError "this theory has no supported induction schema"
-  | _ => throwError "multiple induction schemas are available; select one with `using`"
+  | [] => throwError "this theory has no induction theorem of a supported shape"
+  | _ => throwError "multiple induction theorems are available; select one with `using`"
 
 private def runBranch (goal : GoalId) (steps : TSyntax ``praTacticSeq) : TacticM Unit := do
   set [goal]
@@ -64,7 +78,7 @@ private def inductionTactic (g : ProofGoal) (x : Ident) (selected binder : Optio
     (explicitMotive : Option (TSyntax `folFormula)) (guard : Option (TSyntax `praExpr))
     (k ih : Ident) (base : Option (TSyntax ``praTacticSeq)) (step : TSyntax ``praTacticSeq) :
     TacticM Unit := do
-  let (index, pattern) ← selectInduction g.theory selected
+  let (theoremName, pattern) ← selectInduction g.theory selected
   unless pattern.base.isSome == base.isSome do throwError "induction branch shape mismatch"
   let variableCode ← coreTerm (← `(praExpr| $x:ident))
   let .var y ← readTerm g.theory.language [] g.free variableCode |
@@ -77,18 +91,26 @@ private def inductionTactic (g : ProofGoal) (x : Ident) (selected binder : Optio
       throwError "the induction motive does not match the goal"
   let fresh ← liftCoreM (mkFreshUserName k.getId.eraseMacroScopes)
   let motive := g.formula.replace y (.var fresh)
-  let actuals : Array FormulaActual := #[{ body := motive, binders := [fresh] }]
+  let actuals : Array Actual := #[.formula motive [fresh]]
   let hypothesis := (instantiateSchema actuals pattern.hypothesis).replace
     pattern.binder (.var fresh)
   let next := pattern.next.replace pattern.binder (.var fresh)
   let stepGoal := FormulaView.all fresh (.imp hypothesis (motive.replace fresh next))
   let baseGoal := pattern.base.map (fun t => g.formula.replace y t)
-  let guard ← guard.mapM coreProof
+  let L := languageTerm g.theory.language
+  let motiveCode ← (Actual.formula motive [fresh]).encode L [] g.free
+  let some (.theoremE declaration) := (← getGoal).environment.lookup theoremName |
+    throwError "unknown induction theorem `{theoremName}`"
+  let proof := Core.Proof.theoremE theoremName [motiveCode] []
+  let type := declaration.type.instantiate [motiveCode] []
+  let (proof, type) ← match guard with
+    | some guard => supplyAntecedent x m!"{theoremName}" proof type (← coreProof guard)
+    | none => dischargeAntecedents x m!"{theoremName}" proof type
+  let (proof, type) ← normalizeProvable proof type
+  let initial ← proofRule g proof type
   let rest := (← get).drop 1
   refineDerivation g do
-    let (root, parameters) ← addAxiomInstance g.theory index actuals guard
-    let mut p := root
-    for param in parameters do p ← instantiate p (.var param)
+    let p ← initial
     return (baseGoal.toList ++ [stepGoal], fun inputs => do
       let mut proof := p
       for premise in inputs do proof ← mp proof premise

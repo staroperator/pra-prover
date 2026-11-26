@@ -62,8 +62,6 @@ inductive SchemaArg where
 
 inductive Reason where
   | logical (tag : Nat) (args : List SchemaArg)
-  | theory (index : Nat) (actuals : Array FormulaActual) (parameters : List Name)
-      (guard : Option (Core.Proof × Core.Predicate) := none)
   | hypothesis (name : Name)
   | proven (proof : Core.Proof)
   | localProof (proof : Core.Proof)

@@ -46,57 +46,57 @@ pra
 
 namespace Arithmetic
 
-/-- `recursionSteps (p := p) (q := q) (entry := entry)(n, x)` describes a recursive sequence of
+/-- `(recursionSteps p q entry)(n, x)` describes a recursive sequence of
 length `n` on parameter `x` through an abstract relation `entry` between indices and values. -/
 fol_def recursionSteps over Arithmetic (p : formula of 2) (q : formula of 4) (entry : formula of 2)
-    (n x : term) : formula :=
+    : formula of 2 := fun n x =>
   (∃ u, p(x, u) ∧ entry(0, u)) ∧
     ∀ i, i < n → ∃ u v, entry(i, u) ∧ q(x, u, i, v) ∧ entry(S i, v)
 
-/-- `sequenceExtendable (entry := entry)()` states that every finite sequence of length `n` can be
+/-- `(sequenceExtendable entry)` states that every finite sequence of length `n` can be
 extended at index `n` by any prescribed value `z`. -/
 fol_def sequenceExtendable over Arithmetic (entry : formula of 4) : formula :=
   ∀ b c n z, ∃ d e,
     (∀ i r, i < n → entry(i, c, b, r) → entry(i, e, d, r)) ∧ entry(n, e, d, z)
 
-/-- `entryUnique (entry := entry)()` states that each indexed entry of a fixed code `(b, c)` has at
+/-- `(entryUnique entry)` states that each indexed entry of a fixed code `(b, c)` has at
 most one value. -/
 fol_def entryUnique over Arithmetic (entry : formula of 4) : formula :=
   ∀ r s b c i, entry(i, c, b, r) → entry(i, c, b, s) → r = s
 
-/-- `recursionSequence (p := p) (q := q) (entry := entry)(b, c, n, x)` states that `(b, c)` encodes
+/-- `(recursionSequence p q entry)(b, c, n, x)` states that `(b, c)` encodes
 a finite sequence of length `n` on parameter `x` satisfying the base formula `p` and step formula
 `q`. -/
 fol_def recursionSequence over Arithmetic (p : formula of 2) (q : formula of 4)
-    (entry : formula of 4) (b c n x : term) : formula :=
+    (entry : formula of 4) : formula of 4 := fun b c n x =>
   (∃ u, p(x, u) ∧ entry(0, c, b, u)) ∧
     ∀ i, i < n → ∃ u v,
       entry(i, c, b, u) ∧ q(x, u, i, v) ∧ entry(S i, c, b, v)
 
-/-- `recursionGraph (p := p) (q := q) (entry := entry)(y, n, x)` states that `y` is the final value
+/-- `(recursionGraph p q entry)(y, n, x)` states that `y` is the final value
 at index `n` of a coded recursive sequence on parameter `x`. -/
 fol_def recursionGraph over Arithmetic (p : formula of 2) (q : formula of 4) (entry : formula of 4)
-    (y n x : term) : formula :=
-  ∃ b c, recursionSequence (p := p) (q := q) (entry := entry)(b, c, n, x) ∧
+    : formula of 3 := fun y n x =>
+  ∃ b c, (recursionSequence p q entry)(b, c, n, x) ∧
     entry(n, c, b, y)
 
-/-- `betaSequence (p := p) (q := q)(b, c, n, x)` states that the beta code `(b, c)` starts with a
+/-- `(betaSequence p q)(b, c, n, x)` states that the beta code `(b, c)` starts with a
 base value for `p` on `x` and satisfies the step graph `q` below `n`. -/
-fol_def betaSequence over Arithmetic (p : formula of 2) (q : formula of 4)
-    (b c n x : term) : formula :=
+fol_def betaSequence over Arithmetic (p : formula of 2) (q : formula of 4) : formula of 4 :=
+  fun b c n x =>
   (∃ u, p(x, u) ∧ betaBounded(u, b, c, 0)) ∧
     ∀ i, i < n → ∃ u v,
       betaBounded(u, b, c, i) ∧ q(x, u, i, v) ∧ betaBounded(v, b, c, S i)
 
-/-- `betaRecursionGraph (p := p) (q := q)(y, n, x)` states that `y` is the value at index `n` of a
+/-- `(betaRecursionGraph p q)(y, n, x)` states that `y` is the value at index `n` of a
 beta sequence for `p` and `q` on parameter `x`. -/
-fol_def betaRecursionGraph over Arithmetic (p : formula of 2) (q : formula of 4)
-    (y n x : term) : formula :=
-  ∃ b c, betaSequence (p := p) (q := q)(b, c, n, x) ∧ betaBounded(y, b, c, n)
+fol_def betaRecursionGraph over Arithmetic (p : formula of 2) (q : formula of 4) : formula of 3 :=
+  fun y n x =>
+  ∃ b c, (betaSequence p q)(b, c, n, x) ∧ betaBounded(y, b, c, n)
 
-/-- `recStepGraph (q := q)(v, i, u, x)` applies the unary step graph `q` to the encoded triple
+/-- `(recStepGraph q)(v, i, u, x)` applies the unary step graph `q` to the encoded triple
 `pair x (pair i u)` with output `v`. -/
-fol_def recStepGraph over Arithmetic (q : formula of 2) (v i u x : term) : formula :=
+fol_def recStepGraph over Arithmetic (q : formula of 2) : formula of 4 := fun v i u x =>
   ∃ a b, pairGraph(a, i, u) ∧ pairGraph(b, x, a) ∧ q(b, v)
 
 /-- `recStepFormula q` is the step formula for `q` with positions `(output, index, accumulator,
@@ -117,12 +117,11 @@ theorem recStepFormula_eq (q : Nat) :
       (Term.var language 0) (Term.var language 1)
       (Term.var language 2) (Term.var language 3) := rfl
 
-/-- `recWitness (p := p) (q := q)(y, z, t)` states that `t` encodes the beta parameters `(b, c)` of
+/-- `(recWitness p q)(y, z, t)` states that `t` encodes the beta parameters `(b, c)` of
 a computation sequence with output `y` on paired input `z = pair x n`. -/
-fol_def recWitness over Arithmetic (p q : formula of 2) (y z t : term) : formula :=
+fol_def recWitness over Arithmetic (p q : formula of 2) : formula of 3 := fun y z t =>
   ∃ x n b c, pairGraph(z, x, n) ∧ pairGraph(t, b, c) ∧
-    betaSequence (p := p)
-      (q := fun a u j v => recStepGraph (q := q)(v, j, u, a))(b, c, n, x) ∧
+    (betaSequence p (fun a u j v => (recStepGraph q)(v, j, u, a)))(b, c, n, x) ∧
     betaBounded(y, b, c, n)
 
 /-- `recWitnessFormula p q` is the recursion witness formula for `p` and `q` with positions
@@ -149,11 +148,11 @@ theorem recWitnessFormula_eq (p q : Nat) :
       (Term.var language 0) (Term.var language 1)
       (Term.var language 2) := rfl
 
-/-- `leastRecursionGraph (p := p) (q := q)(y, x)` selects the output `y` of a least
+/-- `(leastRecursionGraph p q)(y, x)` selects the output `y` of a least
 computation-sequence witness on paired input `x`. This additional condition allows Q to rule out
 other outputs at each numeral input. -/
-fol_def leastRecursionGraph over Arithmetic (p q : formula of 2) (y x : term) : formula :=
-  minGraph (p := fun t a v => recWitness (p := p) (q := q)(v, a, t))(y, x)
+fol_def leastRecursionGraph over Arithmetic (p q : formula of 2) : formula of 2 := fun y x =>
+  (minGraph (fun t a v => (recWitness p q)(v, a, t)))(y, x)
 
 end Arithmetic
 
@@ -170,10 +169,11 @@ namespace PA
 
 open Arithmetic
 
-fol_theorem recursionSteps_mono (p q sourceRel targetRel : Nat) : PA ⊢
-    ∀ n x, (∀ i r, i < S n → ${sourceRel}[i, r] → ${targetRel}[i, r]) → recursionSteps (p := ${p})
-    (q := ${q}) (entry := ${sourceRel})(n, x) → recursionSteps (p := ${p}) (q := ${q})
-    (entry := ${targetRel})(n, x) := by
+fol_theorem recursionSteps_mono (p : formula of 2) (q : formula of 4)
+    (sourceRel targetRel : formula of 2) : PA ⊢
+    ∀ n x, (∀ i r, i < S n → sourceRel(i, r) → targetRel(i, r)) →
+    (recursionSteps p q sourceRel)(n, x) → (recursionSteps p q targetRel)(n, x) :=
+    by
   pintro n x preserve sequence
   pcases sequence with ⟨base, steps⟩
   pconstructor
@@ -187,7 +187,7 @@ fol_theorem recursionSteps_mono (p q sourceRel targetRel : Nat) : PA ⊢
       · passumption
   · pintro i hi
     phave old : ∃ a z,
-        ${sourceRel}[i, a] ∧ ${q}[x, a, i, z] ∧ ${sourceRel}[S i, z]
+        sourceRel(i, a) ∧ q(x, a, i, z) ∧ sourceRel(S i, z)
     · papply steps[i]
       passumption
     · pcases old with ⟨a, ha⟩
@@ -208,10 +208,11 @@ fol_theorem recursionSteps_mono (p q sourceRel targetRel : Nat) : PA ⊢
             passumption
           · passumption
 
-fol_theorem recursionSteps_succ (p q sourceRel : Nat) : PA ⊢
-    ∀ n x u v, recursionSteps (p := ${p}) (q := ${q}) (entry := ${sourceRel})(n, x) →
-    ${sourceRel}[n, u] → ${q}[x, u, n, v] → ${sourceRel}[S n, v] → recursionSteps (p := ${p})
-    (q := ${q}) (entry := ${sourceRel})(S n, x) := by
+fol_theorem recursionSteps_succ (p : formula of 2) (q : formula of 4)
+    (sourceRel : formula of 2) : PA ⊢
+    ∀ n x u v, (recursionSteps p q sourceRel)(n, x) →
+    sourceRel(n, u) → q(x, u, n, v) → sourceRel(S n, v) →
+    (recursionSteps p q sourceRel)(S n, x) := by
   pintro n x u v sequence hu hv last
   pcases sequence with ⟨base, steps⟩
   pconstructor
@@ -232,8 +233,8 @@ fol_theorem recursionSteps_succ (p q sourceRel : Nat) : PA ⊢
           · passumption
           · passumption
 
-fol_theorem exists_exists_mono (p q : Nat) : PA ⊢
-    (∀ d e, ${p}[e, d] → ${q}[e, d]) → (∃ d e, ${p}[e, d]) → ∃ d e, ${q}[e, d] := by
+fol_theorem exists_exists_mono (p q : formula of 2) : PA ⊢
+    (∀ d e, p(e, d) → q(e, d)) → (∃ d e, p(e, d)) → ∃ d e, q(e, d) := by
   pintro transform source
   pcases source with ⟨d, hd⟩
   pcases hd with ⟨e, he⟩
@@ -242,9 +243,9 @@ fol_theorem exists_exists_mono (p q : Nat) : PA ⊢
   papply transform[d, e]
   passumption
 
-fol_theorem recursionSequence_of_succ (p q entry : Nat) : PA ⊢
-    ∀ b c n x, recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(b, c, S n, x) →
-    recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(b, c, n, x) := by
+fol_theorem recursionSequence_of_succ (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ b c n x, (recursionSequence p q entry)(b, c, S n, x) →
+    (recursionSequence p q entry)(b, c, n, x) := by
   pintro b c n x h
   pcases h with ⟨base, steps⟩
   pconstructor
@@ -254,47 +255,41 @@ fol_theorem recursionSequence_of_succ (p q entry : Nat) : PA ⊢
     papply lt_succ_of_lt[i, n]
     passumption
 
-fol_theorem recursionSequence_mono (p q entry : Nat) : PA ⊢
-    ∀ b c n x d e, (∀ i r, i < S n → ${entry}[i, c, b, r] → ${entry}[i, e, d, r]) →
-    recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(b, c, n, x) → recursionSequence
-    (p := ${p}) (q := ${q}) (entry := ${entry})(d, e, n, x) := by
+fol_theorem recursionSequence_mono (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ b c n x d e, (∀ i r, i < S n → entry(i, c, b, r) → entry(i, e, d, r)) →
+    (recursionSequence p q entry)(b, c, n, x) →
+    (recursionSequence p q entry)(d, e, n, x) := by
   pintro b c n x d e
-  papply recursionSteps_mono
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (sourceRel := fun i r => ${entry}[i, c, b, r])
-    (targetRel := fun i r => ${entry}[i, e, d, r])[n, x]
+  papply (recursionSteps_mono (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i r => entry(i, c, b, r)) (fun i r => entry(i, e, d, r)))[n, x]
 
-fol_theorem recursionSequence_succ (p q entry : Nat) : PA ⊢
-    ∀ b c n x u v, recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(b, c, n, x) →
-    ${entry}[n, c, b, u] → ${q}[x, u, n, v] → ${entry}[S n, c, b, v] → recursionSequence (p := ${p})
-    (q := ${q}) (entry := ${entry})(b, c, S n, x) := by
+fol_theorem recursionSequence_succ (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ b c n x u v, (recursionSequence p q entry)(b, c, n, x) →
+    entry(n, c, b, u) → q(x, u, n, v) → entry(S n, c, b, v) →
+    (recursionSequence p q entry)(b, c, S n, x) := by
   pintro b c
-  papply recursionSteps_succ
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (sourceRel := fun i r => ${entry}[i, c, b, r])
+  papply recursionSteps_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i r => entry(i, c, b, r))
 
 /-- Extend a recursive sequence by one verified step, changing the code when necessary. -/
-fol_theorem exists_recursionSequence_succ (p q entry : Nat) : PA ⊢
-    ∀ b c n v x u, sequenceExtendable (entry := ${entry})() → recursionSequence (p := ${p})
-    (q := ${q}) (entry := ${entry})(b, c, n, x) → ${entry}[n, c, b, u] → ${q}[x, u, n, v] → ∃ d e,
-    recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(d, e, S n, x) ∧
-    ${entry}[S n, e, d, v] := by
+fol_theorem exists_recursionSequence_succ (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ b c n v x u, (sequenceExtendable entry) →
+    (recursionSequence p q entry)(b, c, n, x) → entry(n, c, b, u) → q(x, u, n, v) →
+    ∃ d e,
+    (recursionSequence p q entry)(d, e, S n, x) ∧
+    entry(S n, e, d, v) := by
   pintro b c n v x u extension sequence hu hv
   papply exists_exists_mono
-    (p := fun e d =>
-      (∀ i r, i < S n → ${entry}[i, c, b, r] → ${entry}[i, e, d, r]) ∧
-        ${entry}[S n, e, d, v])
-    (q := fun e d => recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(d, e, S n, x) ∧
-      ${entry}[S n, e, d, v])
+      (fun e d => (∀ i r, i < S n → entry(i, c, b, r) → entry(i, e, d, r)) ∧
+      entry(S n, e, d, v)) (fun e d => (recursionSequence p q entry)(d, e, S n, x) ∧
+      entry(S n, e, d, v))
   · pintro d e chosen
     pcases chosen with ⟨preserve, last⟩
     pconstructor
-    · papply recursionSequence_succ
-        (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-        (entry := fun i c b r => ${entry}[i, c, b, r])[d, e, n, x, u, v]
-      · papply recursionSequence_mono
-          (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-          (entry := fun i c b r => ${entry}[i, c, b, r])[b, c, n, x, d, e]
+    · papply (recursionSequence_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+        (fun i c b r => entry(i, c, b, r)))[d, e, n, x, u, v]
+      · papply (recursionSequence_mono (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+          (fun i c b r => entry(i, c, b, r)))[b, c, n, x, d, e]
         · passumption
         · passumption
       · papply preserve[n, u]
@@ -305,9 +300,8 @@ fol_theorem exists_recursionSequence_succ (p q entry : Nat) : PA ⊢
     · passumption
   · pexact extension[b, c, S n, v]
 
-fol_theorem recursionGraph_zero_elim (p q entry : Nat) : PA ⊢
-    ∀ y x, entryUnique (entry := ${entry})() → recursionGraph (p := ${p}) (q := ${q})
-    (entry := ${entry})(y, 0, x) → ${p}[x, y] := by
+fol_theorem recursionGraph_zero_elim (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ y x, (entryUnique entry) → (recursionGraph p q entry)(y, 0, x) → p(x, y) := by
   pintro y x unique
   pintro h
   pcases h with ⟨b, hb⟩
@@ -323,9 +317,9 @@ fol_theorem recursionGraph_zero_elim (p q entry : Nat) : PA ⊢
   · psubst ey
     passumption
 
-fol_theorem recursionGraph_zero_intro (p q entry : Nat) : PA ⊢
-    ∀ y x, sequenceExtendable (entry := ${entry})() → ${p}[x, y] → recursionGraph (p := ${p})
-    (q := ${q}) (entry := ${entry})(y, 0, x) := by
+fol_theorem recursionGraph_zero_intro (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ y x, (sequenceExtendable entry) → p(x, y) →
+    (recursionGraph p q entry)(y, 0, x) := by
   pintro y x extension
   pintro h
   pcases extension[0, 0, 0, y] with ⟨b, hb⟩
@@ -345,24 +339,22 @@ fol_theorem recursionGraph_zero_intro (p q entry : Nat) : PA ⊢
       passumption
   · passumption
 
-fol_theorem recursionGraph_succ_elim (p q entry : Nat) : PA ⊢
-    ∀ y n x, entryUnique (entry := ${entry})() → recursionGraph (p := ${p}) (q := ${q})
-    (entry := ${entry})(y, S n, x) → ∃ u, recursionGraph (p := ${p}) (q := ${q})
-    (entry := ${entry})(u, n, x) ∧ ${q}[x, u, n, y] :=
+fol_theorem recursionGraph_succ_elim (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ y n x, (entryUnique entry) → (recursionGraph p q entry)(y, S n, x) →
+    ∃ u, (recursionGraph p q entry)(u, n, x) ∧ q(x, u, n, y) :=
           by
   pintro y n x unique
   pintro h
   pcases h with ⟨b, hb⟩
   pcases hb with ⟨c, hc⟩
   pcases hc with ⟨sequence, hy⟩
-  phave previous : recursionSequence (p := ${p}) (q := ${q}) (entry := ${entry})(b, c, n, x)
-  · papply recursionSequence_of_succ
-      (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-      (entry := fun i c b r => ${entry}[i, c, b, r])[b, c, n, x]
+  phave previous : (recursionSequence p q entry)(b, c, n, x)
+  · papply (recursionSequence_of_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => entry(i, c, b, r)))[b, c, n, x]
     passumption
   · pcases sequence with ⟨base, steps⟩
     phave nextEntry : ∃ u v,
-        ${entry}[n, c, b, u] ∧ ${q}[x, u, n, v] ∧ ${entry}[S n, c, b, v]
+        entry(n, c, b, u) ∧ q(x, u, n, v) ∧ entry(S n, c, b, v)
     · papply steps[n]
       pexact lt_succ_self[n]
     · pcases nextEntry with ⟨u, hu⟩
@@ -383,10 +375,10 @@ fol_theorem recursionGraph_succ_elim (p q entry : Nat) : PA ⊢
         · psubst ey
           passumption
 
-fol_theorem recursionGraph_succ_intro (p q entry : Nat) : PA ⊢
-    ∀ y n x, sequenceExtendable (entry := ${entry})() →
-    (∃ u, recursionGraph (p := ${p}) (q := ${q}) (entry := ${entry})(u, n, x) ∧ ${q}[x, u, n, y]) →
-    recursionGraph (p := ${p}) (q := ${q}) (entry := ${entry})(y, S n, x) := by
+fol_theorem recursionGraph_succ_intro (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    ∀ y n x, (sequenceExtendable entry) →
+    (∃ u, (recursionGraph p q entry)(u, n, x) ∧ q(x, u, n, y)) →
+    (recursionGraph p q entry)(y, S n, x) := by
   pintro y n x extension
   pintro h
   pcases h with ⟨u, hu⟩
@@ -394,18 +386,17 @@ fol_theorem recursionGraph_succ_intro (p q entry : Nat) : PA ⊢
   pcases previous with ⟨b, hb⟩
   pcases hb with ⟨c, hc⟩
   pcases hc with ⟨sequence, value⟩
-  papply exists_recursionSequence_succ
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => ${entry}[i, c, b, r])[b, c, n, y, x, u]
+  papply (exists_recursionSequence_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => entry(i, c, b, r)))[b, c, n, y, x, u]
   · passumption
   · passumption
   · passumption
   · passumption
 
-fol_theorem recursion_total (p q graph : Nat) : PA ⊢
-    (∀ y x, ${p}[x, y] → ${graph}[x, 0, y]) →
-    (∀ y n x u, ${graph}[x, n, u] → ${q}[x, u, n, y] → ${graph}[x, S n, y]) → (∀ x, ∃ y, ${p}[x, y])
-    → (∀ i u x, ∃ v, ${q}[x, u, i, v]) → ∀ x n, ∃ y, ${graph}[x, n, y] := by
+fol_theorem recursion_total (p : formula of 2) (q : formula of 4) (graph : formula of 3) : PA ⊢
+    (∀ y x, p(x, y) → graph(x, 0, y)) →
+    (∀ y n x u, graph(x, n, u) → q(x, u, n, y) → graph(x, S n, y)) → (∀ x, ∃ y, p(x, y))
+    → (∀ i u x, ∃ v, q(x, u, i, v)) → ∀ x n, ∃ y, graph(x, n, y) := by
   pintro base step hp hq x n
   pinduction n with
   | zero =>
@@ -421,12 +412,12 @@ fol_theorem recursion_total (p q graph : Nat) : PA ⊢
     · passumption
     · passumption
 
-fol_theorem recursion_unique (p q graph : Nat) : PA ⊢
-    (∀ y x, ${graph}[x, 0, y] → ${p}[x, y]) →
-    (∀ y n x, ${graph}[x, S n, y] → ∃ u, ${graph}[x, n, u] ∧ ${q}[x, u, n, y]) →
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) →
-    (∀ i u x y z, ${q}[x, u, i, y] → ${q}[x, u, i, z] → y = z) → ∀ x n y z, ${graph}[x, n, y] →
-    ${graph}[x, n, z] → y = z := by
+fol_theorem recursion_unique (p : formula of 2) (q : formula of 4) (graph : formula of 3) : PA ⊢
+    (∀ y x, graph(x, 0, y) → p(x, y)) →
+    (∀ y n x, graph(x, S n, y) → ∃ u, graph(x, n, u) ∧ q(x, u, n, y)) →
+    (∀ x y z, p(x, y) → p(x, z) → y = z) →
+    (∀ i u x y z, q(x, u, i, y) → q(x, u, i, z) → y = z) → ∀ x n y z, graph(x, n, y) →
+    graph(x, n, z) → y = z := by
   pintro base step hp hq x n
   pinduction n with
   | zero =>
@@ -439,13 +430,13 @@ fol_theorem recursion_unique (p q graph : Nat) : PA ⊢
   | succ k ih =>
     pintro y z hy hz
     phave ystep : ∃ u,
-        ${graph}[x, k, u] ∧ ${q}[x, u, k, y]
+        graph(x, k, u) ∧ q(x, u, k, y)
     · papply step[y, k, x]
       passumption
     · pcases ystep with ⟨u, hu⟩
       pcases hu with ⟨recurY, stepY⟩
       phave zstep : ∃ v,
-          ${graph}[x, k, v] ∧ ${q}[x, v, k, z]
+          graph(x, k, v) ∧ q(x, v, k, z)
       · papply step[z, k, x]
         passumption
       · pcases zstep with ⟨v, hv⟩
@@ -459,52 +450,45 @@ fol_theorem recursion_unique (p q graph : Nat) : PA ⊢
           · psubst euv
             passumption
 
-fol_theorem recursionGraph_total (p q entry : Nat) : PA ⊢
-    sequenceExtendable (entry := ${entry})() → (∀ x, ∃ y, ${p}[x, y]) →
-    (∀ i u x, ∃ v, ${q}[x, u, i, v]) → ∀ x n, ∃ y, recursionGraph (p := ${p}) (q := ${q})
-    (entry := ${entry})(y, n, x) := by
+fol_theorem recursionGraph_total (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    (sequenceExtendable entry) → (∀ x, ∃ y, p(x, y)) →
+    (∀ i u x, ∃ v, q(x, u, i, v)) → ∀ x n, ∃ y, (recursionGraph p q entry)(y, n, x) :=
+    by
   pintro extension
-  papply recursion_total
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (graph := fun x n y => recursionGraph (p := ${p}) (q := ${q}) (entry := ${entry})(y, n, x))
+  papply recursion_total (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun x n y => (recursionGraph p q entry)(y, n, x))
   · pintro y x
-    papply recursionGraph_zero_intro
-      (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-      (entry := fun i c b r => ${entry}[i, c, b, r])[y, x]
+    papply (recursionGraph_zero_intro (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+        (fun i c b r => entry(i, c, b, r)))[y, x]
     passumption
   · pintro y n x u previous step
-    papply recursionGraph_succ_intro
-      (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-      (entry := fun i c b r => ${entry}[i, c, b, r])[y, n, x]
+    papply (recursionGraph_succ_intro (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+        (fun i c b r => entry(i, c, b, r)))[y, n, x]
     · passumption
     · pexists u
       pconstructor
       · passumption
       · passumption
 
-fol_theorem recursionGraph_unique (p q entry : Nat) : PA ⊢
-    entryUnique (entry := ${entry})() → (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) →
-    (∀ i u x y z, ${q}[x, u, i, y] → ${q}[x, u, i, z] → y = z) → ∀ x n y z, recursionGraph
-    (p := ${p}) (q := ${q}) (entry := ${entry})(y, n, x) → recursionGraph (p := ${p}) (q := ${q})
-    (entry := ${entry})(z, n, x) → y = z := by
+fol_theorem recursionGraph_unique (p : formula of 2) (q entry : formula of 4) : PA ⊢
+    (entryUnique entry) → (∀ x y z, p(x, y) → p(x, z) → y = z) →
+    (∀ i u x y z, q(x, u, i, y) → q(x, u, i, z) → y = z) →
+    ∀ x n y z, (recursionGraph p q entry)(y, n, x) →
+    (recursionGraph p q entry)(z, n, x) → y = z := by
   pintro unique
-  papply recursion_unique
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (graph := fun x n y => recursionGraph (p := ${p}) (q := ${q}) (entry := ${entry})(y, n, x))
+  papply recursion_unique (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun x n y => (recursionGraph p q entry)(y, n, x))
   · pintro y x
-    papply recursionGraph_zero_elim
-      (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-      (entry := fun i c b r => ${entry}[i, c, b, r])[y, x]
+    papply (recursionGraph_zero_elim (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+        (fun i c b r => entry(i, c, b, r)))[y, x]
     passumption
   · pintro y n x
-    papply recursionGraph_succ_elim
-      (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-      (entry := fun i c b r => ${entry}[i, c, b, r])[y, n, x]
+    papply (recursionGraph_succ_elim (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+        (fun i c b r => entry(i, c, b, r)))[y, n, x]
     passumption
 
 fol_theorem betaSequence_of_succ (p q : Nat) : PA ⊢
-    ∀ b c n x, betaSequence (p := ${p}) (q := ${q})(b, c, S n, x) → betaSequence (p := ${p})
-    (q := ${q})(b, c, n, x) := by
+    ∀ b c n x, (betaSequence ${p} ${q})(b, c, S n, x) → (betaSequence ${p} ${q})(b, c, n, x) := by
   pintro b c n x h
   pcases h with ⟨base, steps⟩
   pconstructor
@@ -514,94 +498,83 @@ fol_theorem betaSequence_of_succ (p q : Nat) : PA ⊢
     papply lt_succ_of_lt[i, n]
     passumption
 
-fol_theorem betaSequence_mono (p q : Nat) : PA ⊢
+fol_theorem betaSequence_mono (p : formula of 2) (q : formula of 4) : PA ⊢
     ∀ b c n x d e,
     (∀ i r, i < S n → betaBounded(r, b, c, i) → betaBounded(r, d, e, i)) →
-    betaSequence (p := ${p}) (q := ${q})(b, c, n, x) → betaSequence (p := ${p})
-    (q := ${q})(d, e, n, x) := by
+    (betaSequence p q)(b, c, n, x) → (betaSequence p q)(d, e, n, x) := by
   pintro b c n x d e
-  papply recursionSteps_mono
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (sourceRel := fun i r => betaBounded(r, b, c, i))
-    (targetRel := fun i r => betaBounded(r, d, e, i))[n, x]
+  papply (recursionSteps_mono (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i r => betaBounded(r, b, c, i)) (fun i r => betaBounded(r, d, e, i)))[n, x]
 
-fol_theorem betaSequence_succ (p q : Nat) : PA ⊢
-    ∀ b c n x u v, betaSequence (p := ${p}) (q := ${q})(b, c, n, x) →
-    betaBounded(u, b, c, n) → ${q}[x, u, n, v] → betaBounded(v, b, c, S n) →
-    betaSequence (p := ${p}) (q := ${q})(b, c, S n, x) := by
+fol_theorem betaSequence_succ (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ b c n x u v, (betaSequence p q)(b, c, n, x) →
+    betaBounded(u, b, c, n) → q(x, u, n, v) → betaBounded(v, b, c, S n) →
+    (betaSequence p q)(b, c, S n, x) := by
   pintro b c
-  papply recursionSteps_succ
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (sourceRel := fun i r => betaBounded(r, b, c, i))
+  papply recursionSteps_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i r => betaBounded(r, b, c, i))
 
 /-- Extend a recursive sequence by one verified step, changing its beta code when necessary. -/
-fol_theorem exists_betaSequence_succ (p q : Nat) : PA ⊢
-    ∀ b c n v x u, betaSequence (p := ${p}) (q := ${q})(b, c, n, x) →
-    betaBounded(u, b, c, n) → ${q}[x, u, n, v] → ∃ d e, betaSequence (p := ${p})
-    (q := ${q})(d, e, S n, x) ∧ betaBounded(v, d, e, S n) :=
+fol_theorem exists_betaSequence_succ (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ b c n v x u, (betaSequence p q)(b, c, n, x) →
+    betaBounded(u, b, c, n) → q(x, u, n, v) → ∃ d e, (betaSequence p q)(d, e, S n, x) ∧
+    betaBounded(v, d, e, S n) :=
             by
   pintro b c n v x u
-  papply exists_recursionSequence_succ
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))[b, c, n, v, x, u]
+  papply (exists_recursionSequence_succ (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i)))[b, c, n, v, x, u]
   pexact betaBounded_extend
 
-fol_theorem betaRecursionGraph_zero_elim (p q : Nat) : PA ⊢
-    ∀ y x, betaRecursionGraph (p := ${p}) (q := ${q})(y, 0, x) → ${p}[x, y] := by
+fol_theorem betaRecursionGraph_zero_elim (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ y x, (betaRecursionGraph p q)(y, 0, x) → p(x, y) := by
   pintro y x
-  papply recursionGraph_zero_elim
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))[y, x]
+  papply (recursionGraph_zero_elim (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i)))[y, x]
   pexact betaBounded_unique
 
-fol_theorem betaRecursionGraph_zero_intro (p q : Nat) : PA ⊢
-    ∀ y x, ${p}[x, y] → betaRecursionGraph (p := ${p}) (q := ${q})(y, 0, x) := by
+fol_theorem betaRecursionGraph_zero_intro (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ y x, p(x, y) → (betaRecursionGraph p q)(y, 0, x) := by
   pintro y x
-  papply recursionGraph_zero_intro
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))[y, x]
+  papply (recursionGraph_zero_intro (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i)))[y, x]
   pexact betaBounded_extend
 
-fol_theorem betaRecursionGraph_succ_elim (p q : Nat) : PA ⊢
-    ∀ y n x, betaRecursionGraph (p := ${p}) (q := ${q})(y, S n, x) →
-    ∃ u, betaRecursionGraph (p := ${p}) (q := ${q})(u, n, x) ∧ ${q}[x, u, n, y] := by
+fol_theorem betaRecursionGraph_succ_elim (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ y n x, (betaRecursionGraph p q)(y, S n, x) →
+    ∃ u, (betaRecursionGraph p q)(u, n, x) ∧ q(x, u, n, y) := by
   pintro y n x
-  papply recursionGraph_succ_elim
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))[y, n, x]
+  papply (recursionGraph_succ_elim (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i)))[y, n, x]
   pexact betaBounded_unique
 
-fol_theorem betaRecursionGraph_succ_intro (p q : Nat) : PA ⊢
-    ∀ y n x, (∃ u, betaRecursionGraph (p := ${p}) (q := ${q})(u, n, x) ∧ ${q}[x, u, n, y]) →
-    betaRecursionGraph (p := ${p}) (q := ${q})(y, S n, x) := by
+fol_theorem betaRecursionGraph_succ_intro (p : formula of 2) (q : formula of 4) : PA ⊢
+    ∀ y n x, (∃ u, (betaRecursionGraph p q)(u, n, x) ∧ q(x, u, n, y)) →
+    (betaRecursionGraph p q)(y, S n, x) := by
   pintro y n x
-  papply recursionGraph_succ_intro
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))[y, n, x]
+  papply (recursionGraph_succ_intro (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i)))[y, n, x]
   pexact betaBounded_extend
 
 /-- PA proves that primitive recursion is total when the base and step graphs are total. -/
-fol_theorem betaRecursionGraph_total (p q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${p}[x, y]) → (∀ i u x, ∃ v, ${q}[x, u, i, v]) →
-    ∀ x n, ∃ y, betaRecursionGraph (p := ${p}) (q := ${q})(y, n, x) := by
-  papply recursionGraph_total
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))
+fol_theorem betaRecursionGraph_total (p : formula of 2) (q : formula of 4) : PA ⊢
+    (∀ x, ∃ y, p(x, y)) → (∀ i u x, ∃ v, q(x, u, i, v)) →
+    ∀ x n, ∃ y, (betaRecursionGraph p q)(y, n, x) := by
+  papply recursionGraph_total (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i))
   pexact betaBounded_extend
 
 /-- If the base and step graphs have unique outputs, the recursion graph does too. -/
-fol_theorem betaRecursionGraph_unique (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) →
-    (∀ i u x y z, ${q}[x, u, i, y] → ${q}[x, u, i, z] → y = z) → ∀ x n y z,
-    betaRecursionGraph (p := ${p}) (q := ${q})(y, n, x) →
-    betaRecursionGraph (p := ${p}) (q := ${q})(z, n, x) → y = z := by
-  papply recursionGraph_unique
-    (p := fun s r => ${p}[s, r]) (q := fun t s i r => ${q}[t, s, i, r])
-    (entry := fun i c b r => betaBounded(r, b, c, i))
+fol_theorem betaRecursionGraph_unique (p : formula of 2) (q : formula of 4) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) →
+    (∀ i u x y z, q(x, u, i, y) → q(x, u, i, z) → y = z) → ∀ x n y z,
+    (betaRecursionGraph p q)(y, n, x) →
+    (betaRecursionGraph p q)(z, n, x) → y = z := by
+  papply recursionGraph_unique (fun s r => p(s, r)) (fun t s i r => q(t, s, i, r))
+      (fun i c b r => betaBounded(r, b, c, i))
   pexact betaBounded_unique
 
-fol_theorem recStepGraph_total (q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${q}[x, y]) → ∀ i u x, ∃ v, recStepGraph (q := ${q})(v, i, u, x) := by
+fol_theorem recStepGraph_total (q : formula of 2) : PA ⊢
+    (∀ x, ∃ y, q(x, y)) → ∀ i u x, ∃ v, (recStepGraph q)(v, i, u, x) := by
   pintro hq i u x
   pcases pairGraph_total[i, u] with ⟨a, ha⟩
   pcases pairGraph_total[x, a] with ⟨b, hb⟩
@@ -615,9 +588,9 @@ fol_theorem recStepGraph_total (q : Nat) : PA ⊢
     · passumption
     · passumption
 
-fol_theorem recStepGraph_unique (q : Nat) : PA ⊢
-    (∀ x y z, ${q}[x, y] → ${q}[x, z] → y = z) → ∀ i u x v w, recStepGraph (q := ${q})(v, i, u, x) →
-    recStepGraph (q := ${q})(w, i, u, x) → v = w := by
+fol_theorem recStepGraph_unique (q : formula of 2) : PA ⊢
+    (∀ x y z, q(x, y) → q(x, z) → y = z) → ∀ i u x v w, (recStepGraph q)(v, i, u, x) →
+    (recStepGraph q)(w, i, u, x) → v = w := by
   pintro hq i u x v w hv hw
   pcases hv with ⟨a, hv⟩
   pcases hv with ⟨b, hv⟩
@@ -641,7 +614,7 @@ fol_theorem recStepGraph_unique (q : Nat) : PA ⊢
           passumption
       · passumption
     · papply hq[d, v, w]
-      · phave h : ${q}[b, v] → ${q}[d, v]
+      · phave h : q(b, v) → q(d, v)
         · psubst hbd
           pintro h
           passumption
@@ -649,16 +622,15 @@ fol_theorem recStepGraph_unique (q : Nat) : PA ⊢
           passumption
       · passumption
 
-fol_theorem recWitness_total (p q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${p}[x, y]) → (∀ x, ∃ y, ${q}[x, y]) → ∀ z, ∃ t y, recWitness (p := ${p})
-    (q := ${q})(y, z, t) := by
+fol_theorem recWitness_total (p q : formula of 2) : PA ⊢
+    (∀ x, ∃ y, p(x, y)) → (∀ x, ∃ y, q(x, y)) → ∀ z, ∃ t y, (recWitness p q)(y, z, t) :=
+    by
   pintro hp hq
-  phave ht : ∀ x n, ∃ y, betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(y, n, x)
-  · papply betaRecursionGraph_total
-      (p := fun x y => ${p}[x, y])
-      (q := fun x u i v => ${recStepFormula q}[x, u, i, v])
+  phave ht : ∀ x n, ∃ y, (betaRecursionGraph p ${recStepFormula q})(y, n, x)
+  · papply betaRecursionGraph_total (fun x y => p(x, y))
+      (fun x u i v => ${recStepFormula q}[x, u, i, v])
     · passumption
-    · papply recStepGraph_total (q := fun x y => ${q}[x, y])
+    · papply recStepGraph_total (fun x y => q(x, y))
       passumption
   · pintro z
     pcases pairGraph_surjective[z] with ⟨x, hex⟩
@@ -682,9 +654,9 @@ fol_theorem recWitness_total (p q : Nat) : PA ⊢
         · passumption
         · passumption
 
-fol_theorem exists_four_project (p q r : Nat) : PA ⊢
-    (∃ x n b c, ${p}[n, x] ∧ ${q}[c, b] ∧ ${r}[x, n, c, b]) → ∃ x n, ${p}[n, x] ∧ ∃ b c,
-    ${r}[x, n, c, b] := by
+fol_theorem exists_four_project (p q : formula of 2) (r : formula of 4) : PA ⊢
+    (∃ x n b c, p(n, x) ∧ q(c, b) ∧ r(x, n, c, b)) → ∃ x n, p(n, x) ∧ ∃ b c,
+    r(x, n, c, b) := by
   pintro witness
   pcases witness with ⟨x, witness⟩
   pcases witness with ⟨n, witness⟩
@@ -701,19 +673,17 @@ fol_theorem exists_four_project (p q r : Nat) : PA ⊢
     passumption
 
 fol_theorem recWitness_betaRecursionGraph (p q : Nat) : PA ⊢
-    ∀ y z t, recWitness (p := ${p}) (q := ${q})(y, z, t) →
+    ∀ y z t, (recWitness ${p} ${q})(y, z, t) →
     ∃ x n, pairGraph(z, x, n) ∧
-    betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(y, n, x) := by
+    (betaRecursionGraph ${p} ${recStepFormula q})(y, n, x) := by
   pintro y z t
-  papply exists_four_project
-    (p := fun n x => pairGraph(z, x, n))
-    (q := fun c b => pairGraph(t, b, c))
-    (r := fun x n c b => betaSequence (p := ${p}) (q := ${recStepFormula q})(b, c, n, x) ∧
-      betaBounded(y, b, c, n))
+  papply exists_four_project (fun n x => pairGraph(z, x, n)) (fun c b => pairGraph(t, b, c))
+      (fun x n c b =>
+      (betaSequence ${p} ${recStepFormula q})(b, c, n, x) ∧ betaBounded(y, b, c, n))
 
-fol_theorem pairGraph_exists_unique (p : Nat) : PA ⊢
-    (∀ x n y v, ${p}[x, n, y] → ${p}[x, n, v] → y = v) → ∀ z y v,
-    (∃ x n, pairGraph(z, x, n) ∧ ${p}[x, n, y]) → (∃ x n, pairGraph(z, x, n) ∧ ${p}[x, n, v]) → y =
+fol_theorem pairGraph_exists_unique (p : formula of 3) : PA ⊢
+    (∀ x n y v, p(x, n, y) → p(x, n, v) → y = v) → ∀ z y v,
+    (∃ x n, pairGraph(z, x, n) ∧ p(x, n, y)) → (∃ x n, pairGraph(z, x, n) ∧ p(x, n, v)) → y =
     v := by
   pintro unique z y v hy hv
   pcases hy with ⟨x, hy⟩
@@ -730,7 +700,7 @@ fol_theorem pairGraph_exists_unique (p : Nat) : PA ⊢
     · papply pairGraph_injective[z, x, n, a, m]
       · passumption
       · passumption
-    · phave move : ${p}[x, n, y] → ${p}[a, m, y]
+    · phave move : p(x, n, y) → p(a, m, y)
       · psubst hx
         psubst hn
         pintro h
@@ -740,9 +710,9 @@ fol_theorem pairGraph_exists_unique (p : Nat) : PA ⊢
           passumption
         · passumption
 
-fol_theorem unique_of_forall_imp (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) → (∀ y x t, ${q}[t, x, y] → ${p}[x, y]) → ∀ x y z t
-    s, ${q}[t, x, y] → ${q}[s, x, z] → y = z := by
+fol_theorem unique_of_forall_imp (p : formula of 2) (q : formula of 3) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) → (∀ y x t, q(t, x, y) → p(x, y)) → ∀ x y z t
+    s, q(t, x, y) → q(s, x, z) → y = z := by
   pintro unique project x y z t s hy hz
   papply unique[x, y, z]
   · papply project[y, x, t]
@@ -751,38 +721,37 @@ fol_theorem unique_of_forall_imp (p q : Nat) : PA ⊢
     passumption
 
 fol_theorem recWitness_unique_of_betaRecursionGraph_unique (p q : Nat) : PA ⊢
-    (∀ x n y v, betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(y, n, x) →
-      betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(v, n, x) → y = v) →
-    ∀ z y v t s, recWitness (p := ${p}) (q := ${q})(y, z, t) →
-    recWitness (p := ${p}) (q := ${q})(v, z, s) → y = v := by
+    (∀ x n y v, (betaRecursionGraph ${p} ${recStepFormula q})(y, n, x) →
+      (betaRecursionGraph ${p} ${recStepFormula q})(v, n, x) → y = v) →
+    ∀ z y v t s, (recWitness ${p} ${q})(y, z, t) →
+    (recWitness ${p} ${q})(v, z, s) → y = v := by
   pintro unique
   papply unique_of_forall_imp
-    (p := fun z y => ∃ x n, pairGraph(z, x, n) ∧
-      betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(y, n, x))
-    (q := fun t z y => recWitness (p := ${p}) (q := ${q})(y, z, t))
+      (fun z y => ∃ x n, pairGraph(z, x, n) ∧
+      (betaRecursionGraph ${p} ${recStepFormula q})(y, n, x)) (fun t z y =>
+      (recWitness ${p} ${q})(y, z, t))
   · papply pairGraph_exists_unique
-      (p := fun x n y => betaRecursionGraph (p := ${p}) (q := ${recStepFormula q})(y, n, x))
+      (fun x n y => (betaRecursionGraph ${p} ${recStepFormula q})(y, n, x))
     passumption
-  · pexact (recWitness_betaRecursionGraph p q)
+  · pexact recWitness_betaRecursionGraph p q
 
-fol_theorem recWitness_unique (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) → (∀ x y z, ${q}[x, y] → ${q}[x, z] → y = z) → ∀ z y
-    v t s, recWitness (p := ${p}) (q := ${q})(y, z, t) → recWitness (p := ${p}) (q := ${q})(v, z, s)
+fol_theorem recWitness_unique (p q : formula of 2) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) → (∀ x y z, q(x, y) → q(x, z) → y = z) → ∀ z y
+    v t s, (recWitness p q)(y, z, t) → (recWitness p q)(v, z, s)
     → y = v := by
   have rule := recWitness_unique_of_betaRecursionGraph_unique p q
   pintro hp hq
   papply rule
-  papply betaRecursionGraph_unique
-    (p := fun x y => ${p}[x, y])
-    (q := fun x u i v => ${recStepFormula q}[x, u, i, v])
+  papply betaRecursionGraph_unique (fun x y => p(x, y))
+      (fun x u i v => ${recStepFormula q}[x, u, i, v])
   · passumption
-  · papply recStepGraph_unique (q := fun x y => ${q}[x, y])
+  · papply recStepGraph_unique (fun x y => q(x, y))
     passumption
 
 /-- Total base and step graphs give a total least-witness recursion graph. -/
-fol_theorem leastRecursionGraph_total (p q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${p}[x, y]) → (∀ x, ∃ y, ${q}[x, y]) → ∀ x, ∃ y, leastRecursionGraph (p := ${p})
-    (q := ${q})(y, x) := by
+fol_theorem leastRecursionGraph_total (p q : formula of 2) : PA ⊢
+    (∀ x, ∃ y, p(x, y)) → (∀ x, ∃ y, q(x, y)) →
+    ∀ x, ∃ y, (leastRecursionGraph p q)(y, x) := by
   have selection := minGraph_total (recWitnessFormula p q)
   have witness := recWitness_total p q
   rw [recWitnessFormula] at selection
@@ -794,11 +763,11 @@ fol_theorem leastRecursionGraph_total (p q : Nat) : PA ⊢
   · passumption
 
 /-- Unique base and step outputs give a unique output of the least-witness graph. -/
-fol_theorem leastRecursionGraph_unique (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) →
-    (∀ x y z, ${q}[x, y] → ${q}[x, z] → y = z) → ∀ x y z,
-    leastRecursionGraph (p := ${p}) (q := ${q})(y, x) →
-    leastRecursionGraph (p := ${p}) (q := ${q})(z, x) → y = z := by
+fol_theorem leastRecursionGraph_unique (p q : formula of 2) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) →
+    (∀ x y z, q(x, y) → q(x, z) → y = z) → ∀ x y z,
+    (leastRecursionGraph p q)(y, x) →
+    (leastRecursionGraph p q)(z, x) → y = z := by
   have selection := minGraph_unique (recWitnessFormula p q)
   have witness := recWitness_unique p q
   rw [recWitnessFormula] at selection
@@ -815,24 +784,24 @@ namespace Q
 
 open Arithmetic
 
-fol_theorem exists_eq_elim (p q : Nat) : Q ⊢
-    ∀ a, (∀ x, ${p}[x] → x = a) → (∃ x, ${p}[x] ∧ ${q}[x]) → ${q}[a] := by
+fol_theorem exists_eq_elim (p q : formula of 1) : Q ⊢
+    ∀ a, (∀ x, p(x) → x = a) → (∃ x, p(x) ∧ q(x)) → q(a) := by
   pintro a unique witness
   pcases witness with ⟨x, witness⟩
   pcases witness with ⟨hx, hqx⟩
   phave eq : x = a
   · papply unique[x]
     passumption
-  · phave move : ${q}[x] → ${q}[a]
+  · phave move : q(x) → q(a)
     · psubst eq
       pintro h
       passumption
     · papply move
       passumption
 
-fol_theorem exists_exists_eq_elim (p q r : Nat) : Q ⊢
-    ∀ a b, (∀ x, ${p}[x] → x = a) → (∀ y, ${q}[a, y] → y = b) →
-    (∃ x y, ${p}[x] ∧ ${q}[x, y] ∧ ${r}[y]) → ${r}[b] := by
+fol_theorem exists_exists_eq_elim (p : formula of 1) (q : formula of 2) (r : formula of 1) : Q ⊢
+    ∀ a b, (∀ x, p(x) → x = a) → (∀ y, q(a, y) → y = b) →
+    (∃ x y, p(x) ∧ q(x, y) ∧ r(y)) → r(b) := by
   pintro a b firstUnique secondUnique witness
   pcases witness with ⟨x, witness⟩
   pcases witness with ⟨y, witness⟩
@@ -843,21 +812,22 @@ fol_theorem exists_exists_eq_elim (p q r : Nat) : Q ⊢
     passumption
   · phave ey : y = b
     · papply secondUnique[y]
-      phave move : ${q}[x, y] → ${q}[a, y]
+      phave move : q(x, y) → q(a, y)
       · psubst ex
         pintro h
         passumption
       · papply move
         passumption
-    · phave move : ${r}[y] → ${r}[b]
+    · phave move : r(y) → r(b)
       · psubst ey
         pintro h
         passumption
       · papply move
         passumption
 
-fol_theorem exists_exists_conj_intro (p q r : Nat) : Q ⊢
-    ∀ a b, ${p}[a] → ${q}[a, b] → ${r}[b] → ∃ x y, ${p}[x] ∧ ${q}[x, y] ∧ ${r}[y] := by
+fol_theorem exists_exists_conj_intro (p : formula of 1) (q : formula of 2)
+    (r : formula of 1) : Q ⊢
+    ∀ a b, p(a) → q(a, b) → r(b) → ∃ x y, p(x) ∧ q(x, y) ∧ r(y) := by
   pintro a b ha hb hr
   pexists a
   pexists b
@@ -871,23 +841,23 @@ end Q
 
 namespace Arithmetic
 
-/-- `representsAt (p := p) (a := a) (b := b)()` states that the graph `p` has output `num b` on
+/-- `(representsAt p a b)` states that the graph `p` has output `num b` on
 numeral input `num a`. -/
 fol_def representsAt over Arithmetic (p : formula of 2) (a : Nat) (b : Nat) : formula :=
   ∀ y, p(${num a}, y) ↔ y = ${num b}
 
-/-- `stepRepresentsAt (q := q) (x := x) (i := i) (u := u) (v := v)()` states that the step graph `q`
+/-- `(stepRepresentsAt q x i u v)` states that the step graph `q`
 at numeral parameter `x`, index `i`, and accumulator `u` has output `num v`. -/
 fol_def stepRepresentsAt over Arithmetic (q : formula of 4) (x : Nat) (i : Nat) (u : Nat)
     (v : Nat) : formula :=
   ∀ y, q(${num x}, ${num u}, ${num i}, y) ↔ y = ${num v}
 
-/-- `sequenceEntryEq (p := p) (q := q) (b := b) (c := c) (n := n) (x := x) (i := i) (r := r)()`
+/-- `(sequenceEntryEq p q b c n x i r)`
 states that if `b` and `c` describe a sequence for `p` and `q`, every value decoded at index `i`
 equals `num r`. -/
 fol_def sequenceEntryEq over Arithmetic (p : formula of 2) (q : formula of 4) (b : Nat) (c : Nat)
     (n : Nat) (x : Nat) (i : Nat) (r : Nat) : formula :=
-  betaSequence (p := p) (q := q)(${num b}, ${num c}, ${num n}, ${num x}) →
+  (betaSequence p q)(${num b}, ${num c}, ${num n}, ${num x}) →
     ∀ y, betaBounded(y, ${num b}, ${num c}, ${num i}) → y = ${num r}
 
 end Arithmetic
@@ -925,9 +895,8 @@ theorem sequenceEntryEq_zero_of_isProofOf (p q b c n x r proof : Nat) :
     · pintro seq y hy
       papply entryUnique[y, ${num r}]
       · passumption
-      · papply exists_eq_elim
-          (p := fun z => ${p}[${num x}, z])
-          (q := fun z => betaBounded(z, ${num b}, ${num c}, 0))[${num r}]
+      · papply (exists_eq_elim (fun z => ${p}[${num x}, z])
+          (fun z => betaBounded(z, ${num b}, ${num c}, 0)))[${num r}]
         · pintro z hz
           papply baseValue[z]
           passumption
@@ -958,11 +927,9 @@ theorem sequenceEntryEq_succ_of_isProofOf (p q b c n x k r s previous proof : Na
       · pintro seq y hy
         papply entryUnique[y, ${num s}]
         · passumption
-        · papply exists_exists_eq_elim
-            (p := fun a => betaBounded(a, ${num b}, ${num c}, ${num k}))
-            (q := fun a v => ${q}[${num x}, a, ${num k}, v])
-            (r := fun v => betaBounded(v, ${num b}, ${num c}, S ${num k}))
-            [${num r}, ${num s}]
+        · papply (exists_exists_eq_elim (fun a => betaBounded(a, ${num b}, ${num c}, ${num k}))
+            (fun a v => ${q}[${num x}, a, ${num k}, v])
+            (fun v => betaBounded(v, ${num b}, ${num c}, S ${num k})))[${num r}, ${num s}]
           · papply past
             passumption
           · pintro z hz
@@ -1006,9 +973,9 @@ theorem sequenceEntryEq_of_isProofOf (values proofs : Nat → Nat) (p q b c n x 
   exact (sequenceEntryEqProof values proofs p q b c n x base k,
     sequenceEntryEqProof_isProofOf values proofs p q b c n x base k hb hs hk)
 
-fol_theorem exists_four_eq_elim (p q r : Nat) : Q ⊢
-    ∀ a b c d, (∀ x y, ${p}[y, x] → x = a ∧ y = b) → (∀ x y, ${q}[y, x] → x = c ∧ y = d) →
-    (∃ x y z w, ${p}[y, x] ∧ ${q}[w, z] ∧ ${r}[x, y, w, z]) → ${r}[a, b, d, c] := by
+fol_theorem exists_four_eq_elim (p q : formula of 2) (r : formula of 4) : Q ⊢
+    ∀ a b c d, (∀ x y, p(y, x) → x = a ∧ y = b) → (∀ x y, q(y, x) → x = c ∧ y = d) →
+    (∃ x y z w, p(y, x) ∧ q(w, z) ∧ r(x, y, w, z)) → r(a, b, d, c) := by
   pintro a b c d inputUnique codeUnique witness
   pcases witness with ⟨x, witness⟩
   pcases witness with ⟨y, witness⟩
@@ -1024,7 +991,7 @@ fol_theorem exists_four_eq_elim (p q r : Nat) : Q ⊢
     · papply codeUnique[z, w]
       passumption
     · pcases codeEqual with ⟨hz, hw⟩
-      phave move : ${r}[x, y, w, z] → ${r}[a, b, d, c]
+      phave move : r(x, y, w, z) → r(a, b, d, c)
       · psubst hx
         psubst hy
         psubst hz
@@ -1034,9 +1001,9 @@ fol_theorem exists_four_eq_elim (p q r : Nat) : Q ⊢
       · papply move
         passumption
 
-fol_theorem exists_four_intro (p q r : Nat) : Q ⊢
-    ∀ a b c d, ${p}[b, a] → ${q}[d, c] → ${r}[a, b, d, c] → ∃ x y z w, ${p}[y, x] ∧ ${q}[w, z] ∧
-    ${r}[x, y, w, z] := by
+fol_theorem exists_four_intro (p q : formula of 2) (r : formula of 4) : Q ⊢
+    ∀ a b c d, p(b, a) → q(d, c) → r(a, b, d, c) → ∃ x y z w, p(y, x) ∧ q(w, z) ∧
+    r(x, y, w, z) := by
   pintro a b c d hp hq hr
   pexists a
   pexists b
@@ -1049,34 +1016,31 @@ fol_theorem exists_four_intro (p q r : Nat) : Q ⊢
     · passumption
 
 fol_theorem recWitness_num_elim (p q z w : Nat) : Q ⊢
-    ∀ y, recWitness (p := ${p}) (q := ${q})(y, ${num z}, ${num w}) → (betaSequence (p := ${p}) (q :=
-    ${recStepFormula q}) (${num (unpairLeft w)}, ${num (unpairRight w)}, ${num (unpairRight z)},
-    ${num (unpairLeft z)}) ∧ betaBounded(y, ${num (unpairLeft w)}, ${num (unpairRight
-    w)}, ${num (unpairRight z)})) := by
+    ∀ y, (recWitness ${p} ${q})(y, ${num z}, ${num w}) →
+    ((betaSequence ${p} ${recStepFormula q})(${num (unpairLeft w)}, ${num (unpairRight w)},
+    ${num (unpairRight z)}, ${num (unpairLeft z)}) ∧ betaBounded(y, ${num (unpairLeft w)},
+    ${num (unpairRight w)}, ${num (unpairRight z)})) := by
   have inputParts := pairGraph_components_num z
   have codeParts := pairGraph_components_num w
   pintro y witness
-  papply exists_four_eq_elim
-    (p := fun n x => pairGraph(${num z}, x, n))
-    (q := fun c b => pairGraph(${num w}, b, c))
-    (r := fun x n c b => betaSequence (p := ${p}) (q := ${recStepFormula q})(b, c, n, x) ∧
-      betaBounded(y, b, c, n))
-    [${num (unpairLeft z)}, ${num (unpairRight z)},
-      ${num (unpairLeft w)}, ${num (unpairRight w)}]
+  papply (exists_four_eq_elim (fun n x => pairGraph(${num z}, x, n))
+      (fun c b => pairGraph(${num w}, b, c))
+      (fun x n c b =>
+      (betaSequence ${p} ${recStepFormula q})(b, c, n, x) ∧ betaBounded(y, b, c, n)))[
+      ${num (unpairLeft z)}, ${num (unpairRight z)}, ${num (unpairLeft w)},
+      ${num (unpairRight w)}]
   · pexact inputParts
   · pexact codeParts
   · passumption
 
 fol_theorem recWitness_intro (p q : Nat) : Q ⊢
-    ∀ y z t x n b c, pairGraph(z, x, n) → pairGraph(t, b, c) → betaSequence (p := ${p})
-    (q := ${recStepFormula q})(b, c, n, x) → betaBounded(y, b, c, n) → recWitness
-    (p := ${p}) (q := ${q})(y, z, t) := by
+    ∀ y z t x n b c, pairGraph(z, x, n) → pairGraph(t, b, c) →
+    (betaSequence ${p} ${recStepFormula q})(b, c, n, x) → betaBounded(y, b, c, n) →
+    (recWitness ${p} ${q})(y, z, t) := by
   pintro y z t x n b c inputPair codePair sequence last
-  papply exists_four_intro
-    (p := fun n x => pairGraph(z, x, n))
-    (q := fun c b => pairGraph(t, b, c))
-    (r := fun x n c b => betaSequence (p := ${p}) (q := ${recStepFormula q})(b, c, n, x) ∧
-      betaBounded(y, b, c, n))[x, n, b, c]
+  papply (exists_four_intro (fun n x => pairGraph(z, x, n)) (fun c b => pairGraph(t, b, c))
+      (fun x n c b =>
+      (betaSequence ${p} ${recStepFormula q})(b, c, n, x) ∧ betaBounded(y, b, c, n)))[x, n, b, c]
   · passumption
   · passumption
   · pconstructor
@@ -1100,11 +1064,9 @@ theorem exists_betaBounded_of_isProofOf (q b c x i u v proof : Nat) :
   rw [stepRepresentsAt] at step
   phave stepValue : ∀ z, ${q}[${num x}, ${num u}, ${num i}, z] ↔ z = ${num v}
   · pexact step
-  · papply exists_exists_conj_intro
-      (p := fun a => betaBounded(a, ${num b}, ${num c}, ${num i}))
-      (q := fun a v => ${q}[${num x}, a, ${num i}, v])
-      (r := fun v => betaBounded(v, ${num b}, ${num c}, S ${num i}))
-      [${num u}, ${num v}]
+  · papply (exists_exists_conj_intro (fun a => betaBounded(a, ${num b}, ${num c}, ${num i}))
+      (fun a v => ${q}[${num x}, a, ${num i}, v])
+      (fun v => betaBounded(v, ${num b}, ${num c}, S ${num i})))[${num u}, ${num v}]
     · pexact current
     · papply stepValue[${num v}]
       prefl
@@ -1117,7 +1079,7 @@ theorem betaSequence_of_isProofOf (values proofs : Nat → Nat) (p q b c n x bas
     IsProofOf language isAxiom (representsAt p x (values 0)) base → (∀ i, i < n → IsProofOf
     language isAxiom (stepRepresentsAt q x i (values i) (values (S i))) (proofs i)) →
     (∀ i, i ≤ n → _root_.beta b c i = values i) →
-    (Q ⊢ betaSequence (p := ${p}) (q := ${q})(${num b}, ${num c}, ${num n}, ${num x})) := by
+    (Q ⊢ (betaSequence ${p} ${q})(${num b}, ${num c}, ${num n}, ${num x})) := by
   intro hb hs encoded
   have steps := boundedAll_of_isProofOf (fol_formula[Arithmetic |
       ∃ u v, betaBounded(u, ${num b}, ${num c}, ${Term.var language 0}) ∧
@@ -1149,15 +1111,15 @@ theorem betaSequence_of_isProofOf (values proofs : Nat → Nat) (p q b c n x bas
           pexact value
     · pexact steps
 
-fol_theorem forall_imp_of_and (p q r s : Nat) : Q ⊢
-    (${p}[] → ∀ y, ${q}[y] → ${r}[y]) → (∀ y, ${s}[y] → ${p}[] ∧ ${q}[y]) → ∀ y, ${s}[y] → ${r}[y]
+fol_theorem forall_imp_of_and (p : formula) (q r s : formula of 1) : Q ⊢
+    (p → ∀ y, q(y) → r(y)) → (∀ y, s(y) → p ∧ q(y)) → ∀ y, s(y) → r(y)
     := by
   pintro output decode y witness
-  phave facts : ${p}[] ∧ ${q}[y]
+  phave facts : p ∧ q(y)
   · papply decode[y]
     passumption
   · pcases facts with ⟨hp, hq⟩
-    phave values : ∀ z, ${q}[z] → ${r}[z]
+    phave values : ∀ z, q(z) → r(z)
     · papply output
       passumption
     · papply values[y]
@@ -1167,7 +1129,7 @@ theorem eq_num_of_recWitness_of_isProofOf (values proofs : Nat → Nat) (p q x n
     IsProofOf language isAxiom (representsAt p x (values 0)) base → (∀ i, i < n → IsProofOf
     language isAxiom (stepRepresentsAt (recStepFormula q) x i (values i) (values (S i))) (proofs i))
         →
-    (Q ⊢ ∀ y, recWitness (p := ${p}) (q := ${q})(y, ${num (pair x n)}, ${num w}) → y = ${num (values
+    (Q ⊢ ∀ y, (recWitness ${p} ${q})(y, ${num (pair x n)}, ${num w}) → y = ${num (values
     n)}) := by
   intro hb hs
   have determined := sequenceEntryEq_of_isProofOf values proofs p (recStepFormula q)
@@ -1175,27 +1137,23 @@ theorem eq_num_of_recWitness_of_isProofOf (values proofs : Nat → Nat) (p q x n
   have decoded := recWitness_num_elim p q (pair x n) w
   rw [unpairLeft_pair, unpairRight_pair] at decoded
   rw [sequenceEntryEq] at determined
-  papply forall_imp_of_and
-    (p := betaSequence (p := ${p}) (q := ${recStepFormula q})
-      (${num (unpairLeft w)}, ${num (unpairRight w)}, ${num n}, ${num x}))
-    (q := fun y => betaBounded(y,
-      ${num (unpairLeft w)}, ${num (unpairRight w)}, ${num n}))
-    (r := fun y => y = ${num (values n)})
-    (s := fun y => recWitness (p := ${p}) (q := ${q})(y, ${num (pair x n)}, ${num w}))
+  papply forall_imp_of_and ((betaSequence ${p} ${recStepFormula q})(${num (unpairLeft w)},
+      ${num (unpairRight w)}, ${num n}, ${num x})) (fun y =>
+      betaBounded(y, ${num (unpairLeft w)}, ${num (unpairRight w)}, ${num n})) (fun y =>
+      y = ${num (values n)}) (fun y => (recWitness ${p} ${q})(y, ${num (pair x n)}, ${num w}))
   · pexact determined
   · pexact decoded
 
-fol_theorem eq_num_of_recStepGraph (q x i u v : Nat) : Q ⊢
-    (∀ y, ${q}[${num (pair x (pair i u))}, y] ↔ y = ${num v}) → ∀ y, recStepGraph
-    (q := ${q})(y, ${num i}, ${num u}, ${num x}) → y = ${num v} := by
+fol_theorem eq_num_of_recStepGraph (q : formula of 2) (x i u v : Nat) : Q ⊢
+    (∀ y, q(${num (pair x (pair i u))}, y) ↔ y = ${num v}) →
+    ∀ y, (recStepGraph q)(y, ${num i}, ${num u}, ${num x}) → y = ${num v} := by
   have firstPair := pairGraph_num_iff i u
   have secondPair := pairGraph_num_iff x (pair i u)
   pintro hq y witness
   papply hq[y]
-  papply exists_exists_eq_elim
-    (p := fun a => pairGraph(a, ${num i}, ${num u}))
-    (q := fun a b => pairGraph(b, ${num x}, a))
-    (r := fun b => ${q}[b, y])[${num (pair i u)}, ${num (pair x (pair i u))}]
+  papply (exists_exists_eq_elim (fun a => pairGraph(a, ${num i}, ${num u}))
+      (fun a b => pairGraph(b, ${num x}, a))
+      (fun b => q(b, y)))[${num (pair i u)}, ${num (pair x (pair i u))}]
   · pintro a ha
     papply firstPair[a]
     passumption
@@ -1204,31 +1162,30 @@ fol_theorem eq_num_of_recStepGraph (q x i u v : Nat) : Q ⊢
     passumption
   · passumption
 
-fol_theorem recStepGraph_of_eq_num (q x i u v : Nat) : Q ⊢
-    (∀ y, ${q}[${num (pair x (pair i u))}, y] ↔ y = ${num v}) → ∀ y, y = ${num v} → recStepGraph
-    (q := ${q})(y, ${num i}, ${num u}, ${num x}) := by
+fol_theorem recStepGraph_of_eq_num (q : formula of 2) (x i u v : Nat) : Q ⊢
+    (∀ y, q(${num (pair x (pair i u))}, y) ↔ y = ${num v}) → ∀ y, y = ${num v} →
+    (recStepGraph q)(y, ${num i}, ${num u}, ${num x}) := by
   have firstPair := pairGraph_num i u
   have secondPair := pairGraph_num x (pair i u)
   pintro hq y hy
-  papply exists_exists_conj_intro
-    (p := fun a => pairGraph(a, ${num i}, ${num u}))
-    (q := fun a b => pairGraph(b, ${num x}, a))
-    (r := fun b => ${q}[b, y])[${num (pair i u)}, ${num (pair x (pair i u))}]
+  papply (exists_exists_conj_intro (fun a => pairGraph(a, ${num i}, ${num u}))
+      (fun a b => pairGraph(b, ${num x}, a))
+      (fun b => q(b, y)))[${num (pair i u)}, ${num (pair x (pair i u))}]
   · pexact firstPair
   · pexact secondPair
   · papply hq[y]
     passumption
 
-fol_theorem recStepGraph_num_iff (q x i u v : Nat) : Q ⊢
-    (∀ y, ${q}[${num (pair x (pair i u))}, y] ↔ y = ${num v}) → ∀ y, recStepGraph
-    (q := ${q})(y, ${num i}, ${num u}, ${num x}) ↔ y = ${num v} := by
+fol_theorem recStepGraph_num_iff (q : formula of 2) (x i u v : Nat) : Q ⊢
+    (∀ y, q(${num (pair x (pair i u))}, y) ↔ y = ${num v}) →
+    ∀ y, (recStepGraph q)(y, ${num i}, ${num u}, ${num x}) ↔ y = ${num v} := by
   have forward := eq_num_of_recStepGraph q x i u v
   have backward := recStepGraph_of_eq_num q x i u v
   pintro hq
-  phave hf : ∀ y, recStepGraph (q := ${q})(y, ${num i}, ${num u}, ${num x}) → y = ${num v}
+  phave hf : ∀ y, (recStepGraph q)(y, ${num i}, ${num u}, ${num x}) → y = ${num v}
   · papply forward
     passumption
-  · phave hb : ∀ y, y = ${num v} → recStepGraph (q := ${q})(y, ${num i}, ${num u}, ${num x})
+  · phave hb : ∀ y, y = ${num v} → (recStepGraph q)(y, ${num i}, ${num u}, ${num x})
     · papply backward
       passumption
     · pintro y
@@ -1242,21 +1199,20 @@ theorem eq_num_of_recWitness_instantiate_of_isProofOf (values proofs : Nat → N
     language isAxiom (stepRepresentsAt (recStepFormula q) x i (values i) (values (S i))) (proofs i))
         →
     (Q ⊢ ${Formula.instantiate language (fol_formula[Arithmetic |
-      ∀ y, recWitness
-        (p := ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language p})
-        (q := ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language q})
-        (y, ${num (pair x n)}, ${Term.var language 0}) → y = ${num (values n)}]) (num w)}) := by
+      ∀ y, (recWitness ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language p}
+        ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language q})(y,
+        ${num (pair x n)}, ${Term.var language 0}) → y = ${num (values n)}]) (num w)}) := by
   intro hb hs
   have outputInstance := eq_num_of_recWitness_of_isProofOf values proofs p q x n w base hb hs
   pexact outputInstance
 
 extract_witness eq_num_of_recWitness_instantiate_of_isProofOf
 
-fol_theorem forall_le_of_lt_succ (p w r : Nat) : Q ⊢
-    (∀ t, t < S ${num w} → ∀ y, ${p}[t, y] → y = ${num r}) → ∀ t y, t ≤ ${num w} → ${p}[t, y] → y =
+fol_theorem forall_le_of_lt_succ (p : formula of 2) (w r : Nat) : Q ⊢
+    (∀ t, t < S ${num w} → ∀ y, p(t, y) → y = ${num r}) → ∀ t y, t ≤ ${num w} → p(t, y) → y =
     ${num r} := by
   pintro bounded t y ht witness
-  phave output : ∀ z, ${p}[t, z] → z = ${num r}
+  phave output : ∀ z, p(t, z) → z = ${num r}
   · papply bounded[t]
     papply lt_succ_iff_le[t, ${num w}]
     passumption
@@ -1267,15 +1223,14 @@ theorem eq_num_of_recWitness_of_le_of_isProofOf (values proofs : Nat → Nat) (p
     IsProofOf language isAxiom (representsAt p x (values 0)) base → (∀ i, i < n → IsProofOf
     language isAxiom (stepRepresentsAt (recStepFormula q) x i (values i) (values (S i))) (proofs i))
         →
-    (Q ⊢ ∀ t y, t ≤ ${num w} → recWitness (p := ${p}) (q := ${q})(y, ${num (pair x n)}, t) → y =
+    (Q ⊢ ∀ t y, t ≤ ${num w} → (recWitness ${p} ${q})(y, ${num (pair x n)}, t) → y =
     ${num (values n)}) := by
   intro hb hs
   have all := boundedAll_of_isProofOf
     (fol_formula[Arithmetic |
-      ∀ y, recWitness
-        (p := ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language p})
-        (q := ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language q})
-        (y, ${num (pair x n)}, ${Term.var language 0}) → y = ${num (values n)}]) (S w)
+      ∀ y, (recWitness ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language p}
+        ${Formula.subst (liftSubst (shiftSubst language 1) language 2) language q})(y,
+        ${num (pair x n)}, ${Term.var language 0}) → y = ${num (values n)}]) (S w)
     (fun t => eq_num_of_recWitness_instantiate_of_isProofOf.witness values proofs p q x n t base)
     (fun t ht => eq_num_of_recWitness_instantiate_of_isProofOf.witness_correct
       values proofs p q x n t base hb hs)
@@ -1284,15 +1239,15 @@ theorem eq_num_of_recWitness_of_le_of_isProofOf (values proofs : Nat → Nat) (p
       language 2) language p) (FOL.Formula.subst (FOL.liftSubst
       (FOL.shiftSubst language 2) language 2) language q) (Term.var
       language 0) (num (pair x n)) (Term.var language 1)
-  papply (forall_le_of_lt_succ graph w (values n))
+  papply forall_le_of_lt_succ ${graph} w (values n)
   pexact all
 
 theorem recWitness_of_isProofOf (values proofs : Nat → Nat) (p q b c x n base : Nat) :
     IsProofOf language isAxiom (representsAt p x (values 0)) base → (∀ i, i < n → IsProofOf
     language isAxiom (stepRepresentsAt (recStepFormula q) x i (values i) (values (S i))) (proofs i))
         →
-    (∀ i, i ≤ n → _root_.beta b c i = values i) → (Q ⊢ recWitness (p := ${p}) (q := ${q}) (${num
-    (values n)}, ${num (pair x n)}, ${num (pair b c)})) := by
+    (∀ i, i ≤ n → _root_.beta b c i = values i) →
+    (Q ⊢ (recWitness ${p} ${q})(${num (values n)}, ${num (pair x n)}, ${num (pair b c)})) := by
   intro hb hs encoded
   have sequence := betaSequence_of_isProofOf values proofs p (recStepFormula q) b c n x base
     hb hs encoded
@@ -1301,8 +1256,8 @@ theorem recWitness_of_isProofOf (values proofs : Nat → Nat) (p q b c x n base 
   have introduction := recWitness_intro p q
   papply introduction[${num (values n)}, ${num (pair x n)},
     ${num (pair b c)}, ${num x}, ${num n}, ${num b}, ${num c}]
-  · pexact (pairGraph_num x n)
-  · pexact (pairGraph_num b c)
+  · pexact pairGraph_num x n
+  · pexact pairGraph_num b c
   · pexact sequence
   · pexact last
 
@@ -1312,7 +1267,7 @@ theorem leastRecursionGraph_num_iff_of_isProofOf (values proofs : Nat → Nat) (
     IsProofOf language isAxiom (representsAt p x (values 0)) base → (∀ i, i < n → IsProofOf
     language isAxiom (stepRepresentsAt (recStepFormula q) x i (values i) (values (S i))) (proofs i))
         →
-    (Q ⊢ ∀ y, leastRecursionGraph (p := ${p}) (q := ${q})(y, ${num (pair x n)}) ↔ y =
+    (Q ⊢ ∀ y, (leastRecursionGraph ${p} ${q})(y, ${num (pair x n)}) ↔ y =
     ${num (values n)}) := by
   intro hb hs
   rcases beta_exists values (S n) with (b, c, entries)

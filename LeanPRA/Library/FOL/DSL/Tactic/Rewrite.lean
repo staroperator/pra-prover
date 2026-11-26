@@ -1,13 +1,17 @@
 module
 
 public meta import LeanPRA.Library.FOL.DSL.Tactic.Context
+public meta import LeanPRA.Library.FOL.DSL.Proof.Logic
 
 /-!
 # Equality tactics for FOL proofs
 
 `evalRewriteTactic` implements `prefl`, `prw`, `ptrans`, `psymm`, and `pcongr`.
-`prefl` closes an equation whose sides are the same term. Rewriting constructs
-equality derivations from named rules and closes the resulting PRA provability goal. A rule of
+`prefl` closes an equation whose sides are the same term. On an equality goal, rewriting
+constructs equality derivations from the rules and closes the resulting PRA provability goal.
+On any other goal, an equation rewrites the terms of the goal wherever they occur, through the
+congruence rules, and an equivalence `A ↔ B` rewrites the formula `A` wherever it occurs under
+implications, the derived connectives, and quantifiers; the rewritten goal remains. A rule of
 `prw` that names a definition opens that definition in the goal, or in the assumption named
 after `at`, and leaves the resulting goal.
 Each list entry records the goals before and after its step for the editor. Equality rules
@@ -93,7 +97,202 @@ private def rewriteSides (goal : FormulaView) (rules : List Nat) : DeriveM (Nat 
   let q ← rewriteTerm rules b
   return (p, q)
 
-private def rewriteEquations (equations : Array (TSyntax `praExpr)) : TacticM Unit := do
+/-! ## Rewriting inside formulas
+
+A term `s` is rewritten to `u` by abstracting its occurrences as a fresh variable and using
+`formulaTransport` along `u = s`, which proves the goal from its rewritten form. An
+equivalence `A ↔ B` is carried through implications and quantifiers by deduction. -/
+
+private partial def replaceTerm (target replacement : TermView) : TermView → TermView
+  | t => if t == target then replacement else match t with
+    | .app i args => .app i (args.map (replaceTerm target replacement))
+    | .indexedApp i k args => .indexedApp i k (args.map (replaceTerm target replacement))
+    | t => t
+
+/-- Replace the term `target` outside opaque codes. Binder names are fresh, so a binder named
+like a variable of the term binds that very variable. -/
+private partial def replaceTermInFormula (target replacement : TermView) :
+    FormulaView → FormulaView
+  | .equal a b => .equal (replaceTerm target replacement a) (replaceTerm target replacement b)
+  | .relation i args => .relation i (args.map (replaceTerm target replacement))
+  | .indexedRelation i k args => .indexedRelation i k (args.map (replaceTerm target replacement))
+  | .imp a b =>
+    .imp (replaceTermInFormula target replacement a) (replaceTermInFormula target replacement b)
+  | .all x a => .all x (replaceTermInFormula target replacement a)
+  | a => a
+
+/-- Replace every subformula equivalent to `target`. -/
+private partial def replaceFormula (target replacement : FormulaView) : FormulaView → FormulaView
+  | a => if a.equiv target then replacement else match a with
+    | .imp b c => .imp (replaceFormula target replacement b) (replaceFormula target replacement c)
+    | .all x b => .all x (replaceFormula target replacement b)
+    | a => a
+
+/-- A term of the formula that a rule rewrites, with the rewritten term and the proof of the
+equation. Terms inside opaque codes are left to a later pass with definitions opened. -/
+private partial def findTermRewrite (rules : List Nat) :
+    FormulaView → DeriveM (Option (TermView × TermView × Nat))
+  | .equal a b => do
+    if let some found ← findInTerm a then return some found
+    findInTerm b
+  | .relation _ args | .indexedRelation _ _ args => do
+    for arg in args do
+      if let some found ← findInTerm arg then return some found
+    return none
+  | .imp a b => do
+    if let some found ← findTermRewrite rules a then return some found
+    findTermRewrite rules b
+  | .all _ a => findTermRewrite rules a
+  | _ => return none
+where
+  findInTerm (t : TermView) : DeriveM (Option (TermView × TermView × Nat)) := do
+    if let some step ← rewriteRoot rules t then
+      let .equal _ u ← conclusion step | throwError "invalid rewrite result"
+      return some (t, u, step)
+    match t with
+    | .app _ args | .indexedApp _ _ args =>
+      for arg in args do
+        if let some found ← findInTerm arg then return some found
+      return none
+    | _ => return none
+
+private partial def matchFormula (binders : List Name) (pattern target : FormulaView)
+    (env : List (Name × TermView)) : Option (List (Name × TermView)) :=
+  match pattern, target with
+  | .falsum, .falsum => some env
+  | .equal a b, .equal c d => do matchTerm binders b d (← matchTerm binders a c env)
+  | .relation i xs, .relation j ys =>
+    if i != j || xs.length != ys.length then none else
+      (xs.zip ys).foldlM (fun e (a, b) => matchTerm binders a b e) env
+  | .indexedRelation i k xs, .indexedRelation j l ys =>
+    if i != j || k != l || xs.length != ys.length then none else
+      (xs.zip ys).foldlM (fun e (a, b) => matchTerm binders a b e) env
+  | .code L a xs, .code M b ys =>
+    if L != M || a != b || xs.length != ys.length then none else
+      (xs.zip ys).foldlM (fun e (a, b) => matchTerm binders a b e) env
+  | .imp a b, .imp c d => do matchFormula binders b d (← matchFormula binders a c env)
+  | .all x a, .all y b => matchFormula binders a (b.replace y (.var x)) env
+  | _, _ => none
+
+/-- An equivalence rule instantiated so that its left side is `a`. -/
+private def equivalenceAt (rules : List Nat) (a : FormulaView) : DeriveM (Option Nat) := do
+  for rule in rules do
+    let (xs, c) := unbind (← conclusion rule)
+    if let .imp (.imp (.imp lhs rhs) (.imp (.imp rhs' lhs') .falsum)) .falsum := c then
+      unless rhs.equiv rhs' && lhs.equiv lhs' do continue
+      if let some env := matchFormula xs lhs a [] then
+        if xs.all (fun x => (env.lookup x).isSome) then
+          let mut proof := rule
+          for x in xs do proof ← instantiate proof (env.lookup x).get!
+          return some proof
+  return none
+
+/-- A subformula that an equivalence rule rewrites, with the rewritten formula and the proof
+of the equivalence. -/
+private partial def findFormulaRewrite (rules : List Nat) (a : FormulaView) :
+    DeriveM (Option (FormulaView × FormulaView × Nat)) := do
+  if let some step ← equivalenceAt rules a then
+    let .imp (.imp (.imp _ b) _) _ ← conclusion step | throwError "invalid rewrite result"
+    return some (a, b, step)
+  match a with
+  | .imp b c =>
+    if let some found ← findFormulaRewrite rules b then return some found
+    findFormulaRewrite rules c
+  | .all _ b => findFormulaRewrite rules b
+  | _ => return none
+
+/-- From a proof of `a` with the subformula `source` replaced by `target` (when `forward` is
+false), or from a proof of `a` (when `forward` is true), prove the other formula, using the
+equivalence `source ↔ target` at each occurrence. -/
+private partial def equivalenceTransport (source target : FormulaView) (equivalence : Nat)
+    (forward : Bool) (a : FormulaView) (q : Nat) : DeriveM Nat := do
+  if a.equiv source then
+    return ← mp (← if forward then conjunctionLeft equivalence else conjunctionRight equivalence) q
+  let replaced := replaceFormula source target
+  match a with
+  | .imp b c =>
+    let premise := if forward then replaced b else b
+    let h ← liftCoreM (mkFreshUserName `h)
+    let hb ← addNode premise (.hypothesis h)
+    let inner ← equivalenceTransport source target equivalence (!forward) b hb
+    let result ← equivalenceTransport source target equivalence forward c (← mp q inner)
+    deduct h premise result
+  | .all y b =>
+    generalize y (← equivalenceTransport source target equivalence forward b
+      (← instantiate q (.var y)))
+  | _ => return q
+
+/-- Rewrite the conclusion of a goal that is not an equation with one rule: every occurrence
+of the first term that the rule matches, when the rule is an equation, or every subformula
+that the rule matches, when it is an equivalence. The conclusion is the goal after its leading
+hypotheses; when the rule matches nothing there, the whole goal is tried, since a negation
+`¬ A` is the implication `A → ⊥` and would otherwise leave only `⊥` to rewrite. Returns whether
+the rule applied. -/
+private def rewriteFormulaGoal (g : ProofGoal) (rule : DeriveM Nat) : TacticM Bool := do
+  let (hypotheses, target) := assumptions g.formula
+  let (found, graph) ← (do
+    if let some result ← rewriteIn target then return some result
+    if hypotheses.isEmpty then return none
+    rewriteIn g.formula).run {}
+  let some (rewritten, back, whole) := found | return false
+  let hypotheses := if whole then [] else hypotheses
+  refineDerivation g do
+    set graph
+    let next := hypotheses.foldr (fun (_, h) body => .imp h body) rewritten
+    return ([next], fun ps => do
+      let mut middle := ps[0]!
+      for (name, h) in hypotheses do
+        middle ← mp middle (← addNode h (.hypothesis name))
+      discharge hypotheses (← mp back middle))
+  return true
+where
+  /-- The rewritten formula and the proof back to the original, with whether the whole goal
+  was rewritten. -/
+  rewriteIn (target : FormulaView) : DeriveM (Option (FormulaView × Nat × Bool)) := do
+    let rules := [← rule]
+    let whole := target == g.formula
+    if let some (s, u, step) ← findTermRewrite rules target then
+      let x ← liftCoreM (mkFreshUserName `_folHole)
+      let abstracted := replaceTermInFormula s (.var x) target
+      let rewritten := abstracted.replace x u
+      let h ← liftCoreM (mkFreshUserName `h)
+      let hr ← addNode rewritten (.hypothesis h)
+      let back ← deduct h rewritten (← formulaTransport x (← eqSymm step) abstracted hr)
+      return some (rewritten, back, whole)
+    if let some (a, b, step) ← findFormulaRewrite rules target then
+      let rewritten := replaceFormula a b target
+      let h ← liftCoreM (mkFreshUserName `h)
+      let hr ← addNode rewritten (.hypothesis h)
+      let back ← deduct h rewritten (← equivalenceTransport a b step false target hr)
+      return some (rewritten, back, whole)
+    return none
+
+/-- The rule read in the other direction: an equation by symmetry, an equivalence by
+exchanging its two implications, beneath any leading universal quantifiers. -/
+private partial def reversed (p : Nat) : DeriveM Nat := do
+  match ← conclusion p with
+  | .all x _ => generalize x (← reversed (← instantiate p (.var x)))
+  | .equal _ _ => eqSymm p
+  | .imp (.imp (.imp _ _) (.imp (.imp _ _) .falsum)) .falsum =>
+    conjunctionIntro (← conjunctionRight p) (← conjunctionLeft p)
+  | _ => throwError "a reversed rule must be an equation or an equivalence"
+
+/-- Resolve a rewrite rule, reversing it after `←`. -/
+private def rewriteRule (g : ProofGoal) (r : TSyntax ``folRewriteRule) :
+    TacticM (DeriveM Nat) := do
+  let step ← rule g ⟨r.raw[1]⟩
+  if r.raw[0].getNumArgs == 0 then return step
+  return do reversed (← step)
+
+private def rewriteEquations (equations : Array (TSyntax ``folRewriteRule)) : TacticM Unit := do
+  let g ← currentGoal
+  unless (match (assumptions g.formula).2 with | .equal _ _ => true | _ => false) do
+    -- Each rule rewrites the goal once, in the order written.
+    let rules ← equations.toList.mapM fun r => rewriteRule g r
+    for (r, step) in equations.toList.zip rules do
+      unless ← rewriteFormulaGoal (← currentGoal) step do
+        throwErrorAt r "the rule does not apply to the goal"
+    return
   let g ← currentGoalAs fun a => match (assumptions a).2 with
     | .equal _ _ => true
     | _ => false
@@ -101,7 +300,7 @@ private def rewriteEquations (equations : Array (TSyntax `praExpr)) : TacticM Un
   let isEquation (a : FormulaView) := match (unbind a).2 with
     | .equal _ _ => true
     | _ => false
-  let rules ← equations.toList.mapM fun r => do exposeStep g (← rule g r) isEquation
+  let rules ← equations.toList.mapM fun r => do exposeStep g (← rewriteRule g r) isEquation
   refineDerivation g do
     let (p, q) ← rewriteSides target (← rules.mapM id)
     let .equal _ a ← conclusion p | throwError "invalid rewrite result"
@@ -157,7 +356,7 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
     unless xs.length == ys.length do throwError "function arities differ"
     refineDerivation g do
       return ((xs.zip ys).map (fun (a, b) => .equal a b), fun ps => eqCongr i ps member)
-  | `(praTactic| prw $[[$rules:praExpr,*]]? $[at $location:ident]?) =>
+  | `(praTactic| prw $[[$rules:folRewriteRule,*]]? $[at $location:ident]?) =>
     let some rules := rules | do
       if let some h := location then
         throwErrorAt h "prw at an assumption needs a definition to open"
@@ -171,7 +370,7 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
       let sep := rules.elemsAndSeps.getD (2 * i + 1) .missing
       let isDefinition ← withTacticInfo (mkNullNode #[r.raw, sep]) <| withRef r do
         let g ← currentGoal
-        if let `(praExpr| $id:ident) := r then
+        if let `(folRewriteRule| $id:ident) := r then
           let name := id.getId.eraseMacroScopes
           unless g.context.entries.any (·.1 == name) ||
               (← getGoal).names.used.contains name do
@@ -187,7 +386,8 @@ def evalRewriteTactic : Tactic := closedFirst fun stx => do
       if let some h := location then
         unless opened do throwErrorAt h "prw at an assumption needs a definition to open"
       else if !opened || !equations.isEmpty then
-        closeEquation
+        let g ← currentGoal
+        if let .equal _ _ := (assumptions g.formula).2 then closeEquation
   | _ => throwUnsupportedSyntax
 
 end LeanPRA.Library.FOL.DSL

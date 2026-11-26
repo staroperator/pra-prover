@@ -10,7 +10,8 @@ public meta import LeanPRA.Library.FOL.DSL.Proof.Logic
 reasoning through the shared PRA tactic interface. Object assumptions form an explicit local
 context, and implication introduction uses the checked deduction rule. A tactic that needs the
 connective of a formula opens the definition at its head; `passumption`, `pexact`, and `papply`
-accept a formula that agrees with the goal once definitions are opened.
+accept a formula that agrees with the goal once definitions are opened. A proof reference names
+an assumption, an axiom, or a PRA proof, or applies one to arguments in the application form.
 
 `pcases h with pat` uses names, ignored components, tuple patterns, and alternatives to name
 the resulting variables and assumptions. A local source hypothesis is removed from each branch,
@@ -27,50 +28,6 @@ open LeanPRA.Surface LeanPRA.Surface.Tactic
 open LeanPRA.Library.Tactic.Construction
 open LeanPRA.Library.Tactic
 open TacticSupport
-
-/-- Read the named arguments of a schema application. First-order syntax is preferred when an
-argument parses both ways; a numerical argument written that way is converted directly from its
-syntax tree. `(assuming := h)` supplies a PRA proof of the schema's restriction. -/
-private def parseActuals (g : ProofGoal) (index : Nat)
-    (args : Array (TSyntax `folSchemaActual)) :
-    TacticM (Array FormulaActual × Option (Core.Proof × Core.Predicate)) := do
-  let info := g.theory.axioms[index]!
-  let mut parsed : List (Name × FormulaActual) := []
-  let mut guard := none
-  for arg in args do
-    if let `(folSchemaActual| (assuming := $proof:praExpr)) := arg then
-      if info.guard?.isNone then throwErrorAt arg "axiom `{info.name}` has no restriction"
-      if guard.isSome then throwErrorAt arg "duplicate restriction proof"
-      guard := some (← coreProof proof)
-      continue
-    let (name, binders, body) ← match arg with
-      | `(folSchemaActual| ($name:ident := fun $xs:ident* => $body:folFormula)) =>
-        pure (name, xs.toList.map (·.getId.eraseMacroScopes), Sum.inl body)
-      | `(folSchemaActual| ($name:ident := $body:folFormula)) =>
-        pure (name, [], .inl body)
-      | `(folSchemaActual| ($name:ident := $body:praExpr)) =>
-        pure (name, [], .inr body)
-      | _ => throwUnsupportedSyntax
-    let some parameter := info.parameters.find? (·.name == name.getId.eraseMacroScopes) |
-      throwErrorAt name "unknown axiom parameter"
-    if (parsed.lookup name.getId.eraseMacroScopes).isSome then
-      throwErrorAt name "duplicate axiom parameter"
-    let actual ← if parameter.isNumeric then do
-        let number ← match body with
-          | .inr expr => coreTerm expr
-          | .inl expr => do
-            unless binders.isEmpty do throwErrorAt arg "expected a PRA numerical expression"
-            coreTerm (← formulaAsNumerical expr)
-        pure { body := .falsum, binders := [], number := some number }
-      else match body with
-      | .inl expr => syntaxArgument g parameter binders expr
-      | .inr expr => throwErrorAt expr "expected a FOL term or formula"
-    parsed := (name.getId.eraseMacroScopes, actual) :: parsed
-  let actuals ← info.parameters.mapM fun parameter => do
-    let name := parameter.name
-    let some actual := parsed.lookup name | throwError "missing axiom argument `{name}`"
-    return actual
-  return (actuals, guard)
 
 private def dischargeResult (goal : FormulaView) (p : Nat) : DeriveM Nat := do
   let (hs, _) := assumptions goal
@@ -134,9 +91,9 @@ private def exactStep (g : ProofGoal) (step : DeriveM Nat) : TacticM Unit := do
     let some converted ← convertStep g step g.formula | throw error
     finish g converted
 
-private def instantiatedRule (g : ProofGoal) (expr : TSyntax `praExpr)
+private def instantiatedRule (g : ProofGoal) (ref : TSyntax `folRef)
     (args : Array (TSyntax `folTerm)) : TacticM (DeriveM Nat) := do
-  instantiated g (← rule g expr) args
+  instantiated g (← rule g ref) args
 
 private def isExistence : FormulaView → Bool
   | .imp (.all _ (.imp _ .falsum)) .falsum => true
@@ -212,43 +169,6 @@ private def applyRule (g : ProofGoal) (initial : DeriveM Nat) : TacticM Unit := 
       let mut q := p
       for r in inputs do q ← mp q r
       return q)
-
-/-- Read the formula arguments `(p := fun x => A)` of the PRA theorem `name`, and return the
-theorem applied to their codes together with the statement it then proves. -/
-def formulaInstance (g : ProofGoal) (name : Ident)
-    (actuals : Array (TSyntax `folSchemaActual)) : TacticM (Core.Proof × Core.Predicate) := do
-  let some (.theoremE declaration) ←
-      resolveDeclaration? (← getGoal).environment name.getId.eraseMacroScopes |
-    throwError "expected a PRA theorem"
-  let signature := ((theoremParameters.getState (← getEnv)).find?
-    (·.1 == declaration.name)).map (·.2)
-  let mut values : List (Name × Core.Term) := []
-  for actual in actuals do
-    let (parameter, binders, body) ← match actual with
-      | `(folSchemaActual| ($p:ident := fun $xs:ident* => $body:folFormula)) =>
-        pure (p, xs.toList.map (·.getId.eraseMacroScopes), body)
-      | `(folSchemaActual| ($p:ident := $body:folFormula)) => pure (p, [], body)
-      | `(folSchemaActual| (assuming := $_:praExpr)) =>
-        throwErrorAt actual "a PRA theorem has no restriction; its premises become goals"
-      | _ => throwUnsupportedSyntax
-    if (values.lookup parameter.getId.eraseMacroScopes).isSome then
-      throwErrorAt parameter "duplicate formula parameter"
-    let expected := signature.bind (fun ps => ps.find?
-      (·.name == parameter.getId.eraseMacroScopes))
-    let expected := expected.getD
-      { name := parameter.getId.eraseMacroScopes, isFormula := true, arity := binders.length }
-    let actual ← syntaxArgument g expected binders body
-    let value ← actual.encode (languageTerm g.theory.language) [] g.free
-    values := values ++ [(parameter.getId.eraseMacroScopes, value)]
-  let mut arguments := []
-  for parameter in declaration.parameters do
-    let .function info 0 := parameter |
-      throwError "formula application requires numerical theorem parameters"
-    let some value := values.lookup info.name | throwError "missing formula parameter {info.name}"
-    values := values.filter (fun (name, _) => name != info.name)
-    arguments := arguments ++ [value]
-  unless values.isEmpty do throwError "unknown formula parameter"
-  return (.theoremE declaration.name arguments [], declaration.type.instantiate arguments [])
 
 /-- Instantiate the object quantifiers of a derivation step with `args` and reduce the goal to
 the premises of the result. -/
@@ -341,11 +261,10 @@ private def dropCaseSource (index : Nat) : TacticM Unit := do
   Tactic.applyProof (view.decodeProof (.impIntro `_folPremise premise proof))
     [view.decodePredicate premise]
 
-private partial def caseSource (g : ProofGoal) (expr : TSyntax `praExpr) :
+private def caseSource (g : ProofGoal) (ref : TSyntax `folRef) :
     TacticM (TacticM Unit) := do
-  match expr with
-  | `(praExpr| ($inner:praExpr)) => caseSource g inner
-  | `(praExpr| $name:ident) =>
+  match ref with
+  | `(folRef| $name:ident) =>
     let name := name.getId.eraseMacroScopes
     if let some index := (g.context.entries.map (·.1)).idxOf? name then
       return dropCaseSource index
@@ -376,7 +295,7 @@ private partial def introduceCase (reserved : List Name) (pat : TSyntax `praCase
     let name ← freshCaseName reserved
     introduceAssumption name
     let g ← currentGoal
-    casesPattern reserved g (← rule g (← `(praExpr| $name:ident))) pat (dropCaseSource 0)
+    casesPattern reserved g (← rule g (← `(folRef| $name:ident))) pat (dropCaseSource 0)
 
 private partial def casesPattern (reserved : List Name) (g : ProofGoal)
     (initial : DeriveM Nat) (pat : TSyntax `praCasesPattern)
@@ -428,7 +347,7 @@ private partial def casesPattern (reserved : List Name) (g : ProofGoal)
 end
 
 /-- Elaborate the basic logical tactics through checked PRA proof data. -/
-@[pra_tactic pintroTac, pra_tactic pexactTac, pra_tactic pexactProofTac, pra_tactic papplyTac,
+@[pra_tactic pintroTac, pra_tactic pexactTac, pra_tactic papplyTac,
   pra_tactic passumptionTac, pra_tactic pconstructorTac, pra_tactic pleftTac,
   pra_tactic prightTac, pra_tactic pexistsTac, pra_tactic pcasesTac, pra_tactic phaveTac,
   pra_tactic pcontradictionTac, pra_tactic pexfalsoTac]
@@ -457,7 +376,7 @@ def evalBasicTactic : Tactic := closedFirst fun stx => do
       if error.isInterrupt then throw error
       -- An assumption may state the goal with some definitions opened or closed.
       for (name, _) in g.context.entries do
-        let step ← rule g (← `(praExpr| $(mkIdent name):ident))
+        let step ← rule g (← `(folRef| $(mkIdent name):ident))
         if let some converted ← convertStep g step g.formula then
           finish g converted
           return
@@ -465,16 +384,16 @@ def evalBasicTactic : Tactic := closedFirst fun stx => do
   | `(praTactic| pconstructor) => splitGoal (← currentGoalAs isConjunction) 0
   | `(praTactic| pleft) => splitGoal (← currentGoalAs isDisjunction) 1
   | `(praTactic| pright) => splitGoal (← currentGoalAs isDisjunction) 2
-  | `(praTactic| papply $expr:praExpr $[[$args:folTerm,*]]?) =>
+  | `(praTactic| papply $ref:folRef $[[$args:folTerm,*]]?) =>
     let g ← currentGoal
-    applyRule g (← instantiatedRule g expr (args.map (·.getElems) |>.getD #[]))
-  | `(praTactic| pcases $expr:praExpr $[[$args:folTerm,*]]? with $pat:praCasesPattern) =>
+    applyRule g (← instantiatedRule g ref (args.map (·.getElems) |>.getD #[]))
+  | `(praTactic| pcases $ref:folRef $[[$args:folTerm,*]]? with $pat:praCasesPattern) =>
     let g ← currentGoal
-    let initial ← instantiatedRule g expr (args.map (·.getElems) |>.getD #[])
+    let initial ← instantiatedRule g ref (args.map (·.getElems) |>.getD #[])
     let main ← mainGoal
     let rest := (← get).drop 1
     set [main]
-    casesPattern (caseNames pat) g initial pat (← caseSource g expr)
+    casesPattern (caseNames pat) g initial pat (← caseSource g ref)
     modify (· ++ rest)
   | `(praTactic| pexists $term:folTerm) =>
     let g ← currentGoalAs isExistence
@@ -530,16 +449,9 @@ def evalBasicTactic : Tactic := closedFirst fun stx => do
     else
       refineDerivation g do
         return ([target.neg.neg], fun ps => doubleNegation target ps[0]!)
-  | `(praTactic| pexact $name:ident $actuals:folSchemaActual* $[[$args:folTerm,*]]?) =>
+  | `(praTactic| pexact $ref:folRef $[[$args:folTerm,*]]?) =>
     let g ← currentGoal
-    let initial ← if actuals.isEmpty then rule g (← `(praExpr| $name:ident)) else do
-      let index ← axiomIndex g.theory name.getId.eraseMacroScopes
-      let (values, guard) ← parseActuals g index actuals
-      pure (do return (← addAxiomInstance g.theory index values guard).1)
-    exactStep g (← instantiated g initial (args.map (·.getElems) |>.getD #[]))
-  | `(praTactic| pexact ($proof:praExpr) $[[$args:folTerm,*]]?) =>
-    let g ← currentGoal
-    exactStep g (← instantiated g (← rule g proof) (args.map (·.getElems) |>.getD #[]))
+    exactStep g (← instantiatedRule g ref (args.map (·.getElems) |>.getD #[]))
   | _ => throwUnsupportedSyntax
 
 end LeanPRA.Library.FOL.DSL

@@ -12,6 +12,7 @@ The mathematical language is an ordinary numerical PRA definition.
 - `LanguageInfo` stores the symbols and families used by the frontend.
 - `findLanguage` resolves a language name in the current namespace.
 - `languageTerm` refers to its numerical PRA definition.
+- `LanguageInfo.symbolTheorem` names the theorems that `fol_language` proves about a symbol.
 -/
 
 public meta section
@@ -62,6 +63,12 @@ def familyIndex (families : Array FamilyInfo) (name : Name) (indices arity : Nat
   return i
 
 def languageTerm (L : LanguageInfo) : Term := applyDefinition (L.name ++ `language)
+
+/-- The theorems that `fol_language` proves about a symbol or family live next to the
+language, named `isConstant_c`, `isFunction_f`, `isRelation_R`, `f_arity`, and `f_lt`. -/
+def LanguageInfo.symbolTheorem (L : LanguageInfo) (label : String) (symbol : Name)
+    (tail : String := "") : Name :=
+  L.name ++ Name.mkSimple (label ++ symbol.toString ++ tail)
 
 def findLanguage (name : Name) : CommandElabM LanguageInfo := do
   let name := name.eraseMacroScopes

@@ -23,7 +23,6 @@ that re-export it also make those tactics available.
 | `Tactic/Rewrite` | Object-level equality proofs by reflexivity, symmetry, transitivity, congruence, and rewriting. |
 | `Tactic/Substitution` | Variable replacement across formulas using object-level equations (`psubst`). |
 | `Tactic/Induction` | First-order ordinary and strong induction from declared axiom schemas. |
-| `Tactic/SchemaApplication` | Instantiation of formula parameters when applying PRA theorems (`papply`). |
 
 ## Languages and theories
 
@@ -64,7 +63,10 @@ fol_theory AddTheory over Arith extends Base where
   codes are unchanged. Function and relation family applications pair the member number with
   the argument tuple.
 - `fol_theory T over L` compiles each `axiom` into a numerical instance constructor and boolean
-  membership test, then combines them into `T.isAxiom : Nat → Nat`.
+  membership test, then combines them into `T.isAxiom : Nat → Nat`. Each axiom `ax` with
+  parameters `ps` and restriction `r` also becomes the theorem `T.ax : ∀ ps, r → T ⊢ A`, proved
+  from the membership test. Proofs use axioms through these theorems, exactly like any other
+  theorem with term or formula parameters.
 - Adding `extends Parent` includes `Parent.isAxiom` in `T.isAxiom` and generates the theorem
   `T.isAxiom_of_parent : ∀ A, Parent.isAxiom A = 1 → T.isAxiom A = 1`. Proofs from a parent
   theory can be used directly in any extending theory.
@@ -86,8 +88,7 @@ fol_theory AddTheory over Arith extends Base where
   `assuming FOL.Formula.isQuantifierFree Arith.language p = 1` permits induction on a
   quantifier-free formula. The axiom checker applies the test to the recovered formula code.
   A restriction `test = 1` is checked as written; any other equality `a = b` is checked as
-  `eqb a b = 1`. The generated theorem for introducing an instance requires a proof of the
-  restriction.
+  `eqb a b = 1`. The theorem `T.ax` takes a proof of the restriction as a PRA antecedent.
 
 ## Syntax parameters, definitions, and quotations
 
@@ -105,25 +106,37 @@ parameters (`Nat`, `Nat → Nat`, and predicates):
 `fol_def` defines a parameterized term or formula constructor over a declared language:
 
 ```lean
-fol_def double over Arith (x : term) : term := add(x, x)
+fol_def double over Arith : term of 1 := fun x => add(x, x)
 
-fol_def le over Arith (x y : term) : formula := ∃ z, add(z, x) = y
+fol_def le over Arith : formula of 2 := fun x y => ∃ z, add(z, x) = y
 
-fol_def diagonal over Arith (p : formula of 2) (x : term) : formula :=
-  ∀ y, p(x, y)
+fol_def diagonal over Arith (p : formula of 2) : formula of 1 := fun x => ∀ y, p(x, y)
 
-fol_def above over Arith (w x : term) : formula :=
-  diagonal (p := fun u v => add(u, v) = w)(x)
+fol_def above over Arith (w : term) : formula of 1 := fun x =>
+  (diagonal (fun u v => add(u, v) = w))(x)
 ```
 
-In a quotation, arity-zero term inputs are passed positionally, as in `double(x)` or
-`le(x, y)`. All other inputs use named actuals `(name := ...)` before the positional list.
-A syntax input can be supplied as a lambda `(p := fun u v => ...)`, a formula or partial
-application `(p := R)`, or an injected numerical code `(p := ${code})`. A named actual is read
-as first-order syntax whenever it parses that way, and as a PRA expression otherwise. A `Nat`
-input written as a name, an application with spaces, or a parenthesized form is converted
-from that first-order reading; any other PRA expression for a `Nat` input is written as a braced
-splice `(n := ${expr})`.
+The header binders are the parameters of the definition. `of n` in the result type is the number
+of term slots of the result, and the lambda after `:=` names them. In a quotation, the
+application form `(D a₁ … aₘ)` supplies the parameters in declaration order, and the slot list
+`(t₁, …, tₙ)` fills the slots: `le(x, y)`, `(diagonal p)(x)`, `(above w)(x)`. A definition
+without parameters is written without the application form, and one without slots without the
+slot list. First-order application binds tighter than PRA application: `D(…)` and `f[…]` follow
+the name without a space. The application form without a slot list may drop its parentheses
+where the position accepts a term or formula of any precedence, as in `isTotal p ∧ q` or
+`x + num n`; with a slot list, or as an argument of another application form, it keeps them,
+since each argument of an application form is atomic. Each argument is parsed both as an atomic
+first-order expression and as an atomic PRA expression, and the declared type of the parameter
+selects the reading. A `term of n` or
+`formula of n` parameter takes the first-order reading: a name, an application such as
+`R(u, v)`, a parenthesized term or formula, a lambda `(fun u v => …)`, a numeral when the
+language declares numeral notation, or an injected code `${code}`. A `Nat` parameter, or any
+other PRA parameter, takes the PRA reading: a name, a numeral, a hole `_`, or a parenthesized
+PRA expression such as `(a * k)` or `(f a b)`. So `(a * k)` is the symbol application
+`mul(a, k)` for a term parameter and the PRA product for a `Nat` parameter. A braced splice
+`${expr}` is needed only where the text has no reading of the wanted kind, such as a bare PRA
+name holding a code where a formula parameter is expected. A named argument `(x := a)` fills an
+implicit binder `{x : …}`.
 
 Results also accept `term of n` and `formula of n`. A lambda names the explicit result slots:
 
@@ -137,15 +150,18 @@ fol_def numeral over Arith (n : Nat) : term :=
     (fun _ t => FOL.Term.app Arith.language 0 t) n}
 ```
 
-Write `equation(x, y)` to fill its slots, or pass `equation` to a `formula of 2` parameter.
-Ordinary declaration term arguments come first, followed by the result slots. A computed term
-such as `numeral (n := n)()` can likewise be used directly in FOL syntax.
+Without the lambda, the body is a value of the result type: another definition, a partial
+application, or a spliced code whose slots are the de Bruijn indices `0` to `n - 1`. Write
+`equation(x, y)` to fill its slots, or pass `equation` to a `formula of 2` parameter. A computed
+term such as `(numeral n)` can likewise be used directly in FOL syntax.
 
 Inputs in the declaration header become PRA declaration parameters. Arrow domains become
 ordinary PRA arguments. Both support syntax inputs, and ordinary inputs may mix `Nat`,
 `term of n`, and `formula of n` in any order. Each becomes a numerical argument to the
 generated PRA function. Header parameters and ordinary arguments each keep their source order.
-The body lambda names the ordinary arguments first, then any explicit slots of the result.
+The body lambda names the ordinary arguments first, then the result binders. The result binders
+are term parameters of the generated function, placed after the header parameters, so the
+function of `le` above is `le x y`.
 
 `derive_primrec` can compile an ordinary input as part of the program's runtime input.
 
@@ -157,25 +173,26 @@ fol_def numeralFunction over Arith : Nat → term := fun n =>
 derive_primrec numeralFunction
 
 fol_def specialize over Arith (t : term) (p : formula of 1) :
-    formula of 1 → term → formula := fun q x => p(x) → q(t)
+    formula of 1 → formula of 1 := fun q x => p(x) → q(t)
 ```
 
-Write `numeralFunction n` in a PRA expression and `numeralFunction (n := n)()` in a quotation.
-In a quotation, `specialize (p := R) (q := S)(u, v)` supplies `u` for `t` and `v` for `x`.
-The returned formula is `R(v) → S(u)`.
+Write `numeralFunction n` in a PRA expression and `(numeralFunction n)` in a quotation. In a
+quotation, `(specialize u R S)(v)` supplies `u` for `t`, `R` for `p`, `S` for `q`, and `v` for
+the slot `x`. The returned formula is `R(v) → S(u)`.
 
-The entire body may be `${...}`, including when the result has explicit slots. The author of
-the PRA expression supplies its variable context and slot layout: the last result argument
-occupies position zero, and captured variables follow the result slots. The annotation records
-how callers use the result; it does not check the injected code's free-variable bound or prove
-that it has the declared syntax shape. Within an FOL body, splices keep the existing rule that
-entering a binder shifts their surrounding variables.
+The entire body may be `${...}`. With result binders, the expression uses them as term codes.
+Without result binders, the author of the PRA expression supplies its slot layout and variable
+context: the last result slot occupies position zero, and captured variables follow the result
+slots. The annotation records how callers use the result; it does not check the injected code's
+free-variable bound or prove that it has the declared syntax shape. Within an FOL body, splices
+keep the existing rule that entering a binder shifts their surrounding variables.
 
 When a term or formula definition `D` has a body whose substitutions can be proved automatically,
 `fol_def` generates a theorem `D.subst` for `Term.subst` or `Formula.subst`, respectively. This
 pushes substitutions directly into the arguments of `D` without unfolding its body. If a
 substitution needs the body of a term definition, it can use a registered equation or open the
-definition. Definitions with explicit result slots use unfolding and registered equations.
+definition. A definition whose result is a raw code with slots, written without result binders,
+uses unfolding and registered equations.
 
 The definitions and their constructor equations are in
 [Common/Substitution.lean](../Common/Substitution.lean).
@@ -252,16 +269,37 @@ In `pexact`, `papply`, and `pcases`, the bracketed list `[t₁, t₂, ...]` inst
 object-level universal quantifiers of the supplied rule. When no object terms are needed, the
 brackets can be omitted.
 
+A rule is a proof reference: a name, a name applied to arguments `h a₁ … aₘ`, the same in
+parentheses `(h a₁ … aₘ)`, or a splice `${e}` holding any PRA proof expression. The
+parentheses are optional in a tactic. The instantiation list `[t₁, ...]` follows a reference
+without a space, so it attaches to a name, a parenthesized reference, or a splice: `h[x]`,
+`(thm a b)[x]`, `${e}[x]`. Each argument is read by the declared type of the parameter it
+fills, exactly as for a definition: the first-order reading for a term or formula parameter,
+and the PRA reading for any other parameter. The parameters of a theorem are its declaration
+parameters followed by the universal quantifiers at the front of its statement. A local PRA
+hypothesis applied to arguments, such as `h n`, takes PRA arguments.
+Names in a proof reference resolve like PRA names, through the current namespace and the open
+scopes: an axiom is the theorem `T.ax` that the theory declaration proved, so it is written
+`T.ax`, or `ax` inside `namespace T` or after `open T`. A theorem of a parent theory is used the
+same way; its proof is carried to the goal's theory.
+
+A proof whose statement has PRA antecedents, such as the restriction of an axiom schema, can be
+applied to proofs of them as further arguments. Each antecedent that is left out is discharged
+from a local PRA hypothesis that states it or by calculation: for an equation `test = 1`, a
+hypothesis `a = b` proves the test `eqb a b`, a conjunction `band a b` needs both parts, a
+disjunction `bor a b` needs one part, and a test that calculates to `1` is closed. Otherwise the
+tactic reports the required equation.
+
 | Tactic | Action |
 | --- | --- |
 | `pintro x₁ x₂ ...` | Introduce object universal variables (shifting assumptions in `Γ` and binding `xᵢ` at index `0`) or move implication premises into `Γ`. |
 | `passumption` | Close the goal using a matching object assumption (or an implication premise in the goal). |
 | `pexact h[t₁, ...]` | Close the goal with an assumption, axiom, or theorem `h` instantiated at `t₁, ...`. |
-| `pexact ax (p := ...) [t₁, ...]` | Instantiate syntax parameters of an axiom schema `ax` and close the goal. |
-| `pexact ax (p := ...) (assuming := h) [t₁, ...]` | Also supply a PRA proof `h` of the restriction of `ax` at these arguments. |
-| `pexact (e)[t₁, ...]` | Close the goal with a parenthesized PRA proof expression `e` instantiated at `t₁, ...`. |
+| `pexact ax a₁ … aₘ`, `pexact (ax a₁ … aₘ)[t₁, ...]` | Instantiate the parameters of an axiom schema or a theorem `ax`, and its leading quantifiers at `t₁, ...`, and close the goal. |
+| `pexact ax a₁ … aₘ h` | Also supply a PRA proof `h` of a PRA antecedent of `ax`, such as the restriction of a schema. |
+| `pexact ${e}[t₁, ...]` | Close the goal with any PRA proof expression `e` instantiated at `t₁, ...`. |
 | `papply e[t₁, ...]` | Apply `e` (instantiated at `t₁, ...`) backward, projecting through conjunctions if needed and leaving premises as subgoals. |
-| `papply thm (p := ...) [t₁, ...]` | Instantiate syntax parameters of a PRA theorem `thm`, calculate the resulting formula, and apply it backward. |
+| `papply thm a₁ … aₘ`, `papply (thm a₁ … aₘ)[t₁, ...]` | Apply the theorem `thm` to its parameters, which may be formulas or terms, calculate the resulting formula, and apply it backward. |
 | `pcases e[t₁, ...] with pat` | Eliminate `e[t₁, ...]` and name its components using a pattern. |
 | `pconstructor` | Split a conjunction (`A ∧ B`) or equivalence (`A ↔ B`) goal into two subgoals. |
 | `pleft`, `pright` | Reduce a disjunction goal `A ∨ B` to `A` or `B`. |
@@ -269,13 +307,6 @@ brackets can be omitted.
 | `phave h : A` | Open a subgoal to prove `A`, then add `h : A` to the local assumptions of the main goal. |
 | `pexfalso` | Replace the current object goal with `⊥`. |
 | `pcontradiction` | When the goal is `⊥`, close it by modus ponens among local assumptions; otherwise replace the goal `A` with `¬¬ A`. |
-
-For a schema with an `assuming` restriction, the restriction must hold at the supplied
-arguments. `(assuming := h)` names a PRA proof expression for it, written like an argument of
-`exact`. Without it, the tactic looks for a local PRA hypothesis that states the restriction
-(or, for a restriction `eqb a b = 1`, the equation `a = b`), then calculates the test; a value
-`1` closes it, and a simplified test is compared with the hypotheses again. Otherwise the tactic
-reports the required equation.
 
 `pcases e with pat` combines elimination and introductions:
 
@@ -311,7 +342,7 @@ fol_theorem and_symm (p q : formula) : AddTheory ⊢ p ∧ q → q ∧ p := by
 | `psymm` | Replace an equality goal `t = u` with `u = t`. |
 | `ptrans u` | Split an equality goal `t = v` into two goals `t = u` and `u = v`. |
 | `pcongr` | Reduce `f(t₁, ..., tₙ) = f(u₁, ..., uₙ)` to subgoals `t₁ = u₁`, ..., `tₙ = uₙ`. |
-| `prw [r₁, r₂, ...]` | Close an equation by rewriting both sides with equality axioms, theorems, or assumptions `rᵢ` and comparing the results. |
+| `prw [r₁, r₂, ...]` | On an equality goal, close it by rewriting both sides with the equations `rᵢ` and comparing the results. On any other goal, rewrite the goal with each rule in turn: an equation rewrites the terms it matches, an equivalence `A ↔ B` rewrites the subformulas it matches. `← r` uses a rule from right to left. |
 | `prw [D]`, `prw [D] at h` | Open the term or formula definition `D` in the goal or in `h`. |
 | `psubst h` | Given an equality proof or assumption `h` of `x = t` for an object variable `x`, replace `x` with `t` throughout the goal formula. |
 
@@ -329,16 +360,21 @@ fol_theorem le_of_eq : AddTheory ⊢ ∀ x y, x = y → le(x, y) := by
   pexact le_refl[y]
 ```
 
-In `prw [r₁, r₂, ...]`, each equality rule `rᵢ` can be a universally quantified equation or a
-plain equation from the theory, local assumptions, or PRA environment. Universal variables in a
-rule are matched against subterms from the inside out, earlier rules normalize later rules in the
-list, and both sides of the target equation are rewritten to a common term. To replace an object
-variable inside a non-equality formula (such as a relation or quantifier body), use `psubst`.
+In `prw [r₁, r₂, ...]`, each rule `rᵢ` is a proof reference to an equation or an equivalence,
+possibly universally quantified, from the theory, local assumptions, or PRA environment. On an
+equality goal, universal variables in a rule are matched against subterms from the inside out,
+earlier rules normalize later rules in the list, and both sides of the target equation are
+rewritten to a common term. On any other goal, each rule rewrites once, in the order written:
+an equation replaces every occurrence of the first term it matches, inside relations, equations,
+implications, and quantifiers, and an equivalence replaces every subformula it matches, under
+implications, the derived connectives, and quantifiers. A term inside a definition that stays
+closed is rewritten only after the definitions are opened. `psubst` replaces an object variable
+by a term throughout the goal in one step.
 
 ### Opening definitions in proofs
 
-Term definitions with no explicit result slots and formula definitions with a `.subst` theorem
-stay closed in proof goals until a tactic needs to inspect their body:
+Term definitions whose result is not a raw code with slots and formula definitions with a
+`.subst` theorem stay closed in proof goals until a tactic needs to inspect their body:
 
 - Connective-directed tactics (`pintro`, `pconstructor`, `pleft`, `pright`, `pexists`, `pcases`,
   `papply`, `ptrans`, `psymm`, and `pcongr`) open definitions at the head of the formula they
@@ -355,7 +391,8 @@ opened. Setting `set_option fol.openDefinitions true` opens all definitions eage
 
 ### First-order induction (`pinduction`)
 
-`pinduction` applies an induction axiom schema declared in the active theory:
+`pinduction` applies the theorem of an induction axiom schema declared in the active theory or
+in one of its parent theories:
 
 ```lean
 fol_theorem zero_add : AddTheory ⊢ ∀ x, add(zero, x) = x := by
@@ -377,9 +414,10 @@ pinduction x using AddTheory.strong_ind with
 ```
 
 - `x` must be an introduced object variable in the current goal.
-- `using schema` is optional when the theory has a single induction schema.
+- `using thm` names the theorem of the schema and is optional when the theory has a single
+  induction schema.
 - `(assuming := h)` supplies a PRA proof of the schema's restriction for the motive. Without it,
-  the restriction is discharged like an axiom application: from a local PRA hypothesis or by
+  the restriction is discharged like any PRA antecedent: from a local PRA hypothesis or by
   calculation. A restriction on quantifier-freeness holds for a motive `${P}[x]` whenever
   `FOL.Formula.isQuantifierFree L P = 1` is a hypothesis, because substitution preserves
   quantifier-freeness.

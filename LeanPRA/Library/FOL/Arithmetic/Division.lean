@@ -8,8 +8,8 @@ public import LeanPRA.Library.FOL.Arithmetic.Tactic.Ring
 This module defines divisibility and Euclidean remainder in the language of arithmetic and proves
 their existence, uniqueness, and remainder-preservation properties in `PA`:
 
-- `FOL.Arithmetic.divides a b` states that `b = a * q` for some `q`.
-- `FOL.Arithmetic.remainder r b m` states that `r < m` and `b = m * q + r` for some quotient
+- `FOL.Arithmetic.divides(a, b)` states that `b = a * q` for some `q`.
+- `FOL.Arithmetic.remainder(r, b, m)` states that `r < m` and `b = m * q + r` for some quotient
   `q`.
 - `FOL.PA.divides_refl`, `FOL.PA.divides_one`, `FOL.PA.divides_mul_right`, and
   `FOL.PA.divides_trans` establish basic divisibility properties.
@@ -26,13 +26,13 @@ pra
 
 namespace Arithmetic
 
-/-- `remainder r b m` states that `r` is the Euclidean remainder of `b` modulo `m`, defined as
+/-- `remainder(r, b, m)` states that `r` is the Euclidean remainder of `b` modulo `m`, defined as
 `r < m ∧ ∃ q, b = m * q + r`. -/
-fol_def remainder over Arithmetic (r b m : term) : formula :=
+fol_def remainder over Arithmetic : formula of 3 := fun r b m =>
   r < m ∧ ∃ q, b = m * q + r
 
-/-- `divides a b` states that `a` divides `b`, defined as `∃ q, b = a * q`. -/
-fol_def divides over Arithmetic (a b : term) : formula := ∃ q, b = a * q
+/-- `divides(a, b)` states that `a` divides `b`, defined as `∃ q, b = a * q`. -/
+fol_def divides over Arithmetic : formula of 2 := fun a b => ∃ q, b = a * q
 
 end Arithmetic
 

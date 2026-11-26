@@ -63,36 +63,36 @@ position one. -/
 fol_def unaryFormula over Arithmetic (graph : Nat → Nat → Nat) : formula of 2 :=
   ${graph (Term.var language 0) (Term.var language 1)}
 
-/-- `constGraph (n := n)(y, x)` is the graph formula `y = num n` for the constant function with
+/-- `(constGraph n)(y, x)` is the graph formula `y = num n` for the constant function with
 value `n`. -/
-fol_def constGraph over Arithmetic (n : Nat) (y x : term) : formula := y = ${num n}
+fol_def constGraph over Arithmetic (n : Nat) : formula of 2 := fun y x => y = ${num n}
 
 /-- `idGraph(y, x)` is the graph formula `y = x` for the identity function. -/
-fol_def idGraph over Arithmetic (y x : term) : formula := y = x
+fol_def idGraph over Arithmetic : formula of 2 := fun y x => y = x
 
 /-- `succGraph(y, x)` is the graph formula `y = S x` for the successor function. -/
-fol_def succGraph over Arithmetic (y x : term) : formula := y = S x
+fol_def succGraph over Arithmetic : formula of 2 := fun y x => y = S x
 
 /-- `addGraph(y, x, z)` is the graph formula `y = x + z` for addition. -/
-fol_def addGraph over Arithmetic (y x z : term) : formula := y = x + z
+fol_def addGraph over Arithmetic : formula of 3 := fun y x z => y = x + z
 
 /-- `mulGraph(y, x, z)` is the graph formula `y = x * z` for multiplication. -/
-fol_def mulGraph over Arithmetic (y x z : term) : formula := y = x * z
+fol_def mulGraph over Arithmetic : formula of 3 := fun y x z => y = x * z
 
 /-- `pairGraph(z, x, y)` is the graph formula for Cantor pairing, characterized by twice its value.
 The bounds make the components finite when the code is a numeral and make the code finite when both
 components are numerals. -/
-fol_def pairGraph over Arithmetic (z x y : term) : formula :=
+fol_def pairGraph over Arithmetic : formula of 3 := fun z x y =>
   x ≤ z ∧ y ≤ z ∧ z ≤ (x + y) * S (x + y) + (x + x) ∧
     z + z = (x + y) * S (x + y) + (x + x)
 
 /-- `leftGraph(y, x)` is the graph formula `∃ z, pairGraph(x, y, z)` for the first component of a
 Cantor pair. -/
-fol_def leftGraph over Arithmetic (y x : term) : formula := ∃ z, pairGraph(x, y, z)
+fol_def leftGraph over Arithmetic : formula of 2 := fun y x => ∃ z, pairGraph(x, y, z)
 
 /-- `rightGraph(y, x)` is the graph formula `∃ z, pairGraph(x, z, y)` for the second component of
 a Cantor pair. -/
-fol_def rightGraph over Arithmetic (y x : term) : formula := ∃ z, pairGraph(x, z, y)
+fol_def rightGraph over Arithmetic : formula of 2 := fun y x => ∃ z, pairGraph(x, z, y)
 
 end Arithmetic
 
@@ -125,7 +125,7 @@ def finiteConjProof (p : Nat) (proof : Nat → Nat) : Nat → Nat := fun n =>
       (Formula.instantiate language p (num i)) previous (proof i)) n
 
 fol_theorem constGraph_num_iff (n x : Nat) : Q ⊢
-    ∀ y, constGraph (n := n)(y, ${num x}) ↔ y = ${num n} := by
+    ∀ y, (constGraph n)(y, ${num x}) ↔ y = ${num n} := by
   pintro y
   pconstructor
   · pintro h
@@ -205,7 +205,7 @@ theorem boundedAll_of_isProofOf (p n : Nat) (proof : Nat → Nat) :
     (Q ⊢ ${boundedAll n p}) := by
   intro supplied
   have all := finiteConj_of_isProofOf p n proof supplied
-  papply (boundedAll_iff_finiteConj n p)
+  papply boundedAll_iff_finiteConj n p
   exact all
 
 /-- The Cantor-pair formula holds at the numerals for a pair and its two components. -/
@@ -240,17 +240,17 @@ theorem represents_constGraph (n : Nat) :
     Represents (fun _ => n) (unaryFormula (fun y x => constGraph n y x)) := by
   rw [unaryFormula]
   intro x
-  pexact (constGraph_num_iff n x)
+  pexact constGraph_num_iff n x
 
 theorem represents_idGraph : Represents (fun x => x) (unaryFormula (fun y x => idGraph y x)) := by
   rw [unaryFormula]
   intro x
-  pexact (idGraph_num_iff x)
+  pexact idGraph_num_iff x
 
 theorem represents_succGraph : Represents S (unaryFormula (fun y x => succGraph y x)) := by
   rw [unaryFormula]
   intro x
-  pexact (succGraph_num_iff x)
+  pexact succGraph_num_iff x
 
 end Q
 
@@ -258,13 +258,13 @@ namespace PA
 
 open Arithmetic
 
-fol_theorem constGraph_total (n : Nat) : PA ⊢ ∀ x, ∃ y, constGraph (n := n)(y, x) := by
+fol_theorem constGraph_total (n : Nat) : PA ⊢ ∀ x, ∃ y, (constGraph n)(y, x) := by
   pintro x
   pexists ${num n}
   prefl
 
 fol_theorem constGraph_unique (n : Nat) : PA ⊢
-    ∀ x y z, constGraph (n := n)(y, x) → constGraph (n := n)(z, x) → y = z := by
+    ∀ x y z, (constGraph n)(y, x) → (constGraph n)(z, x) → y = z := by
   pintro x y z hy hz
   prw [hy, hz]
 
@@ -635,7 +635,7 @@ theorem pairGraph_num_iff_of_eq (a b z : Nat) :
   · pintro hp
     prefl
   · pintro he
-    pexact (pairGraph_num a b)
+    pexact pairGraph_num a b
 
 theorem pairGraph_num_iff_of_ne (a b z : Nat) :
     ¬ z = pair a b →
@@ -704,7 +704,7 @@ fol_theorem pairGraph_num_iff (a b : Nat) : Q ⊢
       · passumption
   · pintro he
     psubst he
-    pexact (pairGraph_num a b)
+    pexact pairGraph_num a b
 
 theorem pairGraph_components_num_of_eq (z a b : Nat) :
     z = pair a b →
@@ -769,7 +769,7 @@ extract_witness pairGraph_components_num_of_lt_right
 
 fol_theorem pairGraph_components_num_of_lt (z : Nat) : Q ⊢
     ∀ a b, a < ${num (S z)} → b < ${num (S z)} → (pairGraph(${num z}, a, b) →
-      (a = ${num (unpairLeft z)} ∧ b = ${num (unpairRight z)})) := by
+      (a = (num (unpairLeft z)) ∧ b = (num (unpairRight z)))) := by
   have h := boundedAll_of_isProofOf (fol_formula[Arithmetic |
       ∀ b, b < ${num (S z)} → pairGraph(${num z}, ${Term.var language 0}, b) →
         (${Term.var language 0} = ${num (unpairLeft z)} ∧ b = ${num (unpairRight z)})]) (S z)
@@ -778,7 +778,7 @@ fol_theorem pairGraph_components_num_of_lt (z : Nat) : Q ⊢
   rw [boundedAll] at h
   pintro a b ha hb
   phave ha' : ∀ b, b < ${num (S z)} → (pairGraph(${num z}, a, b) →
-      (a = ${num (unpairLeft z)} ∧ b = ${num (unpairRight z)}))
+      (a = (num (unpairLeft z)) ∧ b = (num (unpairRight z))))
   · papply h[a]
     passumption
   · papply ha'[b]
@@ -786,7 +786,7 @@ fol_theorem pairGraph_components_num_of_lt (z : Nat) : Q ⊢
 
 fol_theorem pairGraph_components_num (z : Nat) : Q ⊢
     ∀ a b, pairGraph(${num z}, a, b) →
-    (a = ${num (unpairLeft z)} ∧ b = ${num (unpairRight z)}) := by
+    (a = (num (unpairLeft z)) ∧ b = (num (unpairRight z))) := by
   have bounded := pairGraph_components_num_of_lt z
   rw [num_succ] at bounded
   pintro a b h

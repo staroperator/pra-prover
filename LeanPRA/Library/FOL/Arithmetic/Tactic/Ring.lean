@@ -150,7 +150,7 @@ def evalRing : Tactic := closedFirst fun _ => do
     `FOL.PA.mul_assoc, `FOL.PA.mul_comm,
     `FOL.PA.left_distrib, `FOL.PA.right_distrib, `FOL.PA.one_add]
   let laws ← names.mapM fun name => do
-    let p ← rule g (← `(praExpr| $(mkIdent (`_root_ ++ name)):ident))
+    let p ← rule g (← `(folRef| $(mkIdent (`_root_ ++ name)):ident))
     return (name, p)
   finish g do
     let laws ← laws.mapM fun (name, p) => return (name, ← p)

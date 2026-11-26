@@ -10,11 +10,13 @@ definition's parameters and ordinary arguments to a syntax code. `Nat`, `term of
 `formula of n` can appear as ordinary input types. Contextual syntax inputs carry their
 surrounding variables, which are transported when entering a binder.
 
-Results may have explicit slots, written `term of n` or `formula of n`. A lambda names those
-slots in an FOL body. A whole `${...}` body supplies a PRA expression whose author determines
-the slot layout and surrounding variable context.
+Results may have slots, written `term of n` or `formula of n`. A lambda after `:=` names the
+slots; the names become term parameters of the PRA function, after the declaration parameters,
+and the slot list of a use fills them. Without the lambda, the body is a value with `n` open
+slots: another definition, a partial application, or a `${...}` expression whose author
+determines the slot layout and surrounding variable context.
 
-For supported bodies with no result slots, the command proves how substitution acts on the
+For supported bodies whose slots are named, the command proves how substitution acts on the
 definition. Tactics use this theorem to carry a defined formula through instantiation and
 shifting without opening it.
 The theorem is named `D.subst` for both term and formula definitions. It describes `Term.subst`
@@ -255,6 +257,8 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
   | .definition `FOL.Term.subst [values], [_, p] =>
     substApplication k false values p
   | .definition name _, _ =>
+    -- A registered closed term, such as a numeral, is unchanged by the substitution.
+    if let some proof ← closedTermProof? (← read).language (← lifted k) t then return (t, proof)
     let some (info, values) ← appliedDefinition? t | throwError "unsupported term `{name}`"
     if info.isFormula then throwError "expected a term definition"
     substDefinition k info values
@@ -463,13 +467,24 @@ def elaborateDefinition : CommandElab := fun stx => do
       pure (n, L, ps, inputs, true, k.map (·.getNat) |>.getD 0, xs, a.raw)
     | _ => throwUnsupportedSyntax
   let L ← findLanguage language.getId.eraseMacroScopes
-  let (binders, syntaxParameters) ← declarationParameters ps
   let names := lambda.getD #[]
   unless names.size ≥ inputs.size do
     throwErrorAt entry "expected {inputs.size} ordinary input binders"
   let ordinary := names.extract 0 inputs.size
   let slots := names.extract inputs.size names.size
-  let mut binderNames := ps.flatMap (fun p => p.raw[1].getArgs.map (·.getId.eraseMacroScopes))
+  unless slots.isEmpty || slots.size == arity do
+    throwErrorAt entry "expected {arity} explicit result binders"
+  -- Explicit result binders are term parameters of the generated function. They follow the
+  -- declaration parameters, and the slot list of a use fills them.
+  let slotParameters ← slots.mapM fun x => `(praParam| ($x:ident : term))
+  let (binders, syntaxParameters) ← declarationParameters (ps ++ slotParameters)
+  let mut binderNames := (ps ++ slotParameters).flatMap
+    (fun p => p.raw[1].getArgs.map (·.getId.eraseMacroScopes))
+  unless binderNames.toList.eraseDups.length == binderNames.size do
+    throwErrorAt entry "duplicate result binder"
+  let implicit := ps.flatMap fun p => match p with
+    | `(praParam| {$ids:ident* : $_:praExpr}) => ids.map (·.getId.eraseMacroScopes)
+    | _ => #[]
   let mut syntaxParameters := syntaxParameters
   let mut dataNames := dataParameterNames ps
   for (input, x) in inputs.zip ordinary do
@@ -483,19 +498,14 @@ def elaborateDefinition : CommandElab := fun stx => do
       dataNames := dataNames.push n
     | `term | `formula =>
       syntaxParameters := syntaxParameters.push
-        ⟨n, kind.getId.eraseMacroScopes == `formula, k.map (·.getNat) |>.getD 0, false⟩
+        ⟨n, .syntax (kind.getId.eraseMacroScopes == `formula) (k.map (·.getNat) |>.getD 0)⟩
     | _ => throwErrorAt input "expected Nat, term, or formula"
-  let (body, scope) ← if !slots.isEmpty then do
-      unless slots.size == arity do throwErrorAt entry "expected {arity} explicit result binders"
-      let names := slots.toList.map (·.getId.eraseMacroScopes)
-      unless names.eraseDups.length == names.length do
-        throwErrorAt entry "duplicate result binder"
-      pure (body, names.reverse)
-    else if body.isOfKind ``termSplice || body.isOfKind ``formulaSplice then
-      pure (body, [])
-    else completeApplication body ⟨name.getId, formula, arity, false⟩ []
-  let positional := syntaxParameters.filterMap fun p =>
-    if !p.isFormula && p.arity == 0 then some p.name else none
+  -- Without explicit result binders, the slots of the result are de Bruijn indices of the code.
+  let (body, scope) ← if !slots.isEmpty || body.isOfKind ``termSplice ||
+      body.isOfKind ``formulaSplice then pure (body, [])
+    else completeApplication body ⟨name.getId, .syntax formula arity⟩ []
+  let positional := slots.map (·.getId.eraseMacroScopes)
+  let resultArity := if slots.isEmpty then arity else 0
   let previousData := activeDataParameters.getState (← getEnv)
   modifyEnv (activeDataParameters.setState · dataNames)
   let value ← try
@@ -514,7 +524,7 @@ def elaborateDefinition : CommandElab := fun stx => do
     else pure declaration
   elaborateDeclaration declaration
   let ns ← getCurrNamespace
-  let template ← if positional.size == binderNames.size && arity == 0 then do
+  let template ← if positional.size == binderNames.size && resultArity == 0 then do
       let names ← positional.mapM (fun n => liftCoreM (mkFreshUserName n))
       let vars := positional.toList.zip names.toList
       try
@@ -529,8 +539,8 @@ def elaborateDefinition : CommandElab := fun stx => do
     name := ns ++ name.getId.eraseMacroScopes
     language := L.name
     binders := binderNames
-    positional, template, syntaxParameters
-    arity := inputs.size, isFormula := formula, resultArity := arity }
+    positional, implicit, template, syntaxParameters
+    arity := inputs.size, isFormula := formula, resultArity }
   let info ← proveSubstitution L info name
   modifyEnv (definitions.addEntry · info)
 

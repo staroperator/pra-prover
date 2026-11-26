@@ -24,9 +24,11 @@ every goal, hypothesis, and message.
 
 The names of the assumptions are read from their name markers. An object variable is shown by
 the local PRA name that stands for its code. A bound variable receives a fresh name, since a
-formula code stores de Bruijn indices rather than binder names. A subformula or subterm given by
-an opaque PRA expression is shown as a splice `${…}`. Named formula codes stay visible even
-when their definitions have no substitution theorem. Rendering leaves the tactic goal unchanged.
+formula code stores de Bruijn indices rather than binder names. The derived connectives `¬`,
+`∧`, `∨`, `∃`, and `↔` are shown whenever a formula has their shape. A subformula or subterm
+given by an opaque PRA expression is shown as a splice `${…}`. Named formula codes stay visible
+even when their definitions have no substitution theorem. Rendering leaves the tactic goal
+unchanged.
 -/
 
 public meta section
@@ -71,7 +73,16 @@ unsafe initialize termDisplayAttribute : KeyedDeclsAttribute TermDisplay ←
     evalKey := fun _ stx => return (← Attribute.Builtin.getIdent stx).getId.eraseMacroScopes
   }
 
-/-- Print a folded definition with the arguments that its substitution theorem describes. -/
+/-- An argument of the application form for a PRA value: a name or a numeral as it is, any
+other expression as a braced splice. -/
+private def argumentSyntax (value : TSyntax `praExpr) : CommandElabM (TSyntax `folArg) := do
+  match value with
+  | `(praExpr| $id:ident) => `(folArg| $(← `(folFormula| $id:ident)):folFormula)
+  | `(praExpr| $n:num) => `(folArg| $n:num)
+  | _ => `(folArg| $(← `(folFormula| ${$value:praExpr})):folFormula)
+
+/-- Print a folded definition with the arguments that its substitution theorem describes. The
+PRA parameters are shown in the application form `(D a₁ … aₘ)(t₁, …, tₖ)`. -/
 private def namedDefinitionSyntax (names : Names) (isFormula : Bool) (value : Core.Term)
     (count : Nat) (showArguments : CommandElabM (Array (TSyntax `folTerm))) :
     CommandElabM (Option Syntax) := do
@@ -88,10 +99,18 @@ private def namedDefinitionSyntax (names : Names) (isFormula : Bool) (value : Co
     if isFormula then return some (← `(folFormula| $name:ident($shown,*))).raw
     return some (← `(folTerm| $name:ident($shown,*))).raw
   let actuals ← named.mapM fun (binder, actual) => do
-    `(folPraActual| ($(mkIdent binder):ident := $(← delabTerm names actual):praExpr))
-  let kind := if isFormula then ``formulaDefinedApplication else ``termDefinedApplication
-  return some (.node .none kind #[name, mkNullNode actuals,
-    mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"])
+    let argument ← argumentSyntax (← delabTerm names actual)
+    -- Built directly: in a quotation, `(x := a)` would also parse as a PRA named argument.
+    if d.implicit.contains binder then
+      pure ⟨mkNode ``namedArg #[mkAtom "(", mkIdent binder, mkAtom ":=", argument.raw, mkAtom ")"]⟩
+    else pure argument
+  let application := #[mkAtom "(", name.raw, mkNullNode (actuals.map (·.raw)), mkAtom ")"]
+  if shown.isEmpty then
+    let kind := if isFormula then ``formulaApplication else ``termApplication
+    return some (.node .none kind application)
+  let kind := if isFormula then ``formulaApplicationSlots else ``termApplicationSlots
+  return some (.node .none kind
+    (application ++ #[mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"]))
 
 /-- Print a term tree in FOL notation. `level` is the precedence the position requires. -/
 partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Name)
@@ -168,6 +187,12 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     let quantifier ← if existential then `(folFormula| ∃ $binders:ident*, $inner:folFormula)
       else `(folFormula| ∀ $binders:ident*, $inner:folFormula)
     parenthesizedFormula 1 level quantifier
+  -- An equivalence is the conjunction of the two implications.
+  if let .imp (.imp (.imp b c) (.imp (.imp c' b') .falsum)) .falsum := a then
+    if b.equiv b' && c.equiv c' then
+      let b ← formulaSyntax L names rename used b 21
+      let c ← formulaSyntax L names rename used c 21
+      return ← parenthesizedFormula 20 level (← `(folFormula| $b:folFormula ↔ $c:folFormula))
   match a with
   | .falsum => `(folFormula| ⊥)
   | .equal s t =>

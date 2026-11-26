@@ -38,16 +38,16 @@ They let `exists_remainder_add_mul` choose a multiple of `a` to add to a number 
 prescribed remainder modulo `m`, while preserving its remainders modulo divisors of `a`.
 Using this witness condition directly lets the construction work in natural-number arithmetic
 before developing general gcd theory and Bézout's theorem for coprime numbers. -/
-fol_def bezout over Arithmetic (a m : term) : formula :=
+fol_def bezout over Arithmetic : formula of 2 := fun a m =>
   ∃ x y, a * x = 1 + m * y
 
 /-- `betaModulus(c, i)` is the modulus `S (S i * c)` at position `i` of a beta code with parameter
 `c`. -/
-fol_def betaModulus over Arithmetic (c i : term) : term := S (S i * c)
+fol_def betaModulus over Arithmetic : term of 2 := fun c i => S (S i * c)
 
-/-- `remainderPrefix (p := p)(c, n, b)` states that `b` supplies a residue satisfying `p` at each
+/-- `(remainderPrefix p)(c, n, b)` states that `b` supplies a residue satisfying `p` at each
 index below `n`. -/
-fol_def remainderPrefix over Arithmetic (p : formula of 2) (c n b : term) : formula :=
+fol_def remainderPrefix over Arithmetic (p : formula of 2) : formula of 3 := fun c n b =>
   ∀ i, i < n → ∃ r, p(i, r) ∧ remainder(r, b, betaModulus(c, i))
 
 end Arithmetic
@@ -92,7 +92,7 @@ fol_theorem remainder_adjust_eq : PA ⊢ ∀ b d m r x y w,
         · pexact add_right_comm[m * b, r, m * (y * w)]
       · prw [left_distrib]
 
-/-- Given `bezout d m` and `r < m`, some multiple `d * t` adjusts `b` so that
+/-- Given `bezout(d, m)` and `r < m`, some multiple `d * t` adjusts `b` so that
 `b + d * t` has remainder `r` modulo `m`. -/
 fol_theorem exists_remainder_add_mul : PA ⊢
     ∀ b d m r, 0 < m → r < m → bezout(d, m) → ∃ t,
@@ -114,17 +114,17 @@ fol_theorem exists_remainder_add_mul : PA ⊢
         · pring
         · prw [hk]
 
-fol_theorem remainderPrefix_succ_add_mul (p : Nat) : PA ⊢
-    ∀ c k b d t r, remainderPrefix (p := ${p})(c, k, b) →
-    (∀ i, i < k → divides(betaModulus(c, i), d)) → ${p}[k, r] →
+fol_theorem remainderPrefix_succ_add_mul (p : formula of 2) : PA ⊢
+    ∀ c k b d t r, (remainderPrefix p)(c, k, b) →
+    (∀ i, i < k → divides(betaModulus(c, i), d)) → p(k, r) →
     remainder(r, b + d * t, betaModulus(c, k)) →
-    remainderPrefix (p := ${p})(c, S k, b + d * t) := by
+    (remainderPrefix p)(c, S k, b + d * t) := by
   pintro c k b d t r hcode hmultiple hr hrem i hi
   phave cases : i < k ∨ i = k
   · papply lt_succ_iff_lt_or_eq[i, k]
     passumption
   · pcases cases with hik | he
-    · phave hex : ∃ w, ${p}[i, w] ∧
+    · phave hex : ∃ w, p(i, w) ∧
           remainder(w, b, betaModulus(c, i))
       · papply hcode[i]
         passumption
@@ -207,8 +207,8 @@ fol_theorem exists_divides_betaModulus_and_bezout : PA ⊢
         · passumption
         · papply hd
 
-fol_theorem remainderPrefix_zero (p : Nat) : PA ⊢
-    ∀ c, ∃ b, remainderPrefix (p := ${p})(c, 0, b) := by
+fol_theorem remainderPrefix_zero (p : formula of 2) : PA ⊢
+    ∀ c, ∃ b, (remainderPrefix p)(c, 0, b) := by
   pintro c
   pexists 0
   pintro i hi
@@ -216,11 +216,11 @@ fol_theorem remainderPrefix_zero (p : Nat) : PA ⊢
   papply Q.not_lt_zero[i]
   passumption
 
-fol_theorem remainderPrefix_succ_of_bezout (p : Nat) : PA ⊢
-    ∀ c k b d r, remainderPrefix (p := ${p})(c, k, b) →
+fol_theorem remainderPrefix_succ_of_bezout (p : formula of 2) : PA ⊢
+    ∀ c k b d r, (remainderPrefix p)(c, k, b) →
     (∀ i, i < k → divides(betaModulus(c, i), d)) →
-    bezout(d, betaModulus(c, k)) → ${p}[k, r] → r <
-    betaModulus(c, k) → ∃ b, remainderPrefix (p := ${p})(c, S k, b) := by
+    bezout(d, betaModulus(c, k)) → p(k, r) → r <
+    betaModulus(c, k) → ∃ b, (remainderPrefix p)(c, S k, b) := by
   pintro c k b d r hcode hmultiple hbezout hpr hrlt
   phave hadjust : ∃ t, remainder(r, b + d * t, betaModulus(c, k))
   · papply exists_remainder_add_mul[b, d, betaModulus(c, k), r]
@@ -229,17 +229,16 @@ fol_theorem remainderPrefix_succ_of_bezout (p : Nat) : PA ⊢
     · passumption
   · pcases hadjust with ⟨t, ht⟩
     pexists b + d * t
-    papply PA.remainderPrefix_succ_add_mul (p := fun i r => ${p}[i, r])[c, k, b, d, t, r]
+    papply (PA.remainderPrefix_succ_add_mul (fun i r => p(i, r)))[c, k, b, d, t, r]
     · passumption
     · passumption
     · passumption
     · passumption
 
-fol_theorem remainderPrefix_succ (p : Nat) : PA ⊢
+fol_theorem remainderPrefix_succ (p : formula of 2) : PA ⊢
     ∀ c l k, (∀ i j, i < j → j < l → bezout(betaModulus(c, i),
-    betaModulus(c, j))) → k < l → (∃ r, ${p}[k, r] ∧ r < betaModulus(c, k)) →
-    (∃ b, remainderPrefix (p := ${p})(c, k, b)) → ∃ b, remainderPrefix
-    (p := ${p})(c, S k, b) := by
+    betaModulus(c, j))) → k < l → (∃ r, p(k, r) ∧ r < betaModulus(c, k)) →
+    (∃ b, (remainderPrefix p)(c, k, b)) → ∃ b, (remainderPrefix p)(c, S k, b) := by
   pintro c l k hpairs hkl hchoice hcode
   pcases hcode with ⟨b, hb⟩
   phave hdex : ∃ d, (∀ i, i < k → divides(betaModulus(c, i), d)) ∧
@@ -249,7 +248,7 @@ fol_theorem remainderPrefix_succ (p : Nat) : PA ⊢
   · pcases hdex with ⟨d, hd⟩
     pcases hd with ⟨hmultiple, hfuture⟩
     pcases hchoice with ⟨r, hr⟩
-    papply PA.remainderPrefix_succ_of_bezout (p := fun i r => ${p}[i, r])[c, k, b, d, r]
+    papply (PA.remainderPrefix_succ_of_bezout (fun i r => p(i, r)))[c, k, b, d, r]
     · passumption
     · passumption
     · papply hfuture[k]
@@ -258,16 +257,15 @@ fol_theorem remainderPrefix_succ (p : Nat) : PA ⊢
     · papply hr
     · papply hr
 
-fol_theorem remainderPrefix_total (p : Nat) : PA ⊢
-    ∀ c l n, (∀ i, i < l → ∃ r, ${p}[i, r] ∧ r < betaModulus(c, i)) → (∀ i j, i < j → j <
+fol_theorem remainderPrefix_total (p : formula of 2) : PA ⊢
+    ∀ c l n, (∀ i, i < l → ∃ r, p(i, r) ∧ r < betaModulus(c, i)) → (∀ i j, i < j → j <
     l → bezout(betaModulus(c, i), betaModulus(c, j))) → n
-    ≤ l → ∃ b, remainderPrefix (p := ${p})(c, n, b) := by
+    ≤ l → ∃ b, (remainderPrefix p)(c, n, b) := by
   pintro c l n hchoices hpairs hn
-  papply PA.bounded_induction
-    (p := fun k => ∃ b, remainderPrefix (p := ${p})(c, k, b))[l, n]
-  · papply PA.remainderPrefix_zero (p := fun i r => ${p}[i, r])[c]
+  papply (PA.bounded_induction (fun k => ∃ b, (remainderPrefix p)(c, k, b)))[l, n]
+  · papply (PA.remainderPrefix_zero (fun i r => p(i, r)))[c]
   · pintro k hkl ih
-    papply PA.remainderPrefix_succ (p := fun i r => ${p}[i, r])[c, l, k]
+    papply (PA.remainderPrefix_succ (fun i r => p(i, r)))[c, l, k]
     · passumption
     · passumption
     · papply hchoices[k]
@@ -276,12 +274,12 @@ fol_theorem remainderPrefix_total (p : Nat) : PA ⊢
   · passumption
 
 /-- PA realizes a finite family of admissible residues by one number. -/
-fol_theorem chinese_remainder (p : Nat) : PA ⊢
-    ∀ c l, (∀ i, i < l → ∃ r, ${p}[i, r] ∧ r < betaModulus(c, i)) → (∀ i j, i < j → j < l
+fol_theorem chinese_remainder (p : formula of 2) : PA ⊢
+    ∀ c l, (∀ i, i < l → ∃ r, p(i, r) ∧ r < betaModulus(c, i)) → (∀ i j, i < j → j < l
     → bezout(betaModulus(c, i), betaModulus(c, j))) → ∃ b,
-    remainderPrefix (p := ${p})(c, l, b) := by
+    (remainderPrefix p)(c, l, b) := by
   pintro c l hchoices hpairs
-  papply PA.remainderPrefix_total (p := fun i r => ${p}[i, r])[c, l, l]
+  papply (PA.remainderPrefix_total (fun i r => p(i, r)))[c, l, l]
   · passumption
   · passumption
   · pexact le_refl[l]

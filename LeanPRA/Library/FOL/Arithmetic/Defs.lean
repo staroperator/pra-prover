@@ -88,29 +88,11 @@ fol_language Arithmetic where
 
 namespace Arithmetic
 
-/-- `le x y` is the less-equal formula `x ≤ y`, defined as `∃ z, z + x = y`. -/
-fol_def le over Arithmetic (x y : term) : formula := ∃ z, z + x = y
+/-- `le(x, y)` is the less-equal formula `x ≤ y`, defined as `∃ z, z + x = y`. -/
+fol_def le over Arithmetic : formula of 2 := fun x y => ∃ z, z + x = y
 
-/-- `lt x y` is the less-than formula `x < y`, defined as `le(S x, y)`. -/
-fol_def lt over Arithmetic (x y : term) : formula := le(S x, y)
-
-theorem constants_language : FOL.Language.constants language = 1 := by
-  rw [language, FOL.Language.constants_make]
-
-theorem functionCount_language : FOL.Language.functionCount language = 3 := by
-  rw [language, FOL.Language.functionCount_make,
-    Sequence.length_cons, Sequence.length_cons, Sequence.length_cons, Sequence.length_nil]
-
-theorem succ_arity : FOL.Language.functionArity language 0 = 1 := by
-  rw [language, FOL.Language.functionArity_make, Sequence.get_cons_zero]
-
-theorem add_arity : FOL.Language.functionArity language 1 = 2 := by
-  rw [language, FOL.Language.functionArity_make,
-    Sequence.get_cons_succ, Sequence.get_cons_zero]
-
-theorem mul_arity : FOL.Language.functionArity language 2 = 2 := by
-  rw [language, FOL.Language.functionArity_make,
-    Sequence.get_cons_succ, Sequence.get_cons_succ, Sequence.get_cons_zero]
+/-- `lt(x, y)` is the less-than formula `x < y`, defined as `le(S x, y)`. -/
+fol_def lt over Arithmetic : formula of 2 := fun x y => le(S x, y)
 
 end Arithmetic
 
@@ -125,7 +107,7 @@ fol_theory Q over Arithmetic where
 
 fol_theory PA over Arithmetic extends Q where
   axiom induction (p : formula of 1) :=
-    p 0 → (∀ x, p x → p (S x)) → ∀ x, p x
+    p(0) → (∀ x, p(x) → p(S x)) → ∀ x, p(x)
 
 namespace Q
 

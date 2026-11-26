@@ -31,9 +31,9 @@ pra
 
 namespace Arithmetic
 
-/-- `eqNumDisj n t` is the finite disjunction `⊥ ∨ t = num 0 ∨ … ∨ t = num (n - 1)` for a
+/-- `(eqNumDisj n)(t)` is the finite disjunction `⊥ ∨ t = num 0 ∨ … ∨ t = num (n - 1)` for a
 numerical bound `n` and an arithmetic term `t`. -/
-fol_def eqNumDisj over Arithmetic (n : Nat) (t : term) : formula :=
+fol_def eqNumDisj over Arithmetic (n : Nat) : formula of 1 := fun t =>
   ${primrec FOL.Formula.falsum
     (fun i A => FOL.Formula.disj A (FOL.Formula.equal language t (num i))) n}
 
@@ -109,30 +109,12 @@ namespace Q
 
 open Arithmetic
 
-fol_theorem _root_.FOL.Q.succ_ne_zero : Q ⊢ ∀ x, S x ≠ 0 := by
-  pexact succ_ne_zero
-
 fol_theorem _root_.FOL.Q.succ_inj : Q ⊢ ∀ x y, S x = S y → x = y := by
   pexact succ_injective
-
-fol_theorem add_zero : Q ⊢ ∀ x, x + 0 = x := by
-  pexact add_zero
-
-fol_theorem add_succ : Q ⊢ ∀ x y, x + S y = S (x + y) := by
-  pexact add_succ
 
 fol_theorem add_one : Q ⊢ ∀ x, x + 1 = S x := by
   pintro x
   prw [add_succ, add_zero]
-
-fol_theorem mul_zero : Q ⊢ ∀ x, x * 0 = 0 := by
-  pexact mul_zero
-
-fol_theorem mul_succ : Q ⊢ ∀ x y, x * S y = x * y + x := by
-  pexact mul_succ
-
-fol_theorem zero_or_succ : Q ⊢ ∀ x, x = 0 ∨ (∃ y, x = S y) := by
-  pexact zero_or_succ
 
 fol_theorem succ_inj_iff : Q ⊢ ∀ x y, S x = S y ↔ x = y := by
   pintro x y
@@ -272,9 +254,9 @@ fol_theorem mul_num (a b : Nat) : Q ⊢ ${num a} * ${num b} = ${num (a * b)} := 
     rw [num_succ, _root_.mul_succ]
     ptrans ${num (a * k)} + ${num a}
     · prw [Q.mul_succ, ih]
-    · pexact (Q.add_num (a * k) a)
+    · pexact Q.add_num (a * k) a
 
-fol_theorem add_assoc_num (n : Nat) : Q ⊢ ∀ x y, (x + y) + ${num n} = x + (y + ${num n}) := by
+fol_theorem add_assoc_num (n : Nat) : Q ⊢ ∀ x y, (x + y) + ${num n} = x + (y + (num n)) := by
   sigma_induction n with
   | zero =>
     rw [num_zero]
@@ -298,7 +280,7 @@ fol_theorem add_num_cancel (n : Nat) : Q ⊢ ∀ x y, x + ${num n} = y + ${num n
     papply Q.succ_inj[x + ${num k}, y + ${num k}]
     prw [Q.add_succ, h]
 
-fol_theorem succ_add_num (n : Nat) : Q ⊢ ∀ x, S x + ${num n} = S (x + ${num n}) := by
+fol_theorem succ_add_num (n : Nat) : Q ⊢ ∀ x, S x + ${num n} = S (x + (num n)) := by
   sigma_induction n with
   | zero =>
     rw [num_zero]
@@ -345,7 +327,7 @@ fol_theorem add_lt_add_num_iff (n : Nat) : Q ⊢ ∀ x y, x + ${num n} < y + ${n
   · pintro h
     pcases h with ⟨a, ha⟩
     pexists a
-    ptrans a + (S x + ${num n})
+    ptrans a + (S x + (num n))
     · prw [Q.succ_add_num n]
     · ptrans (a + S x) + ${num n}
       · psymm
@@ -365,7 +347,7 @@ fol_theorem not_le_num_succ_add (b d : Nat) : Q ⊢ ¬ ${num (S d + b)} ≤ ${nu
     · papply Q.add_eq_zero_iff[a, ${num (S d)}]
       passumption
     · pcases hp with ⟨ha0, hn0⟩
-      papply (Q.num_succ_ne_zero d)
+      papply Q.num_succ_ne_zero d
       passumption
 
 /-- A numerical inequality `a ≤ b` yields a `Q` proof of `num a ≤ num b`. -/
@@ -388,7 +370,7 @@ theorem not_le_num (a b : Nat) : b < a → (Q ⊢ ¬ ${num a} ≤ ${num b}) := b
     rw [_root_.succ_add, ← _root_.add_succ]
     exact _root_.sub_add_cancel_of_le a (S b) h
   rw [← he]
-  pexact (Q.not_le_num_succ_add b (a - S b))
+  pexact Q.not_le_num_succ_add b (a - S b)
 
 theorem not_lt_num (a b : Nat) : b ≤ a → (Q ⊢ ¬ ${num a} < ${num b}) := by
   intro h
@@ -403,7 +385,7 @@ theorem num_ne_of_lt (a b : Nat) : a < b → (Q ⊢ ${num a} ≠ ${num b}) := by
   papply hn
   pexists 0
   ptrans ${num b}
-  · pexact (zero_add_num b)
+  · pexact zero_add_num b
   · psymm
     passumption
 
@@ -414,7 +396,7 @@ theorem num_ne_of_gt (a b : Nat) : b < a → (Q ⊢ ${num a} ≠ ${num b}) := by
   papply hn
   pexists 0
   ptrans ${num a}
-  · pexact (zero_add_num a)
+  · pexact zero_add_num a
   · passumption
 
 extract_witness num_ne_of_lt num_ne_of_gt
@@ -498,7 +480,7 @@ fol_theorem eqNumDisj_succ_iff (n : Nat) : Q ⊢ free x |
       · pright
         prw [he]
 
-/-- In `Q`, `x < num n` is equivalent to the finite disjunction `eqNumDisj n x` of equations with
+/-- In `Q`, `x < num n` is equivalent to the finite disjunction `(eqNumDisj n)(x)` of equations with
 numerals below `n`. -/
 fol_theorem lt_num_iff (n : Nat) : Q ⊢ free x | x < ${num n} ↔ ${eqNumDisj n x} := by
   sigma_induction n with
@@ -520,7 +502,7 @@ fol_theorem lt_num_iff (n : Nat) : Q ⊢ free x | x < ${num n} ↔ ${eqNumDisj n
       · papply congruence[0, x]
         · psymm
           passumption
-        · pexact (Q.eqNumDisj_succ_zero k)
+        · pexact Q.eqNumDisj_succ_zero k
       · pcases hex with ⟨y, hy⟩
         papply congruence[S y, x]
         · psymm
@@ -740,7 +722,7 @@ fol_theorem allEqNumDisj_iff (n p : Nat) : Q ⊢
       · papply backward[x]
         · passumption
         · passumption
-      · papply (Equality.replace language Q.isAxiom x (num k) p)
+      · papply Equality.replace language Q.isAxiom x (num k) p
         · passumption
         · passumption
 
@@ -770,7 +752,7 @@ fol_theorem anyEqNumDisj_iff (n p : Nat) : Q ⊢
         · passumption
         · passumption
       · pright
-        papply (Equality.replace language Q.isAxiom x (num k) p)
+        papply Equality.replace language Q.isAxiom x (num k) p
         · passumption
         · passumption
     · pintro h
@@ -795,7 +777,7 @@ fol_theorem anyEqNumDisj_iff (n p : Nat) : Q ⊢
 fol_theorem boundedAll_iff_finiteConj (n p : Nat) : Q ⊢
     ${boundedAll n p} ↔ ${finiteConj n p} := by
   have cases := FOL.Provable.gen language Q.isAxiom _ (Q.lt_num_iff n)
-  pcases (allEqNumDisj_iff n p) with ⟨forward, backward⟩
+  pcases allEqNumDisj_iff n p with ⟨forward, backward⟩
   pconstructor
   · pintro h
     papply forward
@@ -813,7 +795,7 @@ fol_theorem boundedAll_iff_finiteConj (n p : Nat) : Q ⊢
 fol_theorem boundedAny_iff_finiteDisj (n p : Nat) : Q ⊢
     ${boundedAny n p} ↔ ${finiteDisj n p} := by
   have cases := FOL.Provable.gen language Q.isAxiom _ (Q.lt_num_iff n)
-  pcases (anyEqNumDisj_iff n p) with ⟨forward, backward⟩
+  pcases anyEqNumDisj_iff n p with ⟨forward, backward⟩
   pconstructor
   · pintro h
     papply forward

@@ -27,7 +27,7 @@ pra
 namespace Arithmetic
 
 /-- `beta(r, b, c, i)` states that `r` is the value of the beta code `(b, c)` at index `i`. -/
-fol_def beta over Arithmetic (r b c i : term) : formula :=
+fol_def beta over Arithmetic : formula of 4 := fun r b c i =>
   remainder(r, b, Arithmetic.betaModulus(c, i))
 
 end Arithmetic
@@ -150,20 +150,20 @@ fol_theorem bezout_betaModulus_mul_succ_of_lt : PA ⊢
 
 /-- Every finite family of inhabited definable sets has a beta code selecting one value
 from each set. Each set may have several witnesses. -/
-fol_theorem beta_comprehension (p : Nat) : PA ⊢
-    ∀ l, (∀ i, i < l → ∃ r, ${p}[i, r]) → ∃ b c, ∀ i, i < l → ∃ r, ${p}[i, r] ∧
+fol_theorem beta_comprehension (p : formula of 2) : PA ⊢
+    ∀ l, (∀ i, i < l → ∃ r, p(i, r)) → ∃ b c, ∀ i, i < l → ∃ r, p(i, r) ∧
     Arithmetic.beta(r, b, c, i) := by
   pintro l h
-  phave hbound : ∃ bound, boundedWitnesses (p := ${p})(l, bound)
-  · papply finite_witness_bound (p := fun i r => ${p}[i, r])[l]
+  phave hbound : ∃ bound, (boundedWitnesses p)(l, bound)
+  · papply (finite_witness_bound (fun i r => p(i, r)))[l]
     passumption
   · pcases hbound with ⟨bound, hwitnesses⟩
     pcases finite_common_multiple[l] with ⟨a, ha⟩
     pcases ha with ⟨hapos, hdiv⟩
-    phave hcode : ∃ b, remainderPrefix (p := ${p})(a * S bound, l, b)
-    · papply chinese_remainder (p := fun i r => ${p}[i, r])[a * S bound, l]
+    phave hcode : ∃ b, (remainderPrefix p)(a * S bound, l, b)
+    · papply (chinese_remainder (fun i r => p(i, r)))[a * S bound, l]
       · pintro i hi
-        phave hex : ∃ r, ${p}[i, r] ∧ r ≤ bound
+        phave hex : ∃ r, p(i, r) ∧ r ≤ bound
         · papply hwitnesses[i]
           passumption
         · pcases hex with ⟨r, hr⟩
@@ -187,7 +187,7 @@ end PA
 namespace Arithmetic
 
 /-- `betaBounded(r, b, c, i)` is the beta relation with its quotient bounded by `b`. -/
-fol_def betaBounded over Arithmetic (r b c i : term) : formula :=
+fol_def betaBounded over Arithmetic : formula of 4 := fun r b c i =>
   r < Arithmetic.betaModulus(c, i) ∧ ∃ q, q ≤ b ∧ b = Arithmetic.betaModulus(c, i) * q + r
 
 end Arithmetic
@@ -204,8 +204,8 @@ fol_theorem beta_extend : PA ⊢
   phave extension : ∃ d e, ∀ i, i < S n → ∃ r,
       ((i < n ∧ Arithmetic.beta(r, b, c, i)) ∨ (i = n ∧ r = z)) ∧
         Arithmetic.beta(r, d, e, i)
-  · papply beta_comprehension
-      (p := fun i r => (i < n ∧ Arithmetic.beta(r, b, c, i)) ∨ (i = n ∧ r = z))[S n]
+  · papply (beta_comprehension
+      (fun i r => (i < n ∧ Arithmetic.beta(r, b, c, i)) ∨ (i = n ∧ r = z)))[S n]
     pintro i hi
     phave cases : i < n ∨ i = n
     · papply lt_succ_iff_lt_or_eq[i, n]
@@ -417,7 +417,7 @@ theorem betaBounded_num_iff_of_eq (b c i r : Nat) :
   · pintro hr
     prefl
   · pintro hr
-    pexact (betaBounded_num b c i)
+    pexact betaBounded_num b c i
 
 theorem betaBounded_num_iff_of_ne (b c i r : Nat) :
     r < S (S i * c) → ¬ r = _root_.beta b c i →
@@ -486,7 +486,7 @@ fol_theorem betaBounded_num_iff (b c i : Nat) : Q ⊢
       · passumption
   · pintro h
     psubst h
-    pexact (betaBounded_num b c i)
+    pexact betaBounded_num b c i
 
 end Q
 

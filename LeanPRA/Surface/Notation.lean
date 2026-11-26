@@ -104,6 +104,14 @@ partial def expandPraSyntax (stx : Syntax) : CommandElabM Syntax := withRef stx 
         rules.any (·.kind == alt.getKind) ||
           !(macroAttribute.getEntries env alt.getKind).isEmpty
       if alternatives.size == 1 then return ← expandPraSyntax alternatives[0]!
+      -- A choice among readings of an embedded language, none of which is a PRA expression,
+      -- is kept: that language selects its reading when it elaborates the syntax.
+      let praKinds := ((Parser.parserExtension.getState env).categories.find? `praExpr).map
+        (·.kinds)
+      if stx.getArgs.all (fun alt => !(praKinds.any (·.contains alt.getKind))) then
+        match stx with
+        | .node info kind args => return .node info kind (← args.mapM expandPraSyntax)
+        | _ => return stx
       throwErrorAt stx "ambiguous PRA syntax; use distinct notation tokens or priorities"
     if let some rule := (praNotations.getState (← getEnv)).find? (·.kind == stx.getKind) then
       let args := notationArguments rule stx

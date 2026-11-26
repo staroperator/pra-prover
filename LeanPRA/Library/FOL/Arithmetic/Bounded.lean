@@ -9,7 +9,7 @@ public import LeanPRA.Library.FOL.DSL.Tactic
 This module proves bounded induction, finite witness bounding, and the existence of a positive
 common multiple on initial intervals in `PA`:
 
-- `FOL.Arithmetic.boundedWitnesses p l b` states that every `i < l` has a witness `r ≤ b`
+- `(FOL.Arithmetic.boundedWitnesses p)(l, b)` states that every `i < l` has a witness `r ≤ b`
   satisfying `p(i, r)`.
 - `FOL.PA.bounded_induction` propagates a unary formula code `p` up to `l` from `p[0]` and the step
   `∀ k, k < l → p[k] → p[S k]`.
@@ -29,9 +29,9 @@ pra
 
 namespace Arithmetic
 
-/-- `boundedWitnesses p l b` states that every index below `l` has a witness for `p` at most `b`,
-defined as `∀ i, i < l → ∃ r, p(i, r) ∧ r ≤ b`. -/
-fol_def boundedWitnesses over Arithmetic (p : formula of 2) (l b : term) : formula :=
+/-- `(boundedWitnesses p)(l, b)` states that every index below `l` has a witness for `p` at most
+`b`, defined as `∀ i, i < l → ∃ r, p(i, r) ∧ r ≤ b`. -/
+fol_def boundedWitnesses over Arithmetic (p : formula of 2) : formula of 2 := fun l b =>
   ∀ i, i < l → ∃ r, p(i, r) ∧ r ≤ b
 
 end Arithmetic
@@ -41,8 +41,8 @@ namespace PA
 open Arithmetic
 
 /-- Induction in `PA` up to a bound `l`, requiring the step hypothesis only for `k < l`. -/
-fol_theorem bounded_induction (p : Nat) : PA ⊢
-    ∀ l n, ${p}[0] → (∀ k, k < l → ${p}[k] → ${p}[S k]) → n ≤ l → ${p}[n] := by
+fol_theorem bounded_induction (p : formula of 1) : PA ⊢
+    ∀ l n, p(0) → (∀ k, k < l → p(k) → p(S k)) → n ≤ l → p(n) := by
   pintro l n
   pinduction n with
   | zero =>
@@ -62,8 +62,8 @@ fol_theorem bounded_induction (p : Nat) : PA ⊢
 
 /-- In `PA`, if every index `i < l` has a witness for `p`, then some `b` bounds a witness for each
 `i < l`. -/
-fol_theorem finite_witness_bound (p : Nat) : PA ⊢
-    ∀ l, (∀ i, i < l → ∃ r, ${p}[i, r]) → ∃ b, boundedWitnesses (p := ${p})(l, b) := by
+fol_theorem finite_witness_bound (p : formula of 2) : PA ⊢
+    ∀ l, (∀ i, i < l → ∃ r, p(i, r)) → ∃ b, (boundedWitnesses p)(l, b) := by
   pintro l
   pinduction l with
   | zero =>
@@ -75,7 +75,7 @@ fol_theorem finite_witness_bound (p : Nat) : PA ⊢
     passumption
   | succ k ih =>
     pintro h
-    phave hb : ∃ b, boundedWitnesses (p := ${p})(k, b)
+    phave hb : ∃ b, (boundedWitnesses p)(k, b)
     · papply ih
       pintro i hi
       papply h[i]
@@ -83,7 +83,7 @@ fol_theorem finite_witness_bound (p : Nat) : PA ⊢
       · passumption
       · pexact le_succ_self[k]
     · pcases hb with ⟨b, hbound⟩
-      phave hr : ∃ r, ${p}[k, r]
+      phave hr : ∃ r, p(k, r)
       · papply h[k]
         pexact lt_succ_self[k]
       · pcases hr with ⟨r, hpr⟩
@@ -93,7 +93,7 @@ fol_theorem finite_witness_bound (p : Nat) : PA ⊢
         · papply lt_succ_iff_lt_or_eq[i, k]
           passumption
         · pcases cases with hik | he
-          · phave hw : ∃ w, ${p}[i, w] ∧ w ≤ b
+          · phave hw : ∃ w, p(i, w) ∧ w ≤ b
             · papply hbound[i]
               passumption
             · pcases hw with ⟨w, hwbody⟩

@@ -12,7 +12,7 @@ produce terms or formulas, and arity zero allows captured free variables. A `Nat
 supplies a family index or appears in a computation of an index.
 
 - `AxiomInfo` stores the template, its parameters and its optional numerical guard.
-- `FormulaActual` stores a numerical argument or a term or formula with named slots.
+- `Actual` is an argument of a schema: a number, or a term or formula with named slots.
 - `instantiateSchema` substitutes arguments into a template without capturing variables.
 - `compileAxiom` emits numerical instance and membership functions and checked introduction lemmas.
 
@@ -55,37 +55,51 @@ has a declaration of its own. -/
 def AxiomInfo.formulaName (info : AxiomInfo) (theory : Name) : Name :=
   info.sentenceName?.getD (theory ++ info.name ++ `formula)
 
-structure FormulaActual where
-  body : FormulaView
-  binders : List Name
-  termBody : Option TermView := none
-  number : Option Term := none
+/-- An argument supplied for a schema parameter. The binders of a term or formula name its
+explicit slots, outermost first. -/
+inductive Actual where
+  | number (value : Term)
+  | term (body : TermView) (binders : List Name)
+  | formula (body : FormulaView) (binders : List Name)
   deriving BEq, Hashable, Repr, Inhabited
 
-def FormulaActual.encode (actual : FormulaActual) (L : Term) (bound free : List Name) :
-    CommandElabM Term :=
-  match actual.number, actual.termBody with
-  | some n, _ => pure n
-  | none, some t => t.encode L (actual.binders.reverse ++ bound) free
-  | none, none => actual.body.encode L (actual.binders.reverse ++ bound) free
+def Actual.binders : Actual → List Name
+  | .number _ => []
+  | .term _ binders | .formula _ binders => binders
 
-private partial def instantiateTerm (actuals : Array FormulaActual) (numbers : List Term) :
+def Actual.encode (actual : Actual) (L : Term) (bound free : List Name) : CommandElabM Term :=
+  match actual with
+  | .number n => pure n
+  | .term t binders => t.encode L (binders.reverse ++ bound) free
+  | .formula a binders => a.encode L (binders.reverse ++ bound) free
+
+/-- Whether an actual fits a parameter of the given kind. -/
+def Actual.fits (actual : Actual) (kind : SyntaxKind) : Bool :=
+  match actual, kind with
+  | .number _, .nat => true
+  | .term _ binders, .term n => binders.length == n
+  | .formula _ binders, .formula n => binders.length == n
+  | _, _ => false
+
+private partial def instantiateTerm (actuals : Array Actual) (numbers : List Term) :
     TermView → TermView
   | .parameter i args =>
-    let actual := actuals[i]!
     let values := args.map (instantiateTerm actuals numbers)
-    (actual.termBody.getD (.constant 0)).substitute (actual.binders.zip values)
+    match actuals[i]! with
+    | .term t binders => t.substitute (binders.zip values)
+    | _ => .constant 0
   | .app i args => .app i (args.map (instantiateTerm actuals numbers))
   | .indexedConst i k => .indexedConst i (k.instantiate numbers)
   | .indexedApp i k args =>
     .indexedApp i (k.instantiate numbers) (args.map (instantiateTerm actuals numbers))
   | t => t
 
-private def instantiateFormula (actuals : Array FormulaActual) (numbers : List Term) :
+private def instantiateFormula (actuals : Array Actual) (numbers : List Term) :
     FormulaView → FormulaView
   | .parameter i args =>
-    let actual := actuals[i]!
-    actual.body.substitute (actual.binders.zip (args.map (instantiateTerm actuals numbers)))
+    match actuals[i]! with
+    | .formula a binders => a.substitute (binders.zip (args.map (instantiateTerm actuals numbers)))
+    | _ => .falsum
   | .equal t u => .equal (instantiateTerm actuals numbers t) (instantiateTerm actuals numbers u)
   | .relation i args => .relation i (args.map (instantiateTerm actuals numbers))
   | .indexedRelation i k args =>
@@ -94,8 +108,10 @@ private def instantiateFormula (actuals : Array FormulaActual) (numbers : List T
   | .all x a => .all x (instantiateFormula actuals numbers a)
   | a => a
 
-def instantiateSchema (actuals : Array FormulaActual) (template : FormulaView) : FormulaView :=
-  instantiateFormula actuals (actuals.toList.map fun a => a.number.getD .zero) template
+def instantiateSchema (actuals : Array Actual) (template : FormulaView) : FormulaView :=
+  instantiateFormula actuals (actuals.toList.map fun
+    | .number n => n
+    | _ => .zero) template
 
 private def canonicalArguments (bound : List Name) (args : List TermView) : Bool :=
   args == bound.reverse.map TermView.var
@@ -121,7 +137,8 @@ private partial def encodeTemplateTerm (L : Term) (actuals : Array Term) (bound 
         k.instantiate actuals.toList]]
   | t => t.encode L bound []
 
-private def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name) :
+/-- Encode a template whose parameters take the codes `actuals`. -/
+def encodeTemplate (L : Term) (actuals : Array Term) (bound : List Name) :
     FormulaView → CommandElabM Term
   | .parameter i args => do
     let actual := actuals[i]!
@@ -256,57 +273,6 @@ private def RecoveryContext.isCanonical (ctx : RecoveryContext) (i : Nat) (args 
     Bool :=
   i == ctx.parameter && canonicalArguments ctx.bound args
 
-private inductive FamilyKind where
-  | constant
-  | function
-  | relation
-
-private partial def sequenceLength (xs : Term) : CommandElabM (Nat × Proof) := do
-  match getAppFnArgs xs with
-  | (.definition `Sequence.nil [], []) => return (0, applyTheorem `Sequence.length_nil)
-  | (.definition `Sequence.cons [], [x, tail]) =>
-    let (n, proof) ← sequenceLength tail
-    let length := applyDefinition `Sequence.length [xs]
-    let tailLength := applyDefinition `Sequence.length [tail]
-    return (n + 1, mkEqTrans length (.app .succ tailLength) (numeral (n + 1))
-      (applyTheorem `Sequence.length_cons [x, tail])
-      (mkEqCongr .succ tailLength (numeral n) proof))
-  | _ => throwError "expected the declared language's symbol sequence"
-
-private def proveSymbolBound (language : LanguageInfo) (index : Nat) (countName lemma : Name)
-    (field : Nat) (sequenceName : Option Name := none) : CommandElabM Proof := do
-  -- The signature and sequence equations give the count before computing the signature code.
-  let core := LeanPRA.Surface.CoreEnvironment.getState (← getEnv)
-  let some (.function decl) := core.lookup (language.name ++ `language) |
-    throwError "expected a declared language"
-  let (.definition `FOL.Language.make [], fields) := getAppFnArgs decl.body |
-    throwError "expected the declared language's signature"
-  let L := languageTerm language
-  let count := applyDefinition countName [L]
-  let entry := fields[field]!
-  let equation := applyTheorem lemma fields
-  let (n, countEq) ← if let some sequenceName := sequenceName then do
-    let (n, entryLength) ← sequenceLength entry
-    let length := applyDefinition `Sequence.length
-    let projection := applyDefinition sequenceName [L]
-    pure (n, mkEqTrans count (.app length entry) (numeral n)
-      (mkEqCongr length projection entry equation) entryLength)
-  else
-    pure ((numeralValue? entry).getD 0, equation)
-  let motive := Predicate.lam `n (.app (.app (.definition `LT [] []) (numeral index)) (.bvar 0))
-  let transport := Proof.forallElim (Proof.forallElim (.eqSubst motive) (numeral n)) count
-  return .impElim (.impElim transport (mkEqSymm count (numeral n) countEq))
-    (.forallElim .eqRefl .zero)
-
-private def familyBound (L : LanguageInfo) (kind : FamilyKind) (i : Nat) : CommandElabM Proof :=
-  match kind with
-  | .constant => proveSymbolBound L i `FOL.Language.constantFamilyCount
-      `FOL.Language.constantFamilyCount_make 3
-  | .function => proveSymbolBound L i `FOL.Language.functionFamilyCount
-      `FOL.Language.functionFamilies_make 4 (some `FOL.Language.functionFamilies)
-  | .relation => proveSymbolBound L i `FOL.Language.relationFamilyCount
-      `FOL.Language.relationFamilies_make 5 (some `FOL.Language.relationFamilies)
-
 private def familyMemberStep (prefixCount familyCount symbol family member : Term) (bound : Proof) :
     RecoveryStep := Id.run do
   let quotient := Term.lam `j (applyDefinition `div
@@ -323,6 +289,11 @@ private def familyMemberStep (prefixCount familyCount symbol family member : Ter
       subtract payload subtractPrefix)
     (applyTheorem `div_mul_add_of_lt [familyCount, member, family] [] [nonzero, bound])
   return ⟨quotient, member, proof⟩
+
+private inductive FamilyKind where
+  | constant
+  | function
+  | relation
 
 private def RecoveryContext.member (ctx : RecoveryContext) (kind : FamilyKind) (i : Nat)
     (packed : Term) (args : List TermView := []) :
@@ -355,7 +326,8 @@ private def RecoveryContext.member (ctx : RecoveryContext) (kind : FamilyKind) (
   let prefixCount := applyDefinition prefixCount [L]
   let familyCount := applyDefinition familyCount [L]
   let arguments := tupleCode (← args.mapM ctx.term)
-  let bound ← familyBound language kind i
+  let some info := families[i]? | throwError "invalid family number"
+  let bound := applyTheorem (language.symbolTheorem "" info.name "_lt")
   let step := match kind with
     | .constant =>
       ⟨applyDefinition `FOL.Term.constantIndex [L], j,
@@ -393,16 +365,16 @@ private partial def RecoveryContext.inTerm (ctx : RecoveryContext) (t : TermView
   | .indexedConst i k => ctx.member .constant i k
   | .app i args =>
     ctx.inSymbolArguments false args (numeral i) do
-      let bound ← proveSymbolBound ctx.language i `FOL.Language.functionCount
-        `FOL.Language.functions_make 1 (some `FOL.Language.functions)
-      return applyTheorem `FOL.Language.isFunction_of_lt [L, numeral i] [] [bound]
+      let some (name, _) := ctx.language.functions[i]? | throwError "invalid function number"
+      return applyTheorem (ctx.language.symbolTheorem "isFunction_" name)
   | .indexedApp i k args =>
     if let some steps ← ctx.member .function i k args then return some steps
     let member := k.instantiate ctx.actuals.toList
     let symbol := applyDefinition `FOL.Language.functionFamilyMember [L, numeral i, member]
     ctx.inSymbolArguments false args symbol do
-      let bound ← familyBound ctx.language .function i
-      return applyTheorem `FOL.Language.isFunction_familyMember [L, numeral i, member] [] [bound]
+      let some family := ctx.language.functionFamilies[i]? | throwError "invalid family number"
+      return .forallElim
+        (applyTheorem (ctx.language.symbolTheorem "isFunction_" family.name)) member
   | _ => return none
 
 private partial def RecoveryContext.inArguments (ctx : RecoveryContext) (args : List TermView) :
@@ -456,16 +428,16 @@ private partial def RecoveryContext.inFormula (ctx : RecoveryContext) (a : Formu
     return some (step :: path)
   | .relation i args =>
     ctx.inSymbolArguments true args (numeral i) do
-      let bound ← proveSymbolBound ctx.language i `FOL.Language.relationCount
-        `FOL.Language.relations_make 2 (some `FOL.Language.relations)
-      return applyTheorem `FOL.Language.isRelation_of_lt [L, numeral i] [] [bound]
+      let some (name, _) := ctx.language.relations[i]? | throwError "invalid relation number"
+      return applyTheorem (ctx.language.symbolTheorem "isRelation_" name)
   | .indexedRelation i k args =>
     if let some steps ← ctx.member .relation i k args then return some steps
     let member := k.instantiate ctx.actuals.toList
     let symbol := applyDefinition `FOL.Language.relationFamilyMember [L, numeral i, member]
     ctx.inSymbolArguments true args symbol do
-      let bound ← familyBound ctx.language .relation i
-      return applyTheorem `FOL.Language.isRelation_familyMember [L, numeral i, member] [] [bound]
+      let some family := ctx.language.relationFamilies[i]? | throwError "invalid family number"
+      return .forallElim
+        (applyTheorem (ctx.language.symbolTheorem "isRelation_" family.name)) member
   | _ => return none
 
 private def recover (input : Term) (path : List RecoveryStep) : Term :=
@@ -490,7 +462,8 @@ private def quantifyProof (names : List Name) (type : Predicate) (proof : Proof)
     let motive := Predicate.lam name type
     (.all motive, .forallIntro name motive proof)) (type, proof)
 
-private def applyGuard (guard : Term) (actuals : List Term) : Term :=
+/-- Apply the restriction function of a schema to the codes of its parameters. -/
+def applyGuard (guard : Term) (actuals : List Term) : Term :=
   actuals.foldl applyProjection guard
 
 private def reconstruct (build : List Term → Term) (actuals recovered : Array Term)

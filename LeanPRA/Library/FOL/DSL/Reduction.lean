@@ -115,6 +115,15 @@ def isRegisteredClosedTerm (L value : Term) : CommandElabM Bool := do
     rule.symbol == symbol && rule.language == L && rule.parameters == parameters.length &&
       rule.arity == parameters.length + args.length
 
+/-- The equation `Term.subst f L value = value` proved by a registered closed-term rule, when
+one covers `value`. -/
+def closedTermProof? (L f value : Term) : CommandElabM (Option Proof) := do
+  let (.definition symbol parameters, args) := getAppFnArgs value | return none
+  let some rule := (closedTermRules.getState (← getEnv)).find? (fun rule =>
+    rule.symbol == symbol && rule.language == L && rule.parameters == parameters.length &&
+      rule.arity == parameters.length + args.length) | return none
+  return some (applyTheorem rule.theoremName (parameters ++ args) [f])
+
 initialize calculations : EnvExtension (Std.HashMap Term Calculation) ←
   registerEnvExtension (pure {})
 

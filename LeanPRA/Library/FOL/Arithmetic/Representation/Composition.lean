@@ -23,15 +23,15 @@ pra
 
 namespace Arithmetic
 
-/-- `compGraph (p := p) (q := q)(y, x)` is the relational composition in which `q` computes an
+/-- `(compGraph p q)(y, x)` is the relational composition in which `q` computes an
 intermediate value from `x` and `p` computes `y` from that value. -/
-fol_def compGraph over Arithmetic (p : formula of 2) (q : formula of 2) (y x : term) : formula :=
+fol_def compGraph over Arithmetic (p q : formula of 2) : formula of 2 := fun y x =>
   ∃ u, q(x, u) ∧ p(u, y)
 
-/-- `pairCompGraph (p := p) (q := q)(y, x)` applies `p` and `q` to `x` and pairs their outputs in
+/-- `(pairCompGraph p q)(y, x)` applies `p` and `q` to `x` and pairs their outputs in
 `y`. -/
-fol_def pairCompGraph over Arithmetic (p : formula of 2) (q : formula of 2)
-    (y x : term) : formula :=
+fol_def pairCompGraph over Arithmetic (p q : formula of 2) : formula of 2 :=
+  fun y x =>
   ∃ u v, p(x, u) ∧ q(x, v) ∧ pairGraph(y, u, v)
 
 end Arithmetic
@@ -41,9 +41,9 @@ namespace Q
 open Arithmetic
 
 /-- Numeralwise output equivalences compose directly in Q. -/
-fol_theorem compGraph_num_iff (p q a b c : Nat) : Q ⊢
-    (∀ u, ${q}[${num a}, u] ↔ u = ${num b}) → (∀ y, ${p}[${num b}, y] ↔ y = ${num c}) → ∀ y,
-    compGraph (p := ${p}) (q := ${q})(y, ${num a}) ↔ y = ${num c} := by
+fol_theorem compGraph_num_iff (p q : formula of 2) (a b c : Nat) : Q ⊢
+    (∀ u, q(${num a}, u) ↔ u = ${num b}) → (∀ y, p(${num b}, y) ↔ y = ${num c}) → ∀ y,
+    (compGraph p q)(y, ${num a}) ↔ y = ${num c} := by
   pintro hq hp y
   pconstructor
   · pintro h
@@ -52,7 +52,7 @@ fol_theorem compGraph_num_iff (p q a b c : Nat) : Q ⊢
     phave eu : u = ${num b}
     · papply hq[u]
       passumption
-    · phave huResult : ∀ z, ${p}[u, z] ↔ z = ${num c}
+    · phave huResult : ∀ z, p(u, z) ↔ z = ${num c}
       · psubst eu
         passumption
       · papply huResult[y]
@@ -70,9 +70,9 @@ fol_theorem compGraph_num_iff (p q a b c : Nat) : Q ⊢
         papply hp[y]
         passumption
 
-fol_theorem eq_num_of_pairCompGraph (p q a b c : Nat) : Q ⊢
-    (∀ u, ${p}[${num a}, u] ↔ u = ${num b}) → (∀ v, ${q}[${num a}, v] ↔ v = ${num c}) → ∀ y,
-    pairCompGraph (p := ${p}) (q := ${q})(y, ${num a}) → y = ${num (pair b c)} := by
+fol_theorem eq_num_of_pairCompGraph (p q : formula of 2) (a b c : Nat) : Q ⊢
+    (∀ u, p(${num a}, u) ↔ u = ${num b}) → (∀ v, q(${num a}, v) ↔ v = ${num c}) → ∀ y,
+    (pairCompGraph p q)(y, ${num a}) → y = ${num (pair b c)} := by
   have pairing := pairGraph_num_iff b c
   pintro hp hq y
   pintro h
@@ -95,9 +95,9 @@ fol_theorem eq_num_of_pairCompGraph (p q a b c : Nat) : Q ⊢
       · papply move
         passumption
 
-fol_theorem pairCompGraph_of_eq_num (p q a b c : Nat) : Q ⊢
-    (∀ u, ${p}[${num a}, u] ↔ u = ${num b}) → (∀ v, ${q}[${num a}, v] ↔ v = ${num c}) → ∀ y, y =
-    ${num (pair b c)} → pairCompGraph (p := ${p}) (q := ${q})(y, ${num a}) := by
+fol_theorem pairCompGraph_of_eq_num (p q : formula of 2) (a b c : Nat) : Q ⊢
+    (∀ u, p(${num a}, u) ↔ u = ${num b}) → (∀ v, q(${num a}, v) ↔ v = ${num c}) → ∀ y, y =
+    ${num (pair b c)} → (pairCompGraph p q)(y, ${num a}) := by
   have pairing := pairGraph_num_iff b c
   pintro hp hq y
   pintro hy
@@ -123,17 +123,17 @@ fol_theorem pairCompGraph_of_eq_num (p q a b c : Nat) : Q ⊢
         papply pairing[y]
         passumption
 
-fol_theorem pairCompGraph_num_iff (p q a b c : Nat) : Q ⊢
-    (∀ u, ${p}[${num a}, u] ↔ u = ${num b}) → (∀ v, ${q}[${num a}, v] ↔ v = ${num c}) → ∀ y,
-    pairCompGraph (p := ${p}) (q := ${q})(y, ${num a}) ↔ y = ${num (pair b c)} := by
+fol_theorem pairCompGraph_num_iff (p q : formula of 2) (a b c : Nat) : Q ⊢
+    (∀ u, p(${num a}, u) ↔ u = ${num b}) → (∀ v, q(${num a}, v) ↔ v = ${num c}) → ∀ y,
+    (pairCompGraph p q)(y, ${num a}) ↔ y = ${num (pair b c)} := by
   have forward := eq_num_of_pairCompGraph p q a b c
   have backward := pairCompGraph_of_eq_num p q a b c
   pintro hp hq
-  phave hf : ∀ y, pairCompGraph (p := ${p}) (q := ${q})(y, ${num a}) → y = ${num (pair b c)}
+  phave hf : ∀ y, (pairCompGraph p q)(y, ${num a}) → y = ${num (pair b c)}
   · papply forward
     · passumption
     · passumption
-  · phave hb : ∀ y, y = ${num (pair b c)} → pairCompGraph (p := ${p}) (q := ${q})(y, ${num a})
+  · phave hb : ∀ y, y = ${num (pair b c)} → (pairCompGraph p q)(y, ${num a})
     · papply backward
       · passumption
       · passumption
@@ -151,9 +151,9 @@ theorem represents_compGraph (f g : Nat → Nat) (p q : Nat) :
     (FOL.shiftSubst language 2) language 2) language q) y x)) := by
   rw [unaryFormula]
   intro hp hq x
-  papply (compGraph_num_iff p q x (g x) (f (g x)))
-  · pexact (hq x)
-  · pexact (hp (g x))
+  papply compGraph_num_iff ${p} ${q} x (g x) (f (g x))
+  · pexact hq x
+  · pexact hp (g x)
 
 end Q
 
@@ -161,9 +161,8 @@ namespace PA
 
 open Arithmetic
 
-fol_theorem compGraph_total (p q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${p}[x, y]) → (∀ x, ∃ y, ${q}[x, y]) → ∀ x, ∃ y, compGraph (p := ${p})
-    (q := ${q})(y, x) := by
+fol_theorem compGraph_total (p q : formula of 2) : PA ⊢
+    (∀ x, ∃ y, p(x, y)) → (∀ x, ∃ y, q(x, y)) → ∀ x, ∃ y, (compGraph p q)(y, x) := by
   pintro hp hq x
   pcases hq[x] with ⟨u, hu⟩
   pcases hp[u] with ⟨y, hy⟩
@@ -173,9 +172,9 @@ fol_theorem compGraph_total (p q : Nat) : PA ⊢
   · passumption
   · passumption
 
-fol_theorem compGraph_unique (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) → (∀ x y z, ${q}[x, y] → ${q}[x, z] → y = z) → ∀ x y
-    z, compGraph (p := ${p}) (q := ${q})(y, x) → compGraph (p := ${p}) (q := ${q})(z, x) → y = z :=
+fol_theorem compGraph_unique (p q : formula of 2) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) → (∀ x y z, q(x, y) → q(x, z) → y = z) → ∀ x y
+    z, (compGraph p q)(y, x) → (compGraph p q)(z, x) → y = z :=
     by
   pintro hp hq x y z hy hz
   pcases hy with ⟨u, hu⟩
@@ -192,9 +191,9 @@ fol_theorem compGraph_unique (p q : Nat) : PA ⊢
       passumption
 
 /-- Pairing the outputs of two total graphs gives a total graph. -/
-fol_theorem pairCompGraph_total (p q : Nat) : PA ⊢
-    (∀ x, ∃ y, ${p}[x, y]) → (∀ x, ∃ y, ${q}[x, y]) → ∀ x, ∃ y, pairCompGraph (p := ${p})
-    (q := ${q})(y, x) := by
+fol_theorem pairCompGraph_total (p q : formula of 2) : PA ⊢
+    (∀ x, ∃ y, p(x, y)) → (∀ x, ∃ y, q(x, y)) → ∀ x, ∃ y, (pairCompGraph p q)(y, x) :=
+    by
   pintro hp hq x
   pcases hp[x] with ⟨u, hu⟩
   pcases hq[x] with ⟨v, hv⟩
@@ -208,9 +207,9 @@ fol_theorem pairCompGraph_total (p q : Nat) : PA ⊢
     · passumption
     · passumption
 
-fol_theorem pairCompGraph_unique (p q : Nat) : PA ⊢
-    (∀ x y z, ${p}[x, y] → ${p}[x, z] → y = z) → (∀ x y z, ${q}[x, y] → ${q}[x, z] → y = z) → ∀ x y
-    z, pairCompGraph (p := ${p}) (q := ${q})(y, x) → pairCompGraph (p := ${p}) (q := ${q})(z, x) → y
+fol_theorem pairCompGraph_unique (p q : formula of 2) : PA ⊢
+    (∀ x y z, p(x, y) → p(x, z) → y = z) → (∀ x y z, q(x, y) → q(x, z) → y = z) → ∀ x y
+    z, (pairCompGraph p q)(y, x) → (pairCompGraph p q)(z, x) → y
     = z := by
   pintro hp hq x y z hy hz
   pcases hy with ⟨a, hy⟩

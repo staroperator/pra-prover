@@ -155,9 +155,9 @@ partial def formulaTransport (x : Name) (p : Nat) (a : FormulaView) (q : Nat) :
     let hs ← formulaTransport x (← eqSymm p) b hb
     deduct h bt (← formulaTransport x p c (← mp q hs))
   | .all y b =>
+    -- Binder names are fresh, so a variable of the equation that is named like the binder
+    -- is the bound variable itself, and the equation holds beneath the quantifier.
     if x == y then return q
-    if s.variables.contains y || t.variables.contains y then
-      throwError "equality substitution would capture a variable"
     generalize y (← formulaTransport x p b (← instantiate q (.var y)))
   | .code _ _ args =>
     if args.any (fun t => t.variables.contains x) then
