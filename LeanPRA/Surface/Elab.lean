@@ -1793,9 +1793,11 @@ private def completeGoalInfo : ObjectElabM Unit := do
   unless ← editorInfoEnabled do return
   let state ← get
   let failures := Metavariable.Frontend.conflicts state.unification
-  let conflict := failures.any (fun (_, p, error) => !p.heuristic && !error.isExhausted &&
-    match error with | .unsupported _ => false | _ => true) || state.tasks.any fun task =>
-      match task.status with | .failed _ => true | _ => false
+  -- Only a definite unification conflict marks the goals of the declaration. A failed proof
+  -- task, such as a tactic error or a `sorry` placeholder, is reported at its own location
+  -- and leaves the other goals open.
+  let conflict := failures.any fun (_, p, error) => !p.heuristic && !error.isExhausted &&
+    match error with | .unsupported _ => false | _ => true
   let constraintFailure := !failures.isEmpty
   for goal in state.goals do
     withReader (fun _ => goal.scope) do

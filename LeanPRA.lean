@@ -74,6 +74,7 @@ public import LeanPRA.Library.Nat.DivMod
 public import LeanPRA.Library.Nat.Pairing
 public import LeanPRA.Library.Nat.Sequence
 public import LeanPRA.Library.Nat.Tuple
+public import LeanPRA.Library.Tactic
 public import LeanPRA.Library.Tactic.Combinators
 public import LeanPRA.Library.Tactic.Construction
 public import LeanPRA.Library.Tactic.Induction
@@ -81,6 +82,7 @@ public import LeanPRA.Library.Tactic.Logic
 public import LeanPRA.Library.Tactic.Marker
 public import LeanPRA.Library.Tactic.Rewrite
 public import LeanPRA.Library.Tactic.SigmaInduction
+public import LeanPRA.Library.Tactic.Sorry
 public import LeanPRA.Library.Tactic.Witnessing
 public import LeanPRA.Metatheory.Core.Checker.Conversion
 public import LeanPRA.Metatheory.Core.Checker.Correctness
