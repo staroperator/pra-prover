@@ -112,7 +112,7 @@ fol_theorem finite_witness_bound (p : formula of 2) : PA ⊢
 /-- In `PA`, every bound `l` has a positive common multiple `a` divisible by all `i` with
 `0 < i ≤ l`. -/
 fol_theorem finite_common_multiple : PA ⊢
-    ∀ l, ∃ a, 0 < a ∧ ∀ i, 0 < i → i ≤ l → divides(i, a) := by
+    ∀ l, ∃ a, 0 < a ∧ ∀ i, 0 < i → i ≤ l → divides i a := by
   pintro l
   pinduction l with
   | zero =>
@@ -138,7 +138,7 @@ fol_theorem finite_common_multiple : PA ⊢
       · papply le_iff_lt_or_eq[i, S k]
         passumption
       · pcases cases with hik | he
-        · phave hd : divides(i, a)
+        · phave hd : divides i a
           · papply hall[i]
             · passumption
             · papply Q.lt_succ_iff_le[i, k]

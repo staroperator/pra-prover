@@ -36,6 +36,9 @@ syntax:70 folTerm:70 " * " folTerm:71 : folTerm
 syntax:50 folTerm " ≤ " folTerm : folFormula
 syntax:50 folTerm " < " folTerm : folFormula
 
+private def comparisonArg (t : TSyntax `folTerm) : TSyntax `folArg :=
+  ⟨mkNode ``formulaArg #[mkNode ``formulaTerm #[t.raw]]⟩
+
 macro_rules
   | `(folTerm| $n:num) => do
     let mut term ← `(folTerm| zero())
@@ -44,8 +47,10 @@ macro_rules
   | `(folTerm| S $t:folTerm) => `(folTerm| succ($t))
   | `(folTerm| $a:folTerm + $b:folTerm) => `(folTerm| add($a, $b))
   | `(folTerm| $a:folTerm * $b:folTerm) => `(folTerm| mul($a, $b))
-  | `(folFormula| $a:folTerm ≤ $b:folTerm) => `(folFormula| _root_.FOL.Arithmetic.le($a, $b))
-  | `(folFormula| $a:folTerm < $b:folTerm) => `(folFormula| _root_.FOL.Arithmetic.lt($a, $b))
+  | `(folFormula| $a:folTerm ≤ $b:folTerm) =>
+    `(folFormula| (_root_.FOL.Arithmetic.le $(comparisonArg a):folArg $(comparisonArg b):folArg))
+  | `(folFormula| $a:folTerm < $b:folTerm) =>
+    `(folFormula| (_root_.FOL.Arithmetic.lt $(comparisonArg a):folArg $(comparisonArg b):folArg))
 
 /-- Display numerals and arithmetic operations (`S`, `+`, and `*`) for symbols with the
 corresponding names and arities. -/
@@ -88,11 +93,11 @@ fol_language Arithmetic where
 
 namespace Arithmetic
 
-/-- `le(x, y)` is the less-equal formula `x ≤ y`, defined as `∃ z, z + x = y`. -/
-fol_def le over Arithmetic : formula of 2 := fun x y => ∃ z, z + x = y
+/-- `le x y` is the less-equal formula `x ≤ y`, defined as `∃ z, z + x = y`. -/
+fol_def le over Arithmetic : term → term → formula := fun x y => ∃ z, z + x = y
 
-/-- `lt(x, y)` is the less-than formula `x < y`, defined as `le(S x, y)`. -/
-fol_def lt over Arithmetic : formula of 2 := fun x y => le(S x, y)
+/-- `lt x y` is the less-than formula `x < y`, defined as `S x ≤ y`. -/
+fol_def lt over Arithmetic : term → term → formula := fun x y => S x ≤ y
 
 end Arithmetic
 

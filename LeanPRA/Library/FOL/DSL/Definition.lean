@@ -562,9 +562,10 @@ def elaborateDefinition : CommandElab := fun stx => do
     else pure declaration
   elaborateDeclaration declaration
   let ns ← getCurrNamespace
-  let template ← if positional.size == binderNames.size && resultArity == 0 then do
-      let names ← positional.mapM (fun n => liftCoreM (mkFreshUserName n))
-      let vars := positional.toList.zip names.toList
+  let template ← if resultArity == 0 && implicit.isEmpty &&
+      syntaxParameters.size == binderNames.size && syntaxParameters.all (·.kind == .term 0) then do
+      let names ← binderNames.mapM (fun n => liftCoreM (mkFreshUserName n))
+      let vars := binderNames.toList.zip names.toList
       try
         let body ← if formula then Sum.inr <$> parseFormula L vars ⟨body⟩
           else Sum.inl <$> parseTerm L vars ⟨body⟩

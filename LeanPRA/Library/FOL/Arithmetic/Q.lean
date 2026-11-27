@@ -31,9 +31,9 @@ pra
 
 namespace Arithmetic
 
-/-- `(eqNumDisj n)(t)` is the finite disjunction `⊥ ∨ t = num 0 ∨ … ∨ t = num (n - 1)` for a
+/-- `eqNumDisj n t` is the finite disjunction `⊥ ∨ t = num 0 ∨ … ∨ t = num (n - 1)` for a
 numerical bound `n` and an arithmetic term `t`. -/
-fol_def eqNumDisj over Arithmetic (n : Nat) : formula of 1 := fun t =>
+fol_def eqNumDisj over Arithmetic (n : Nat) : term → formula := fun t =>
   ${primrec FOL.Formula.falsum
     (fun i A => FOL.Formula.disj A (FOL.Formula.equal language t (num i))) n}
 
@@ -480,7 +480,7 @@ fol_theorem eqNumDisj_succ_iff (n : Nat) : Q ⊢ free x |
       · pright
         prw [he]
 
-/-- In `Q`, `x < num n` is equivalent to the finite disjunction `(eqNumDisj n)(x)` of equations with
+/-- In `Q`, `x < num n` is equivalent to the finite disjunction `eqNumDisj n x` of equations with
 numerals below `n`. -/
 fol_theorem lt_num_iff (n : Nat) : Q ⊢ free x | x < ${num n} ↔ ${eqNumDisj n x} := by
   sigma_induction n with

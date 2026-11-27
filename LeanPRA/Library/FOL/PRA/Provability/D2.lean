@@ -641,15 +641,15 @@ theorem praIsProof_on_num (p : Nat) :
 
 namespace EquationCompleteness
 
-fol_def equationProofOf over PRA (e : Nat) : formula of 3 := fun x y p =>
+fol_def equationProofOf over PRA (e : Nat) : term → term → term → formula := fun x y p =>
   (proofOf language isAxiom.code (evalEquationNum(${num e}, x, y)) p)
 
 fol_def provesEval over PRA (e q : Nat) : formula :=
-  ∀ x, (equationProofOf e)(x, eval[e](x), eval[q](x))
+  ∀ x, equationProofOf e x eval[e](x) eval[q](x)
 
 fol_theorem equationProofOf_of_eq (e : Nat) : PRA ⊢ ∀ x y p u v r,
     x = u → y = v → p = r →
-    (equationProofOf e)(u, v, r) → (equationProofOf e)(x, y, p) := by
+    equationProofOf e u v r → equationProofOf e x y p := by
   pintro x y p u v r hx hy hp h
   psubst hx
   psubst hy
@@ -671,20 +671,20 @@ fol_theorem pr_evalEquationNum_of_provesEval (e q : Nat) : PRA ⊢ (provesEval e
 fol_theorem provesEval_rec_of_rules (f g qf qg base step : Nat) : PRA ⊢
     (provesEval f qf) →
     (provesEval g qg) →
-    (∀ x, (equationProofOf f)(x, eval[f](x), eval[qf](x)) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, zero), eval[f](x), eval[base](x))) →
-    (∀ x n p, (equationProofOf (Primrec.Code.rec f g))(pair(x, n),
-        eval[Primrec.Code.rec f g](pair(x, n)), p) →
-      (equationProofOf g)(pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n)))),
-        eval[g](pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n))))),
+    (∀ x, equationProofOf f x eval[f](x) eval[qf](x) →
+      equationProofOf (Primrec.Code.rec f g) pair(x, zero) eval[f](x) eval[base](x)) →
+    (∀ x n p, (equationProofOf (Primrec.Code.rec f g) pair(x, n)
+        eval[Primrec.Code.rec f g](pair(x, n)) p) →
+      (equationProofOf g pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n))))
+        eval[g](pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n)))))
         eval[qg](pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n)))))) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)),
-        eval[g](pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n))))),
+      (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n))
+        eval[g](pair(x, pair(n, eval[Primrec.Code.rec f g](pair(x, n)))))
         eval[step](pair(x, pair(n, p))))) →
     (provesEval (Primrec.Code.rec f g) (Primrec.Code.rec base step)) := by
   pintro fProves gProves baseRule stepRule
-  phave atPair : ∀ x n, (equationProofOf (Primrec.Code.rec f g))(pair(x, n),
-      eval[Primrec.Code.rec f g](pair(x, n)), eval[Primrec.Code.rec base step](pair(x, n)))
+  phave atPair : ∀ x n, (equationProofOf (Primrec.Code.rec f g) pair(x, n)
+      eval[Primrec.Code.rec f g](pair(x, n)) eval[Primrec.Code.rec base step](pair(x, n)))
   · pintro x n
     pinduction n with
     | zero =>
@@ -1406,7 +1406,7 @@ theorem universal_concludes :
       (Formula.all.trace body) (Formula.all.computedBy body)
 
 fol_theorem instance_accepted : PRA ⊢ ∀ x,
-    (equationProofOf Primrec.Code.succ)(x, succ(x),
+    (equationProofOf Primrec.Code.succ x succ(x)
       (instanceProofAt body universal.witness)(
         evalEquationNum(${num Primrec.Code.succ}, x, succ(x)))) := by
   pintro x
@@ -3155,7 +3155,7 @@ fol_theorem projection_proof_program_value (e ax p : Nat) : PRA ⊢ ∀ a b,
       pairTermNumProgram, num_at_program_value e, pair_term_num_value, lifted_pair_value e p]
 
 fol_theorem provesEval_of_paired (e q : Nat) : PRA ⊢
-    (∀ x y, (equationProofOf e)(pair(x, y), eval[e](pair(x, y)), eval[q](pair(x, y)))) →
+    (∀ x y, equationProofOf e pair(x, y) eval[e](pair(x, y)) eval[q](pair(x, y))) →
     (provesEval e q) := by
   pintro paired x
   papply (equationProofOf_of_eq e)[x, eval[e](x), eval[q](x), pair(eval[Primrec.Code.left](x),
@@ -4088,12 +4088,12 @@ fol_theorem step_proof_program_value (f g qg make : Nat) : PRA ⊢ ∀ x n p,
 fol_theorem provesEval_recursion (f g qf qg zeroProof succProof : Nat) : PRA ⊢
     (provesEval f qf) →
     (provesEval g qg) →
-    (∀ x y a, (equationProofOf f)(x, y, a) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, zero), y,
+    (∀ x y a, equationProofOf f x y a →
+      (equationProofOf (Primrec.Code.rec f g) pair(x, zero) y
         eval[zeroProof](pair(x, pair(y, a))))) →
-    (∀ x n u y a b, (equationProofOf (Primrec.Code.rec f g))(pair(x, n), u, a) →
-      (equationProofOf g)(pair(x, pair(n, u)), y, b) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)), y,
+    (∀ x n u y a b, equationProofOf (Primrec.Code.rec f g) pair(x, n) u a →
+      equationProofOf g pair(x, pair(n, u)) y b →
+      (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n)) y
         eval[succProof](pair(x, pair(n, pair(u, pair(y, pair(a, b)))))))) →
     (provesEval ${Primrec.Code.rec f g} ${Primrec.Code.rec (baseProofProgram f qf zeroProof)
     (stepProofProgram f g qg succProof)}) := by
@@ -4393,7 +4393,7 @@ fol_theorem make_zero_value (f g p : Nat) : PRA ⊢ ∀ x y a,
       stepIndexProgram, step_index_value, zero_normalize_value f g p, zero_tail_value f g]
 
 fol_theorem zero_tail_accepted (f g : Nat) : PRA ⊢ ∀ x y a,
-    (equationProofOf f)(x, y, a) →
+    equationProofOf f x y a →
     (praProofOf equalityCode((baseLeftAt f g)(x), numCode(y))
       (zeroTailAt f g)(x, y, a)) := by
   pintro x y a child
@@ -4408,8 +4408,8 @@ fol_theorem zero_tail_accepted (f g : Nat) : PRA ⊢ ∀ x y a,
   · pexact child
 
 fol_theorem make_zero_accepted (f g p : Nat) : PRA ⊢ (provesPair p) →
-    ∀ x y a, (equationProofOf f)(x, y, a) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, zero), y,
+    ∀ x y a, equationProofOf f x y a →
+      (equationProofOf (Primrec.Code.rec f g) pair(x, zero) y
         eval[makeZeroProgram f g p](pair(x, pair(y, a)))) := by
   pintro pairing x y a child
   papply (equationProofOf_of_eq (Primrec.Code.rec f g))[pair(x, zero), y,
@@ -4736,7 +4736,7 @@ fol_theorem step_congruence_accepted (e : Nat) : PRA ⊢ ∀ a b h,
   pexact projection_congruence e
 
 fol_theorem prior_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
-    (provesPair p) → (equationProofOf c)(pair(x, n), u, a) →
+    (provesPair p) → equationProofOf c pair(x, n) u a →
     (praProofOf equalityCode((priorAt c)(x, n), numCode(u))
       (priorProof c p)(x, n, u, a)) := by
   pintro x n u a pairing previous
@@ -4748,7 +4748,7 @@ fol_theorem prior_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
   · pexact previous
 
 fol_theorem inner_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
-    (provesPair p) → (equationProofOf c)(pair(x, n), u, a) →
+    (provesPair p) → equationProofOf c pair(x, n) u a →
     (praProofOf equalityCode((innerAt c)(x, n), numCode(pair(n, u)))
       (innerProof c p)(x, n, u, a)) := by
   pintro x n u a pairing previous
@@ -4766,7 +4766,7 @@ fol_theorem inner_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
   · pexact pairing[n, u]
 
 fol_theorem outer_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
-    (provesPair p) → (equationProofOf c)(pair(x, n), u, a) →
+    (provesPair p) → equationProofOf c pair(x, n) u a →
     (praProofOf equalityCode((outerAt c)(x, n), numCode(pair(x, pair(n, u))))
       (outerProof c p)(x, n, u, a)) := by
   pintro x n u a pairing previous
@@ -4785,8 +4785,8 @@ fol_theorem outer_accepted (c p : Nat) : PRA ⊢ ∀ x n u a,
   · pexact pairing[x, pair(n, u)]
 
 fol_theorem step_tail_accepted (c g p : Nat) : PRA ⊢ ∀ x n u y a b,
-    (provesPair p) → (equationProofOf c)(pair(x, n), u, a) →
-    (equationProofOf g)(pair(x, pair(n, u)), y, b) →
+    (provesPair p) → equationProofOf c pair(x, n) u a →
+    equationProofOf g pair(x, pair(n, u)) y b →
     (praProofOf equalityCode((stepRightAt c g)(x, n), numCode(y))
       (stepTailAt c g p)(x, n, u, y, a, b)) := by
   pintro x n u y a b pairing previous child
@@ -4802,8 +4802,8 @@ fol_theorem step_tail_accepted (c g p : Nat) : PRA ⊢ ∀ x n u y a b,
   · pexact child
 
 fol_theorem step_via_axiom_accepted (f g p : Nat) : PRA ⊢ ∀ x n u y a b,
-    (provesPair p) → (equationProofOf (Primrec.Code.rec f g))(pair(x, n), u, a) →
-    (equationProofOf g)(pair(x, pair(n, u)), y, b) →
+    (provesPair p) → equationProofOf (Primrec.Code.rec f g) pair(x, n) u a →
+    equationProofOf g pair(x, pair(n, u)) y b →
     (praProofOf equalityCode((stepLeftAt (Primrec.Code.rec f g))(x, n), numCode(y))
       (stepViaAxiom f g p)(x, n, u, y, a, b)) := by
   let c := Primrec.Code.rec f g
@@ -4851,7 +4851,7 @@ fol_def acceptedStepAxiom over PRA (f g p : Nat) : formula of 6 := fun x n u y a
     (stepViaAxiom f g p)(x, n, u, y, a, b))
 
 fol_def acceptedStepResult over PRA (f g p : Nat) : formula of 6 := fun x n u y a b =>
-  (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)), y,
+  (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n)) y
     (makeSuccAt f g p)(x, n, u, y, a, b))
 
 fol_theorem open_step_input (f g p : Nat) : PRA ⊢ free b a y u n x |
@@ -4861,8 +4861,8 @@ fol_theorem open_step_input (f g p : Nat) : PRA ⊢ free b a y u n x |
 
 fol_theorem open_step_axiom (f g p : Nat) : PRA ⊢ free b a y u n x |
     (provesPair p) →
-    (equationProofOf (Primrec.Code.rec f g))(pair(x, n), u, a) →
-    (equationProofOf g)(pair(x, pair(n, u)), y, b) →
+    equationProofOf (Primrec.Code.rec f g) pair(x, n) u a →
+    equationProofOf g pair(x, pair(n, u)) y b →
     (acceptedStepAxiom f g p)(x, n, u, y, a, b) := by
   pexact (step_via_axiom_accepted f g p)[x, n, u, y, a, b]
 
@@ -5661,7 +5661,7 @@ def recProofProgram (f g qf qg p : Nat) : Nat :=
     (stepProofProgram f g qg (makeSuccProgram f g p))
 
 fol_theorem replace_proof_accepted (e : Nat) : PRA ⊢ ∀ x y p q,
-    p = q → (equationProofOf e)(x, y, q) → (equationProofOf e)(x, y, p) := by
+    p = q → equationProofOf e x y q → equationProofOf e x y p := by
   pintro x y p q same h
   psubst same
   pexact h
@@ -5671,7 +5671,7 @@ fol_def stepValueEquality over PRA (f g p : Nat) : formula of 6 := fun x n u y a
     (makeSuccAt f g p)(x, n, u, y, a, b)
 
 fol_def stepProofOf over PRA (f g p : Nat) : formula of 6 := fun x n u y a b =>
-  (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)), y,
+  (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n)) y
     eval[makeSuccProgram f g p](packedStep(x, n, u, y, a, b)))
 
 fol_theorem open_step_value (f g p : Nat) : PRA ⊢ free b a y u n x |
@@ -5696,9 +5696,9 @@ fol_theorem transport_implications (P Q C D : Nat) : PRA ⊢
 
 theorem make_succ_accepted (f g p : Nat) :
     (PRA ⊢ (provesPair p)) →
-    (PRA ⊢ ∀ x n u y a b, (equationProofOf (Primrec.Code.rec f g))(pair(x, n), u, a) →
-      (equationProofOf g)(pair(x, pair(n, u)), y, b) →
-      (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)), y,
+    (PRA ⊢ ∀ x n u y a b, equationProofOf (Primrec.Code.rec f g) pair(x, n) u a →
+      equationProofOf g pair(x, pair(n, u)) y b →
+      (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n)) y
         eval[makeSuccProgram f g p](pair(x, pair(n, pair(u, pair(y, pair(a, b)))))))) := by
   intro pairing
   let c := Primrec.Code.rec f g
@@ -5709,8 +5709,8 @@ theorem make_succ_accepted (f g p : Nat) :
   let a := Term.var language 1
   let b := Term.var language 0
   let H := fol_formula[PRA | (provesPair p)]
-  let P := fol_formula[PRA | (equationProofOf c)(pair(${x}, ${n}), ${u}, ${a})]
-  let Q := fol_formula[PRA | (equationProofOf g)(pair(${x}, pair(${n}, ${u})), ${y}, ${b})]
+  let P := fol_formula[PRA | equationProofOf c pair(${x}, ${n}) ${u} ${a}]
+  let Q := fol_formula[PRA | equationProofOf g pair(${x}, pair(${n}, ${u})) ${y} ${b}]
   let U := fol_formula[PRA | (acceptedStepInput c p)(${x}, ${n})]
   let V := fol_formula[PRA | (acceptedStepAxiom f g p)(
     ${x}, ${n}, ${u}, ${y}, ${a}, ${b})]
@@ -5745,13 +5745,13 @@ theorem provesEval_recursion_from_pair (f g qf qg p : Nat) :
   let F := fol_formula[PRA | (provesEval f qf)]
   let G := fol_formula[PRA | (provesEval g qg)]
   let H := fol_formula[PRA | (provesPair p)]
-  let Z := fol_formula[PRA | ∀ x y a, (equationProofOf f)(x, y, a) →
-    (equationProofOf (Primrec.Code.rec f g))(pair(x, zero), y,
+  let Z := fol_formula[PRA | ∀ x y a, equationProofOf f x y a →
+    (equationProofOf (Primrec.Code.rec f g) pair(x, zero) y
       eval[makeZeroProgram f g p](pair(x, pair(y, a))))]
   let S := fol_formula[PRA | ∀ x n u y a b,
-    (equationProofOf (Primrec.Code.rec f g))(pair(x, n), u, a) →
-    (equationProofOf g)(pair(x, pair(n, u)), y, b) →
-    (equationProofOf (Primrec.Code.rec f g))(pair(x, succ(n)), y,
+    equationProofOf (Primrec.Code.rec f g) pair(x, n) u a →
+    equationProofOf g pair(x, pair(n, u)) y b →
+    (equationProofOf (Primrec.Code.rec f g) pair(x, succ(n)) y
       eval[makeSuccProgram f g p](pair(x, pair(n, pair(u, pair(y, pair(a, b)))))))]
   let C := fol_formula[PRA |
     (provesEval (Primrec.Code.rec f g) (recProofProgram f g qf qg p))]

@@ -28,7 +28,7 @@ namespace Arithmetic
 
 /-- `beta(r, b, c, i)` states that `r` is the value of the beta code `(b, c)` at index `i`. -/
 fol_def beta over Arithmetic : formula of 4 := fun r b c i =>
-  remainder(r, b, Arithmetic.betaModulus(c, i))
+  remainder r b Arithmetic.betaModulus(c, i)
 
 end Arithmetic
 
@@ -39,7 +39,7 @@ open Arithmetic
 /-- If `a * x = b * y` and `x = y + b²`, then `x` is a Bézout coefficient for
 `S a` modulo `S b`. The other coefficient is the predecessor of `y + b`. -/
 fol_theorem bezout_succ_of_square_difference : PA ⊢
-    ∀ a b x y, 0 < b → a * x = b * y → x = y + b * b → bezout(S a, S b) := by
+    ∀ a b x y, 0 < b → a * x = b * y → x = y + b * b → bezout succ(a) succ(b) := by
   pintro a b x y hb hmul hdiff
   phave hpos : 0 < y + b
   · papply lt_of_lt_of_le[0, b, y + b]
@@ -61,7 +61,7 @@ fol_theorem bezout_succ_of_square_difference : PA ⊢
           · prw [hz, Q.mul_succ, add_assoc]
 
 fol_theorem bezout_succ_mul_of_mul_eq_add : PA ⊢
-    ∀ u v c t, 0 < v * c → v * t = u * t + c → bezout(S (u * c), S (v * c)) := by
+    ∀ u v c t, 0 < v * c → v * t = u * t + c → bezout succ(u * c) succ(v * c) := by
   pintro u v c t hpos hstep
   papply bezout_succ_of_square_difference[u * c, v * c,
     (v * v * c) * (v * t), (v * v * c) * (u * t)]
@@ -73,8 +73,8 @@ fol_theorem bezout_succ_mul_of_mul_eq_add : PA ⊢
 
 /-- The beta moduli at distinct increasing indices admit an oriented Bézout identity. -/
 fol_theorem bezout_betaModulus_of_lt : PA ⊢
-    ∀ i j c, 0 < c → i < j → (∀ g, 0 < g → g ≤ j → divides(g, c)) →
-    bezout(Arithmetic.betaModulus(c, i), Arithmetic.betaModulus(c, j)) := by
+    ∀ i j c, 0 < c → i < j → (∀ g, 0 < g → g ≤ j → divides g c) →
+    bezout Arithmetic.betaModulus(c, i) Arithmetic.betaModulus(c, j) := by
   pintro i j c hc hij hdiv
   pcases hij with ⟨k, hk⟩
   phave hj : j = i + S k
@@ -85,7 +85,7 @@ fol_theorem bezout_betaModulus_of_lt : PA ⊢
   · phave hg : S k ≤ j
     · pexists i
       prw [hj]
-    · phave hd : divides(S k, c)
+    · phave hd : divides succ(k) c
       · papply hdiv[S k]
         · pexact Q.zero_lt_succ[k]
         · passumption
@@ -130,8 +130,8 @@ fol_theorem lt_betaModulus_mul_succ_of_le : PA ⊢
         pexact Q.zero_lt_succ[i]
 
 fol_theorem bezout_betaModulus_mul_succ_of_lt : PA ⊢
-    ∀ a b l, 0 < a → (∀ g, 0 < g → g ≤ l → divides(g, a)) → ∀ i j, i < j → j < l →
-    bezout(Arithmetic.betaModulus(a * S b, i), Arithmetic.betaModulus(a * S b, j)) := by
+    ∀ a b l, 0 < a → (∀ g, 0 < g → g ≤ l → divides g a) → ∀ i j, i < j → j < l →
+    bezout Arithmetic.betaModulus(a * S b, i) Arithmetic.betaModulus(a * S b, j) := by
   pintro a b l ha hdiv i j hij hjl
   papply bezout_betaModulus_of_lt[i, j, a * S b]
   · papply mul_pos_iff[a, S b]

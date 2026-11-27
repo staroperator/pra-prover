@@ -278,7 +278,7 @@ private def definitionCode? (formula : Bool) (L value : Term) (values : List Ter
   let some (d, inputs) ← appliedDefinition? value | return none
   if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
   unless L == applyDefinition (d.language ++ `language) && d.isFormula == formula do return none
-  let positions := if d.template.isSome then List.range d.positional.size else d.termPositions
+  let positions := if d.template.isSome then List.range d.binders.size else d.termPositions
   unless (d.template.isSome || d.substitution.isSome || d.builder) &&
       values.length == positions.length do
     return none
@@ -343,6 +343,30 @@ def functionIndex (L : LanguageInfo) (n : Name) (arity : Nat) : CommandElabM Nat
   | some i => pure i
   | none => throwError "unknown function `{n}` of arity {arity} in `{L.name}`"
 
+/-- Read an argument written as a formula whose spelling is also a term: a name, a symbol or
+definition application, a family member, a parenthesized term, a splice, or an application form.
+The syntax tree is converted directly; no source text is parsed again. -/
+partial def formulaAsTerm (s : TSyntax `folFormula) : CommandElabM (TSyntax `folTerm) :=
+  withRef s do
+  let stx := s.raw
+  if stx.isOfKind ``formulaTerm || stx.isOfKind ``formulaTermWide then return ⟨stx[0]⟩
+  if stx.isOfKind ``formulaSplice then return ⟨← `(folTerm| ${$(⟨stx[2]⟩):praExpr})⟩
+  if stx.isOfKind ``formulaApplication then return ⟨stx.setKind ``termApplication⟩
+  if stx.isOfKind ``formulaApplied then return ⟨stx.setKind ``termApplied⟩
+  if stx.isOfKind ``formulaApplicationSlots then return ⟨stx.setKind ``termApplicationSlots⟩
+  match s with
+  | `(folFormula| ($a:folFormula)) => return ← `(folTerm| ($(← formulaAsTerm a)))
+  | `(folFormula| $n:ident) => `(folTerm| $n:ident)
+  | `(folFormula| $n:ident($args:folTerm,*)) => `(folTerm| $n:ident($args,*))
+  | `(folFormula| $n:ident[$indices:praExpr,*]($args:folTerm,*)) =>
+    `(folTerm| $n:ident[$indices,*]($args,*))
+  | _ => throwErrorAt s "expected a term argument"
+
+/-- The readings of an argument: both when the first-order and the PRA grammar accept its text,
+otherwise the one that does. -/
+def argumentReadings (arg : TSyntax `folArg) : Array Syntax :=
+  if arg.raw.isOfKind choiceKind then arg.raw.getArgs else #[arg.raw]
+
 /-- Theory axioms can use named definitions directly. Static templates for later expansion
 keep their full syntax so schemas can recover parameters inside an abbreviation. -/
 private structure TemplateContext where
@@ -365,13 +389,17 @@ private partial def containsParameter : TermView → Bool
   | _ => false
 
 private def abbreviation (L : LanguageInfo) (ctx : TemplateContext) (d : DefinitionInfo)
-    (values : List TermView) :
+    (slots : List TermView) (actuals : List TermView := []) :
     CommandElabM (Sum TermView FormulaView) := do
   unless d.language == L.name do throwError "FOL definition `{d.name}` uses another language"
   let some (arguments, body) := d.template |
     throwError "axiom templates require FOL definitions without PRA parameters or splices"
-  unless arguments.size == values.length do
-    throwError "FOL definition `{d.name}` expects {arguments.size} term arguments"
+  unless d.positional.size == slots.length && arguments.size == actuals.length + slots.length do
+    throwError "`{d.name}` expects {arguments.size - d.positional.size} ordinary arguments and \
+      {d.positional.size} result slots"
+  -- The numerical definition takes its header parameters, result slots, then arrow inputs.
+  let (params, inputs) := actuals.splitAt (actuals.length - d.arity)
+  let values := params ++ slots ++ inputs
   if ctx.useDefinitions && !values.any containsParameter then
     let language := languageTerm L
     let slots := (List.range values.length).map (fun i =>
@@ -394,14 +422,31 @@ private def TemplateContext.member (ctx : TemplateContext) (indices : Array (TSy
     return value.instantiate slots
   return tupleCode values
 
+/-- Read the ordinary term arguments and result slots of a definition in an axiom template. -/
+private def templateApplication (s : Syntax) :
+    CommandElabM (DefinitionInfo × List (TSyntax `folTerm) × List (TSyntax `folTerm)) := do
+  let name := s[1].getId.eraseMacroScopes
+  let some d ← findDefinition name | throwError "unknown FOL definition `{name}`"
+  unless d.template.isSome do
+    throwError "axiom templates require FOL definitions without PRA parameters or splices"
+  let actuals ← s[2].getArgs.toList.mapM fun arg => do
+    let some a := (argumentReadings ⟨arg⟩).find? (·.isOfKind ``formulaArg) |
+      throwErrorAt arg "expected a first-order term"
+    formulaAsTerm ⟨a[0]⟩
+  return (d, s[5].getSepArgs.toList.map (⟨·⟩), actuals)
+
 private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageInfo)
     (vars : List (Name × Name))
     (s : TSyntax `folTerm) :
     CommandElabM TermView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
     return ← ctx.term L vars ⟨expanded⟩
-  if s.raw.isOfKind ``termSplice || s.raw.isOfKind ``termApplication ||
-      s.raw.isOfKind ``termApplicationSlots then
+  if s.raw.isOfKind ``termApplication || s.raw.isOfKind ``termApplicationSlots then
+    let (d, slots, actuals) ← templateApplication s
+    let .inl t ← abbreviation L ctx d (← slots.mapM (ctx.term L vars))
+      (← actuals.mapM (ctx.term L vars)) | throwError "expected a term definition"
+    return t
+  if s.raw.isOfKind ``termSplice then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
   | `(folTerm| ($t:folTerm)) => ctx.term L vars t
@@ -443,7 +488,7 @@ private partial def TemplateContext.term (ctx : TemplateContext) (L : LanguageIn
     throwError "unknown variable or constant `{n.getId.eraseMacroScopes}`"
   | _ => throwUnsupportedSyntax
 
-private def TemplateContext.formulaApplication (ctx : TemplateContext) (L : LanguageInfo)
+private def TemplateContext.relation (ctx : TemplateContext) (L : LanguageInfo)
     (vars : List (Name × Name))
     (name : Name) (args : List (TSyntax `folTerm)) :
     CommandElabM FormulaView := do
@@ -467,8 +512,12 @@ private partial def TemplateContext.formula (ctx : TemplateContext) (L : Languag
     CommandElabM FormulaView := withRef s do
   if let some expanded ← Lean.Elab.liftMacroM (expandMacro? s.raw) then
     return ← ctx.formula L vars ⟨expanded⟩
-  if s.raw.isOfKind ``formulaSplice || s.raw.isOfKind ``formulaApplication ||
-      s.raw.isOfKind ``formulaApplicationSlots then
+  if s.raw.isOfKind ``formulaApplication || s.raw.isOfKind ``formulaApplicationSlots then
+    let (d, slots, actuals) ← templateApplication s
+    let .inr a ← abbreviation L ctx d (← slots.mapM (ctx.term L vars))
+      (← actuals.mapM (ctx.term L vars)) | throwError "expected a formula definition"
+    return a
+  if s.raw.isOfKind ``formulaSplice then
     throwError "axiom templates do not support PRA splices or parameterized FOL definitions"
   match s with
   | `(folFormula| ($a:folFormula)) => ctx.formula L vars a
@@ -507,8 +556,8 @@ private partial def TemplateContext.formula (ctx : TemplateContext) (L : Languag
     return .indexedRelation i (← ctx.member indices.getElems)
       (← args.getElems.toList.mapM (fun t => ctx.term L vars t))
   | `(folFormula| $n:ident($args:folTerm,*)) =>
-    ctx.formulaApplication L vars n.getId.eraseMacroScopes args.getElems.toList
-  | `(folFormula| $n:ident) => ctx.formulaApplication L vars n.getId.eraseMacroScopes []
+    ctx.relation L vars n.getId.eraseMacroScopes args.getElems.toList
+  | `(folFormula| $n:ident) => ctx.relation L vars n.getId.eraseMacroScopes []
   | _ => throwUnsupportedSyntax
 
 def parseTerm (L : LanguageInfo) (vars : List (Name × Name)) (s : TSyntax `folTerm)

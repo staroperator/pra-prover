@@ -74,34 +74,10 @@ private def applySyntax (L : LanguageInfo) (formula : Bool) (value : TSyntax `pr
   expressionCall (if formula then `FOL.Formula.subst else `FOL.Term.subst)
     [substitution, language, value]
 
-/-- Read an argument written as a formula whose spelling is also a term: a name, a symbol or
-definition application, a family member, a parenthesized term, a splice, or an application form.
-The syntax tree is converted directly; no source text is parsed again. -/
-partial def formulaAsTerm (s : TSyntax `folFormula) : CommandElabM (TSyntax `folTerm) :=
-  withRef s do
-  let stx := s.raw
-  if stx.isOfKind ``formulaTerm || stx.isOfKind ``formulaTermWide then return ⟨stx[0]⟩
-  if stx.isOfKind ``formulaSplice then return ⟨← `(folTerm| ${$(⟨stx[2]⟩):praExpr})⟩
-  if stx.isOfKind ``formulaApplication then return ⟨stx.setKind ``termApplication⟩
-  if stx.isOfKind ``formulaApplied then return ⟨stx.setKind ``termApplied⟩
-  if stx.isOfKind ``formulaApplicationSlots then return ⟨stx.setKind ``termApplicationSlots⟩
-  match s with
-  | `(folFormula| ($a:folFormula)) => return ← `(folTerm| ($(← formulaAsTerm a)))
-  | `(folFormula| $n:ident) => `(folTerm| $n:ident)
-  | `(folFormula| $n:ident($args:folTerm,*)) => `(folTerm| $n:ident($args,*))
-  | `(folFormula| $n:ident[$indices:praExpr,*]($args:folTerm,*)) =>
-    `(folTerm| $n:ident[$indices,*]($args,*))
-  | _ => throwErrorAt s "expected a term argument"
-
 /-- The numeral at the leaf of a language's numeral notation, such as `0` in arithmetic. -/
 private partial def numeralLeaf? (stx : Syntax) : Option (TSyntax `num) :=
   if stx.isOfKind numLitKind then some ⟨stx⟩
   else if stx.getNumArgs == 1 then numeralLeaf? stx[0] else none
-
-/-- The readings of an argument: both when the first-order and the PRA grammar accept its text,
-otherwise the one that does. -/
-private def argumentReadings (arg : TSyntax `folArg) : Array Syntax :=
-  if arg.raw.isOfKind choiceKind then arg.raw.getArgs else #[arg.raw]
 
 /-- The reading of `arg` as a named argument `(x := a)`, when it has one. -/
 def namedArgument? (arg : TSyntax `folArg) : Option (TSyntax `folArg) :=
