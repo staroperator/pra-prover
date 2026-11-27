@@ -12,11 +12,13 @@ Local assumptions form the list of a goal `Sequent L T Γ A`; each is named by
 the name marker around its formula code. Object variables are local PRA names for variable codes.
 
 - `ProofGoal` records the current theory and decoded formula.
-- `closedFirst` runs a tactic with definitions closed and, when that fails, runs it again with
-  every definition opened.
+- `closedFirst` runs a tactic with definitions closed and, when that fails, keeps a run with
+  every definition opened only if it closes the goal.
 - `currentGoalAs` and `exposeStep` open the definition at the head of a formula for a tactic
   that needs its connective; `convertStep` restates a step whose formula agrees with another
   once definitions are opened; `openNamed` opens definitions by name.
+- `assumptionStep` proves an assumption of the list; `replaceAssumption` replaces an assumption
+  by a formula derived from the list, keeping its name and position.
 - `rule` resolves assumptions and PRA proofs, including the theorems that stand for axioms,
   applying an application form to its arguments; `proofRule` does this for a proof given as a
   Core proof term. `dischargeAntecedents` proves the PRA antecedents of a proof, such as the
@@ -44,20 +46,26 @@ structure ProofGoal where
   free : List Name
   context : LocalContext := {}
 
-/-- Run a tactic with definitions closed. When that fails, run it again with every definition
-opened, so that the tactic sees each formula written out in full. The error of the first run is
-reported when both fail. -/
+/-- Run a tactic with definitions closed; a definition is opened only where the tactic needs its
+body, or where the proof opens it by name with `prw`. When the tactic fails, it runs again with
+every definition opened, and that run is kept only when it closes the goal without leaving new
+goals, so an opened formula is never shown. Otherwise the error of the first run is reported. -/
 def closedFirst (tactic : Tactic) : Tactic := fun stx => do
   if ← opensDefinitions then return ← tactic stx
   let restore ← saveState
+  let rest := (← get).drop 1
   try tactic stx
   catch error =>
     if error.isInterrupt then throw error
     if let .internal _ _ := error then throw error
     restore
-    try withOpenDefinitions (tactic stx)
-    catch second =>
-      if second.isInterrupt then throw second
+    let closed ← try
+        withOpenDefinitions (tactic stx)
+        pure ((← get) == rest)
+      catch second =>
+        if second.isInterrupt then throw second
+        pure false
+    unless closed do
       restore
       throw error
 
@@ -384,7 +392,7 @@ def applySequentRule (g : ProofGoal) (premises : List Core.Term) (conclusion : C
 
 /-- Whether the formula is a definition that stays closed when read. -/
 def isClosedDefinition : FormulaView → CommandElabM Bool
-  | .code _ value _ => return (← definitionApplication? value).any (·.1.isFormula)
+  | .code _ value _ => return (← headFormulaDefinition? value).isSome
   | _ => return false
 
 /-- Replace a goal whose conclusion is a closed definition by the goal for its body, and return
@@ -410,20 +418,30 @@ def currentGoalAs (wanted : FormulaView → Bool) : TacticM ProofGoal := do
     unless ← openGoal do return g
   currentGoal
 
+/-- Open the definition at the head of the formula code `t`, or at the head of the conclusion
+behind its leading premises. -/
+partial def openConclusion (t : Core.Term) : CommandElabM (Option Calculation) := do
+  if let some opened ← openHead t then return some opened
+  let (.definition `FOL.Formula.imp [], [a, b]) := getAppFnArgs t | return none
+  let some opened ← openConclusion b | return none
+  let hole := Core.Term.lam `B (applyDefinition `FOL.Formula.imp [a.shift, .bvar 0])
+  return some ⟨applyDefinition `FOL.Formula.imp [a, opened.value],
+    mkEqCongr hole b opened.value opened.proof⟩
+
 /-- Return the derivation step `initial` after opening definitions at the head of its formula
-until the formula satisfies `wanted` or can no longer be opened. -/
+or of its conclusion until the formula satisfies `wanted` or can no longer be opened. -/
 def exposeStep (g : ProofGoal) (initial : DeriveM Nat) (wanted : FormulaView → Bool) :
     TacticM (DeriveM Nat) := do
   let (root, graph) ← initial.run {}
   let mut formula := graph.nodes[root]!.formula
-  if wanted formula || !(← isClosedDefinition formula) then return initial
+  if wanted formula then return initial
   let L := languageTerm g.theory.language
   let T := applyDefinition (g.theory.name ++ `isAxiom)
   let mut proof := (← derivedProof g graph root).2
   let mut code ← formula.encode L [] g.free
   for _ in [:32] do
     if wanted formula then break
-    let some opened ← openHead code | break
+    let some opened ← openConclusion code | break
     proof := transportAlong L T g.context.code code opened.value opened.proof proof
     code := opened.value
     formula ← readFormula g.theory.language [] g.free code
@@ -484,6 +502,68 @@ def openNamed (names : List Name) (location : Option Ident) : TacticM Unit := do
     (transportList L T source g.context.code g.code equality (.hyp 0))
   let view := (← getGoal).projection
   Tactic.applyProof (view.decodeProof proof) [view.decodePredicate premise]
+
+/-- The derivation step that proves the assumption at position `index` of the goal's list. -/
+def assumptionStep (g : ProofGoal) (index : Nat) : TacticM (DeriveM Nat) := do
+  let L := languageTerm g.theory.language
+  let T := applyDefinition (g.theory.name ++ `isAxiom)
+  let some (_, formula) := g.context.entries[index]? | throwError "unknown object assumption"
+  let some (entry, proof) := assumptionProof L T g.context.code index |
+    throwError "unknown object assumption"
+  let proof ← transportUnder L T g.context.code entry (← formula.encode L [] g.free) proof
+  return addNode formula (.localProof proof)
+
+/-- Replace the assumption at position `index` of the goal's list by `replacement`, keeping its
+name and position. `step` derives `replacement` from the goal's assumptions.
+
+The new goal `Γ' ⊢ A` differs from the goal `Γ ⊢ A` only at that position. Moving the entries up
+to that position into the conclusion with `Sequent.imp_intro`, and adding them back with
+`Sequent.weaken`, turns a proof of `Γ' ⊢ A` into a proof of `Γ ⊢ B' → Cₖ₋₁ → … → C₀ → A`, where
+`B'` is the replacement and `Cₖ₋₁, …, C₀` are the newer assumptions. Modus ponens with `step`
+and with those assumptions then proves `A` from `Γ`. -/
+def replaceAssumption (g : ProofGoal) (index : Nat) (replacement : FormulaView)
+    (step : DeriveM Nat) : TacticM Unit := do
+  let L := languageTerm g.theory.language
+  let T := applyDefinition (g.theory.name ++ `isAxiom)
+  let (entries, tail) := listEntries g.context.code
+  let some (name, _) := g.context.entries[index]? | throwError "unknown object assumption"
+  let marked := markName name (← replacement.encode L [] g.free)
+  let replaced := entries.set index marked
+  let list (items : List Core.Term) (k : Nat) := (items.drop k).foldr consList tail
+  let premise := provableUnder L T (list replaced 0) g.code
+  -- A proof of `Γ ⊢ B' → Cₖ₋₁ → … → C₀ → A` from the new goal, the hypothesis `.hyp 0`.
+  let mut conclusion := g.code
+  let mut proof : Core.Proof := .hyp 0
+  for k in [:index + 1] do
+    proof := applyTheorem `FOL.Sequent.imp_intro [list replaced (k + 1), replaced[k]!, conclusion]
+      [L, T] [proof]
+    conclusion := applyDefinition `FOL.Formula.imp [replaced[k]!, conclusion]
+  for k in (List.range (index + 1)).reverse do
+    proof := applyTheorem `FOL.Sequent.weaken [list entries (k + 1), entries[k]!, conclusion]
+      [L, T] [proof]
+  let chain := (g.context.entries.take index).foldl (fun body (_, a) => .imp a body) g.formula
+  let chain := FormulaView.imp replacement chain
+  proof ← transportUnder L T g.context.code conclusion (← chain.encode L [] g.free) proof
+  let newer ← (List.range index).mapM (assumptionStep g)
+  let ((replacementProof, newerProofs), graph) ← (do
+    let p ← step
+    let qs ← newer.mapM id
+    return (p, qs)).run {}
+  -- The derivation sits beneath the hypothesis for the new goal.
+  let graph := { graph with nodes := graph.nodes.map fun node =>
+    match node.reason with
+    | .proven p => { node with reason := .proven (shiftHypotheses 1 p) }
+    | .localProof p => { node with reason := .localProof (shiftHypotheses 1 p) }
+    | _ => node }
+  let (root, graph) ← (do
+    let mut q ← mp (← addNode chain (.localProof proof)) replacementProof
+    for p in newerProofs.reverse do q ← mp q p
+    return q).run graph
+  let result ← proofInContext g graph root g.formula
+  let result ← transportGoal g (← g.formula.encode L [] g.free) result
+  let view := (← getGoal).projection
+  Tactic.applyProof (view.decodeProof (.impIntro `_folPremise premise result))
+    [view.decodePredicate premise]
 
 /-- Close the PRA goal with the checked proof generated from a completed derivation. -/
 def finish (g : ProofGoal) (action : DeriveM Nat) : TacticM Unit := do

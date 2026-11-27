@@ -81,36 +81,55 @@ private def argumentSyntax (value : TSyntax `praExpr) : CommandElabM (TSyntax `f
   | `(praExpr| $n:num) => `(folArg| $n:num)
   | _ => `(folArg| $(← `(folFormula| ${$value:praExpr})):folFormula)
 
-/-- Print a folded definition with the arguments that its substitution theorem describes. The
-PRA parameters are shown in the application form `(D a₁ … aₘ)(t₁, …, tₖ)`. -/
-private def namedDefinitionSyntax (names : Names) (isFormula : Bool) (value : Core.Term)
-    (count : Nat) (showArguments : CommandElabM (Array (TSyntax `folTerm))) :
+/-- Print a folded definition with its ordinary arguments after the name and its result slots
+in a comma-separated list. Parenthesize the ordinary application before slots or where the
+surrounding syntax requires an atomic argument. -/
+private def namedDefinitionSyntax (L : LanguageInfo) (names : Names) (isFormula : Bool)
+    (value : Core.Term) (arguments : List TermView) (level : Nat)
+    (showTerm : TermView → Nat → CommandElabM (TSyntax `folTerm)) :
     CommandElabM (Option Syntax) := do
   let some (d, values) ← appliedDefinition? value | return none
-  let positions := d.binders.toList.zipIdx.filterMap fun (binder, i) =>
-    if d.positional.contains binder then some i else none
-  unless d.isFormula == isFormula && d.substitution.isSome && count == d.positional.size &&
-      d.termPositions == positions do return none
+  unless d.language == L.name && d.isFormula == isFormula && d.substitution.isSome &&
+      arguments.length == d.termPositions.length do return none
+  if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
+  -- A view of a named application has a numbered placeholder at each term position.
+  unless d.termPositions.zipIdx.all (fun (pos, i) =>
+      values[pos]? == some (applyDefinition `FOL.Term.var [languageTerm L, numeral i])) do
+    return none
   let name := mkIdent (← relativeName d.name names.used)
-  let shown ← showArguments
-  let named := (d.binders.zip values.toArray).filter fun (binder, _) =>
-    !d.positional.contains binder
-  if named.isEmpty then
-    if isFormula then return some (← `(folFormula| $name:ident($shown,*))).raw
-    return some (← `(folTerm| $name:ident($shown,*))).raw
-  let actuals ← named.mapM fun (binder, actual) => do
-    let argument ← argumentSyntax (← delabTerm names actual)
+  let terms := d.termPositions.zip arguments
+  let mut slots := #[]
+  let mut actuals := #[]
+  for ((binder, value), i) in (d.binders.toList.zip values).zipIdx do
+    if d.positional.contains binder then
+      let some t := terms.lookup i | return none
+      slots := slots.push (← showTerm t 0)
+      continue
+    let mut argument ← if let some t := terms.lookup i then do
+      let t ← showTerm t 1024
+      pure (⟨mkNode ``formulaArg #[mkNode ``formulaTerm #[t.raw]]⟩ : TSyntax `folArg)
+    else argumentSyntax (← delabTerm names value)
     -- Built directly: in a quotation, `(x := a)` would also parse as a PRA named argument.
     if d.implicit.contains binder then
-      pure ⟨mkNode ``namedArg #[mkAtom "(", mkIdent binder, mkAtom ":=", argument.raw, mkAtom ")"]⟩
-    else pure argument
-  let application := #[mkAtom "(", name.raw, mkNullNode (actuals.map (·.raw)), mkAtom ")"]
-  if shown.isEmpty then
+      argument := ⟨mkNode ``namedArg
+        #[mkAtom "(", mkIdent binder, mkAtom ":=", argument, mkAtom ")"]⟩
+    actuals := actuals.push argument.raw
+  if actuals.isEmpty then
+    if slots.isEmpty then
+      if isFormula then return some (← `(folFormula| $name:ident)).raw
+      return some (← `(folTerm| $name:ident)).raw
+    if isFormula then return some (← `(folFormula| $name:ident($slots,*))).raw
+    return some (← `(folTerm| $name:ident($slots,*))).raw
+  if slots.isEmpty && level ≤ Parser.leadPrec then
+    let kind := if isFormula then ``formulaApplied else ``termApplied
+    return some (mkNode kind #[name.raw, mkNullNode actuals])
+  let application := #[mkAtom "(", name.raw, mkNullNode actuals, mkAtom ")"]
+  if slots.isEmpty then
     let kind := if isFormula then ``formulaApplication else ``termApplication
     return some (.node .none kind application)
   let kind := if isFormula then ``formulaApplicationSlots else ``termApplicationSlots
   return some (.node .none kind
-    (application ++ #[mkAtom "(", Syntax.mkSep shown (mkAtom ","), mkAtom ")"]))
+    (application ++ #[mkAtom "(", Syntax.mkSep slots (mkAtom ","), mkAtom ")"]))
 
 /-- Print a term tree in FOL notation. `level` is the precedence the position requires. -/
 partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Name)
@@ -142,9 +161,8 @@ partial def termSyntax (L : LanguageInfo) (names : Names) (rename : Name → Nam
     let indices ← (← tupleEntries family.indexArity k).toArray.mapM (delabTerm names)
     `(folTerm| $(mkIdent family.name):ident[$indices,*]($args,*))
   | .code _ value arguments => do
-    let term (t : TermView) := termSyntax L names rename t
-    if let some shown ← namedDefinitionSyntax names false value arguments.length
-        (arguments.toArray.mapM term) then return ⟨shown⟩
+    if let some shown ← namedDefinitionSyntax L names false value arguments level
+        (fun t prec => termSyntax L names rename t prec) then return ⟨shown⟩
     return ⟨spliceNode ``termSplice (← delabTerm names value) none⟩
 
 private def parenthesizedFormula (level wanted : Nat) (a : TSyntax `folFormula) :
@@ -233,8 +251,8 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     parenthesizedFormula 25 level (← `(folFormula| $b:folFormula → $c:folFormula))
   | .all x body => quantified x body false
   | .code _ value arguments =>
-    if let some shown ← namedDefinitionSyntax names true value arguments.length
-        (arguments.toArray.mapM term) then return ⟨shown⟩
+    if let some shown ← namedDefinitionSyntax L names true value arguments level
+        (fun t prec => termSyntax L names rename t prec) then return ⟨shown⟩
     -- For a formula with only result slots, skip the surrounding context after those slots.
     let (head, _) := getAppFnArgs value
     let known : Array DefinitionInfo := definitions.getState (← getEnv)
@@ -252,15 +270,10 @@ partial def formulaSyntax (L : LanguageInfo) (names : Names) (rename : Name → 
     return ⟨spliceNode (if arguments.isEmpty then ``formulaSplice else ``formulaSpliceApplication)
       value (if arguments.isEmpty then none else some (arguments.map (·.raw)))⟩
 
-private def withDisplayNames {α : Type} (action : CommandElabM α) : CommandElabM α := do
-  let saved := (← getScope).opts
-  let preserve := !(fol.openDefinitions.get saved)
-  modifyScope fun scope => { scope with opts := fol.preserveDisplayNames.set scope.opts preserve }
-  try action finally modifyScope fun scope => { scope with opts := saved }
-
-/-- Format a provability statement of a declared theory as a sequent in FOL notation. -/
+/-- Format a provability statement of a declared theory as a sequent in FOL notation. The
+statement is read exactly as the tactics read it, so the display shows the code a tactic holds. -/
 @[pra_display FOL.Provable, pra_display FOL.Sequent]
-def displayProvable : PredicateDisplay := fun names predicate => withDisplayNames do
+def displayProvable : PredicateDisplay := fun names predicate => do
   let depth ← Surface.getMaxDepth
   let some (language, theory, conclusion, context) := provabilityParts? depth predicate |
     return none

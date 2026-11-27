@@ -154,6 +154,9 @@ structure DefinitionInfo where
   template : Option (Array Name × Sum TermView FormulaView) := none
   /-- The theorem stating how a substitution acts on the definition, when it was proved. -/
   substitution : Option Name := none
+  /-- Whether the definition is a registered formula builder, whose term arguments are listed
+  in `termPositions` and are moved by a substitution through its own theorem. -/
+  builder : Bool := false
   /-- The positions, among the parameters and arguments, of the terms that a substitution
   changes: the term arguments, and the PRA parameters that the body uses as terms. -/
   termPositions : List Nat := []
@@ -180,10 +183,18 @@ def SyntaxParameter.transport (p : SyntaxParameter) (L f value : Term) : Term :=
     applyDefinition (if p.isFormula then `FOL.Formula.subst else `FOL.Term.subst)
       [L, value] [substitution]
 
+/-- Add a definition entry, replacing an earlier entry of the same name. -/
+private def addDefinition (entries : Array DefinitionInfo) (info : DefinitionInfo) :
+    Array DefinitionInfo :=
+  match entries.findIdx? (·.name == info.name) with
+  | some i => entries.set! i info
+  | none => entries.push info
+
 initialize definitions : SimplePersistentEnvExtension DefinitionInfo (Array DefinitionInfo) ←
   registerSimplePersistentEnvExtension {
-    addEntryFn := Array.push
-    addImportedFn := fun entries => entries.foldl (· ++ ·) #[]
+    addEntryFn := addDefinition
+    addImportedFn := fun entries =>
+      entries.foldl (fun all added => added.foldl addDefinition all) #[]
   }
 
 /-- Find a FOL definition at a saturated numerical application and return all its inputs. -/
@@ -268,7 +279,8 @@ private def definitionCode? (formula : Bool) (L value : Term) (values : List Ter
   if d.syntaxParameters.any (fun p => p.isFormula || p.arity > 0) then return none
   unless L == applyDefinition (d.language ++ `language) && d.isFormula == formula do return none
   let positions := if d.template.isSome then List.range d.positional.size else d.termPositions
-  unless (d.template.isSome || d.substitution.isSome) && values.length == positions.length do
+  unless (d.template.isSome || d.substitution.isSome || d.builder) &&
+      values.length == positions.length do
     return none
   unless positions.zipIdx.all (fun (position, i) =>
       inputs[position]? == some (applyDefinition `FOL.Term.var [L, numeral i])) do

@@ -343,6 +343,7 @@ fol_theorem and_symm (p q : formula) : AddTheory ⊢ p ∧ q → q ∧ p := by
 | `ptrans u` | Split an equality goal `t = v` into two goals `t = u` and `u = v`. |
 | `pcongr` | Reduce `f(t₁, ..., tₙ) = f(u₁, ..., uₙ)` to subgoals `t₁ = u₁`, ..., `tₙ = uₙ`. |
 | `prw [r₁, r₂, ...]` | On an equality goal, close it by rewriting both sides with the equations `rᵢ` and comparing the results. On any other goal, rewrite the goal with each rule in turn: an equation rewrites the terms it matches, an equivalence `A ↔ B` rewrites the subformulas it matches. `← r` uses a rule from right to left. |
+| `prw [r₁, r₂, ...] at h` | Rewrite the local assumption `h` with each rule in turn, as on a goal that is not an equation. `h` keeps its name and its place among the assumptions, and a rule may use any assumption, including ones introduced after `h`. |
 | `prw [D]`, `prw [D] at h` | Open the term or formula definition `D` in the goal or in `h`. |
 | `psubst h` | Given an equality proof or assumption `h` of `x = t` for an object variable `x`, replace `x` with `t` throughout the goal formula. |
 
@@ -367,14 +368,15 @@ earlier rules normalize later rules in the list, and both sides of the target eq
 rewritten to a common term. On any other goal, each rule rewrites once, in the order written:
 an equation replaces every occurrence of the first term it matches, inside relations, equations,
 implications, and quantifiers, and an equivalence replaces every subformula it matches, under
-implications, the derived connectives, and quantifiers. A term inside a definition that stays
-closed is rewritten only after the definitions are opened. `psubst` replaces an object variable
-by a term throughout the goal in one step.
+implications, the derived connectives, and quantifiers. A term in the arguments of a definition
+that stays closed is rewritten in place, and the definition stays closed. `psubst` replaces an
+object variable by a term throughout the goal in one step.
 
 ### Opening definitions in proofs
 
-Term definitions whose result is not a raw code with slots and formula definitions with a
-`.subst` theorem stay closed in proof goals until a tactic needs to inspect their body:
+Formula definitions, and term definitions whose result is not a raw code with slots, stay
+closed in proof goals until a tactic needs to inspect their body. A goal therefore keeps the
+names it was written with, and the goal display shows the same code the tactics hold:
 
 - Connective-directed tactics (`pintro`, `pconstructor`, `pleft`, `pright`, `pexists`, `pcases`,
   `papply`, `ptrans`, `psymm`, and `pcongr`) open definitions at the head of the formula they
@@ -384,8 +386,11 @@ Term definitions whose result is not a raw code with slots and formula definitio
 - `prw [D]` explicitly unfolds `D` in the goal, and `prw [D] at h` unfolds `D` in the local
   assumption `h`.
 
-If a tactic fails while definitions are closed, it automatically retries with all definitions
-opened. Setting `set_option fol.openDefinitions true` opens all definitions eagerly in every step.
+A proof that needs the body of a definition opens it with `prw [D]`. When a tactic fails with
+definitions closed, it runs again with every definition opened, and that run is kept only when it
+closes the goal without leaving new goals. For example, `prw [h]` closes an equation whose sides
+agree only once a definition is opened, and no opened goal is shown. Setting
+`set_option fol.openDefinitions true` opens all definitions eagerly in every step.
 
 ## Induction
 

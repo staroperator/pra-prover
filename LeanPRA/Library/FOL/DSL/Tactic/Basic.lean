@@ -48,12 +48,13 @@ quantifiers stand behind implications is instantiated step by step inside the de
 private def instantiated (g : ProofGoal) (initial : DeriveM Nat)
     (args : Array (TSyntax `folTerm)) : TacticM (DeriveM Nat) := do
   let terms ← args.toList.mapM (termArgument g)
-  let initial ← if terms.isEmpty then pure initial else
-    exposeStep g initial fun | .all _ _ => true | _ => false
-  let stepwise : DeriveM Nat := do
-    let mut p ← initial
-    for t in terms do p ← instantiate p t
-    return p
+  let isQuantified : FormulaView → Bool := fun | .all _ _ => true | _ => false
+  let initial ← if terms.isEmpty then pure initial else exposeStep g initial isQuantified
+  -- Each step opens the definitions in front of the next quantifier before instantiating it.
+  let mut stepwise := initial
+  for t in terms do
+    let exposed ← exposeStep g stepwise isQuantified
+    stepwise := do instantiate (← exposed) t
   if terms.isEmpty then return stepwise
   let (root, graph) ← initial.run {}
   let mut body := graph.nodes[root]!.formula
@@ -118,17 +119,30 @@ private def conclusions : FormulaView → List (List FormulaView × FormulaView)
   | .imp a b => ([], .imp a b) :: (conclusions b).map fun (premises, c) => (a :: premises, c)
   | a => [([], a)]
 
-/-- When no conclusion of the step `initial` is the goal as written, restate the step with a
-conclusion that agrees with the goal once definitions are opened. -/
-private def matchConclusion (g : ProofGoal) (initial : DeriveM Nat) : TacticM (DeriveM Nat) := do
+/-- When no conclusion of the step `initial` is the goal as written, restate the step, or a
+component of a conjunction it proves, with a conclusion that agrees with the goal once
+definitions are opened. -/
+private partial def matchConclusion (g : ProofGoal) (initial : DeriveM Nat) :
+    TacticM (DeriveM Nat) := do
   let (root, graph) ← initial.run {}
-  let options := conclusions graph.nodes[root]!.formula
-  if options.any (·.2.equiv g.formula) then return initial
-  -- The conclusion behind every premise is tried first.
-  for (premises, _) in options.reverse do
-    let restated := premises.foldr FormulaView.imp g.formula
-    if let some step ← convertStep g initial restated then return step
-  return initial
+  let formula := graph.nodes[root]!.formula
+  if (conclusions formula).any (·.2.equiv g.formula) then return initial
+  if let some step ← restate initial formula then return step
+  -- A closed definition at the head of the step is opened, and the match is tried again.
+  let opened ← exposeStep g initial fun | .code .. => false | _ => true
+  let (root', graph') ← opened.run {}
+  if graph'.nodes[root']!.formula.equiv formula then return initial
+  matchConclusion g opened
+where
+  restate (step : DeriveM Nat) (formula : FormulaView) : TacticM (Option (DeriveM Nat)) := do
+    -- The conclusion behind every premise is tried first.
+    for (premises, _) in (conclusions formula).reverse do
+      let restated := premises.foldr FormulaView.imp g.formula
+      if let some converted ← convertStep g step restated then return some converted
+    if let .imp (.imp a (.imp b .falsum)) .falsum := formula then
+      if let some converted ← restate (do conjunctionLeft (← step)) a then return some converted
+      if let some converted ← restate (do conjunctionRight (← step)) b then return some converted
+    return none
 
 private def applyRule (g : ProofGoal) (initial : DeriveM Nat) : TacticM Unit := do
   let target := g.formula
@@ -361,26 +375,33 @@ def evalBasicTactic : Tactic := closedFirst fun stx => do
       finish g (addNode g.formula (.localProof p))
       return
     let (hs, _) := assumptions g.formula
-    try
-      finish g do
-        let mut target := g.formula
-        let mut introduced := []
-        for (h, a) in hs do
-          introduced := introduced ++ [(h, a)]
-          let .imp _ b := target | throwError "invalid implication context"
-          target := b
-          for (k, c) in introduced do
-            if c.equiv target then return ← discharge introduced (← addNode c (.hypothesis k))
-        throwError "no object assumption matches the goal"
-    catch error =>
-      if error.isInterrupt then throw error
-      -- An assumption may state the goal with some definitions opened or closed.
-      for (name, _) in g.context.entries do
-        let step ← rule g (← `(folRef| $(mkIdent name):ident))
-        if let some converted ← convertStep g step g.formula then
-          finish g converted
+    -- The goal behind each leading premise, with the premises introduced before it.
+    let mut target := g.formula
+    let mut introduced := []
+    let mut stages := []
+    for (h, a) in hs do
+      introduced := introduced ++ [(h, a)]
+      let .imp _ b := target | throwError "invalid implication context"
+      target := b
+      stages := stages ++ [(introduced, target)]
+    for (premises, behind) in stages do
+      for (k, c) in premises do
+        if c.equiv behind then
+          finish g do discharge premises (← addNode c (.hypothesis k))
           return
-      throw error
+    -- An assumption may state the goal with some definitions opened or closed. Leading
+    -- premises are introduced one by one so that they can be matched the same way.
+    let mut current := g
+    for i in [:hs.length + 1] do
+      for (name, _) in current.context.entries do
+        let step ← rule current (← `(folRef| $(mkIdent name):ident))
+        if let some converted ← convertStep current step current.formula then
+          finish current converted
+          return
+      let .imp _ _ := current.formula | break
+      introduceAssumption (mkIdent (Name.num `_passumption i))
+      current ← currentGoal
+    throwError "no object assumption matches the goal"
   | `(praTactic| pconstructor) => splitGoal (← currentGoalAs isConjunction) 0
   | `(praTactic| pleft) => splitGoal (← currentGoalAs isDisjunction) 1
   | `(praTactic| pright) => splitGoal (← currentGoalAs isDisjunction) 2

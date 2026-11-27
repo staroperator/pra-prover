@@ -47,8 +47,9 @@ syntax:max (priority := high) "(" folTerm ")" : folTerm
 syntax:max (priority := high) ident noWs "(" folTerm,* ")" : folTerm
 syntax:max (priority := high) ident noWs "[" praExpr,+ "]" : folTerm
 syntax:max (priority := high) ident noWs "[" praExpr,+ "]" noWs "(" folTerm,* ")" : folTerm
-syntax:max (name := termApplication) "(" ident folArg+ ")" : folTerm
-syntax:max (name := termApplicationSlots) "(" ident folArg+ ")" noWs "(" folTerm,* ")" : folTerm
+syntax:max (name := termApplication) "(" ident (ppSpace folArg)+ ")" : folTerm
+syntax:max (name := termApplicationSlots)
+  "(" ident (ppSpace folArg)+ ")" noWs "(" folTerm,* ")" : folTerm
 
 /-! A term in a formula position: a term actual of a parameter, or a term argument of the
 application form. The second production admits a term of any precedence inside parentheses;
@@ -63,9 +64,9 @@ syntax:max ident : folFormula
 syntax:max (priority := high) "(" folFormula ")" : folFormula
 syntax:max (priority := high) ident noWs "(" folTerm,* ")" : folFormula
 syntax:max (priority := high) ident noWs "[" praExpr,+ "]" noWs "(" folTerm,* ")" : folFormula
-syntax:max (name := formulaApplication) "(" ident folArg+ ")" : folFormula
+syntax:max (name := formulaApplication) "(" ident (ppSpace folArg)+ ")" : folFormula
 syntax:max (name := formulaApplicationSlots)
-  "(" ident folArg+ ")" noWs "(" folTerm,* ")" : folFormula
+  "(" ident (ppSpace folArg)+ ")" noWs "(" folTerm,* ")" : folFormula
 /-! The application form without slots may drop its parentheses where the position accepts a
 formula or term of any precedence, as in `isTotal p ∧ q` or `x + num n`. Inside an argument
 list each argument is atomic, so there the form keeps its parentheses. The arguments must
@@ -74,8 +75,9 @@ argument. These two productions have low priority, so any other notation that re
 text wins: `succ(x)` applies the symbol, and `S a` is the successor notation of arithmetic. In
 parentheses, `(D a)` reads as this form and expands to the application form. -/
 syntax:lead (name := formulaApplied) (priority := low)
-  withPosition(ident (colGt folArg)+) : folFormula
-syntax:lead (name := termApplied) (priority := low) withPosition(ident (colGt folArg)+) : folTerm
+  withPosition(ident ppIndent((ppSpace colGt folArg)+)) : folFormula
+syntax:lead (name := termApplied) (priority := low)
+  withPosition(ident ppIndent((ppSpace colGt folArg)+)) : folTerm
 /-- The parenthesized application form with the same head and arguments. The node is built
 directly: in parentheses the text would parse again as this form. -/
 private def parenthesizedApplication (kind : SyntaxNodeKind) (head : Syntax) (args : Syntax) :

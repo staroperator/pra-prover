@@ -41,9 +41,12 @@ def evalSubst : Tactic := closedFirst fun stx => do
     throwError "unknown theorem {congruence}"
   let transport ← proofRule g (.theoremE congruence arguments [])
     (declaration.type.instantiate arguments [])
+  -- The new goal is the formula as the congruence theorem states it, which can number the
+  -- arguments of a closed definition differently from a direct replacement in `target`.
+  let (backward, graph) ← (do conjunctionRight (← mp (← transport) p)).run graph
+  let .imp next _ := graph.nodes[backward]!.formula | throwError "invalid substitution result"
   refineDerivation g do
-    let equivalence ← mp (← transport) (← equation)
-    let backward ← conjunctionRight equivalence
-    return ([target.replace x t], fun proofs => mp backward proofs[0]!)
+    set graph
+    return ([next], fun proofs => mp backward proofs[0]!)
 
 end LeanPRA.Library.FOL.DSL

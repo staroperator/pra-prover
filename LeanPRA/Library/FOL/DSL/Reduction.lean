@@ -43,12 +43,6 @@ register_option fol.openDefinitions : Bool := {
   descr := "open every FOL definition when a formula is calculated or read"
 }
 
-/-- Keep named formula codes intact while preparing the goal display. -/
-register_option fol.preserveDisplayNames : Bool := {
-  defValue := false
-  descr := "preserve named formula codes during goal display"
-}
-
 /-- The number of unfolding, reconciliation, or rewriting steps a first-order reading may take
 before it stops. -/
 register_option fol.maxSteps : Nat := {
@@ -241,6 +235,10 @@ def registerFormulaBuilder (symbol theoremName : Name) : CommandElabM Unit := do
   unless !positions.isEmpty do throwError "a formula builder needs at least one term argument"
   registerCalculation theoremName
   modifyEnv (formulaBuilders.addEntry · ⟨symbol, L, args.length, parameters.length, positions⟩)
+  -- The definition entry lists the term arguments, so that a use read with explicit arguments
+  -- is written back as the same application.
+  if let some d := (definitions.getState (← getEnv)).find? (·.name == symbol) then
+    modifyEnv (definitions.addEntry · { d with builder := true, termPositions := positions })
 
 /-- Separate a registered builder's term arguments from its numerical parameters. The returned
 code uses consecutive variable positions for those arguments. -/
@@ -309,13 +307,14 @@ structure CalculationState where
 
 abbrev CalculationM := StateRefT CalculationState CommandElabM
 
-/-- Read a definition that stays closed during calculation. Formulas need a substitution
-theorem. Terms with no result slots can also be opened when a substitution needs their body. -/
+/-- The definition applied at the head of `t` when it stays closed during calculation: every
+formula definition, and a term definition whose result has no slots. Such a term can still be
+opened when a substitution needs its body. With `fol.openDefinitions` set, no definition stays
+closed. -/
 def definitionApplication? (t : Term) :
     CommandElabM (Option (DefinitionInfo × List Term)) := do
   let some (d, values) ← appliedDefinition? t | return none
-  unless !(← opensDefinitions) &&
-      (if d.isFormula then d.substitution.isSome else d.resultArity == 0) do return none
+  unless !(← opensDefinitions) && (d.isFormula || d.resultArity == 0) do return none
   return some (d, values)
 
 private def closedDefinition? (t : Term) :
@@ -447,10 +446,6 @@ mutual
       [L, j] [] [← lessProof j count]
 
   private partial def calculateFresh (input : Term) : CalculationM Calculation := do
-    if fol.preserveDisplayNames.get (← getOptions) then
-      if let some (d, _) ← appliedDefinition? input then
-        if d.isFormula then
-          return ⟨input, .forallElim .eqRefl input⟩
     let beta := Core.betaReduceTerm (← Surface.getMaxDepth) input
     if beta != input then return ← follow input beta (.forallElim .eqRefl input)
     match input with
@@ -547,6 +542,11 @@ mutual
         if opened.contains name then
           if let some next ← unfoldOnce t then return ← follow t next (.forallElim .eqRefl t)
     if let some (d, values) ← closedDefinition? t then
+      -- A closed term definition still computes by its registered calculation rules, as a
+      -- numeral does; a formula definition applies its rules only when it is opened.
+      unless d.isFormula do
+        if let some result ← calculationRule t then
+          return ← follow t result.value result.proof
       let result ← calculateDefinition t d values
       if result.value != t then return ← follow t result.value result.proof
       return result
@@ -631,9 +631,15 @@ mutual
               if (← normalizeSubstitution normalizeTerm L f).isSome then
                 if let some result ← substDefinition L f d values then
                   return ← follow t result.value result.proof
-            -- The substitution changes the meaning of the PRA parameters: open the definition.
-            if let some next ← unfoldOnce A then
-              return ← follow t (applyDefinition name [L, next] [f]) (.forallElim .eqRefl t)
+              -- Without a substitution theorem, the substitution stays in front of the closed
+              -- definition; the reader shows it as the definition's explicit arguments. A
+              -- registered formula builder is substituted by its own theorem below.
+              unless (formulaBuilders.getState (← getEnv)).any (·.symbol == d.name) do
+                return ⟨t, .forallElim .eqRefl t⟩
+            else
+              -- The substitution changes the meaning of the PRA parameters: open the term.
+              if let some next ← unfoldOnce A then
+                return ← follow t (applyDefinition name [L, next] [f]) (.forallElim .eqRefl t)
           if let some (_, []) := named A `FOL.Formula.falsum then
             return ⟨A, applyTheorem `FOL.Formula.subst_falsum [L] [f]⟩
           if let some (_, [_, x, y]) := named A `FOL.Formula.equal then
@@ -932,16 +938,39 @@ mutual
 
 end
 
-/-- Open the definition at the head of the formula code `t`. Returns the body of the definition
-with the arguments in place, keeping definitions inside the body closed, together with a proof
-that `t` equals it. -/
-def openHead (t : Term) : CommandElabM (Option Calculation) := do
-  let some (d, _) ← definitionApplication? t | return none
-  unless d.isFormula do return none
+/-- Open the definition application `t` one step: by a registered calculation rule whose left
+side matches it, otherwise by unfolding its body. -/
+private def openOnce (t : Term) : CommandElabM (Option Calculation) := do
+  if let some rule ← calculationRule t then return some rule
   let some next ← unfoldOnce t | return none
+  return some ⟨next, .forallElim .eqRefl t⟩
+
+/-- The closed formula definition at the head of `t`, looking through a substitution that
+stands in front of it. -/
+def headFormulaDefinition? (t : Term) : CommandElabM (Option DefinitionInfo) := do
+  let body := match getAppFnArgs t with
+    | (.definition `FOL.Formula.subst [_], [_, body]) => body
+    | _ => t
+  let some (d, _) ← definitionApplication? body | return none
+  unless d.isFormula do return none
+  return some d
+
+/-- Open the definition at the head of the formula code `t`, beneath a substitution that stands
+in front of it. Returns the body of the definition with the arguments in place, keeping
+definitions inside the body closed, together with a proof that `t` equals it. -/
+def openHead (t : Term) : CommandElabM (Option Calculation) := do
+  let some _ ← headFormulaDefinition? t | return none
+  let (next, step) ← match getAppFnArgs t with
+    | (.definition `FOL.Formula.subst [f], [L, body]) =>
+      let some opened ← openOnce body | return none
+      let hole := Term.lam `A (applyDefinition `FOL.Formula.subst [L.shift, .bvar 0] [f.shift])
+      pure (applyDefinition `FOL.Formula.subst [L, opened.value] [f],
+        mkEqCongr hole body opened.value opened.proof)
+    | _ =>
+      let some opened ← openOnce t | return none
+      pure (opened.value, opened.proof)
   let result ← (calculate next).run' {}
-  return some ⟨result.value,
-    joinEqualities t next result.value (.forallElim .eqRefl t) result.proof⟩
+  return some ⟨result.value, joinEqualities t next result.value step result.proof⟩
 
 /-- Calculate `t` with the definitions `names` opened wherever they occur. -/
 def openDefinitions (names : List Name) (t : Term) : CommandElabM Calculation :=
@@ -973,11 +1002,25 @@ partial def reconcile (a b : Term) (fuel? : Option Nat := none) :
   if a == b then return some (a, .forallElim .eqRefl a, .forallElim .eqRefl a)
   let fuel ← match fuel? with | some fuel => pure fuel | none => maxSteps
   if fuel == 0 then return none
+  -- A closed definition beneath a substitution opens beneath it.
+  let wrapped? (t : Term) : CalculationM (Option DefinitionInfo) := do
+    let (.definition `FOL.Formula.subst [_], [_, body]) := getAppFnArgs t | return none
+    return (← closedDefinition? body).map (·.1)
   let opened (t : Term) : CalculationM (Option Calculation) := do
-    let some next ← unfoldOnce t | return none
-    let result ← calculate next
-    return some ⟨result.value,
-      joinEqualities t next result.value (.forallElim .eqRefl t) result.proof⟩
+    let step? ← match getAppFnArgs t with
+      | (.definition `FOL.Formula.subst [f], [L, body]) =>
+        if (← closedDefinition? body).isSome then
+          pure ((← openOnce body).map fun opened =>
+            (⟨applyDefinition `FOL.Formula.subst [L, opened.value] [f],
+              mkEqCongr (Term.lam `A (applyDefinition `FOL.Formula.subst [L.shift, .bvar 0]
+                [f.shift])) body opened.value opened.proof⟩ : Calculation))
+        else pure ((← unfoldOnce t).map fun next => ⟨next, .forallElim .eqRefl t⟩)
+      | _ =>
+        if (← closedDefinition? t).isSome then openOnce t
+        else pure ((← unfoldOnce t).map fun next => ⟨next, .forallElim .eqRefl t⟩)
+    let some step := step? | return none
+    let result ← calculate step.value
+    return some ⟨result.value, joinEqualities t step.value result.value step.proof result.proof⟩
   let openLeft : CalculationM (Option (Term × Proof × Proof)) := do
     let some oa ← opened a | return none
     let some (c, pa, pb) ← reconcile oa.value b (some (fuel - 1)) | return none
@@ -1014,6 +1057,16 @@ partial def reconcile (a b : Term) (fuel? : Option Nat := none) :
   | some _, none => openLeft
   | none, some _ => openRight
   | none, none =>
+    match ← wrapped? a, ← wrapped? b with
+    | some _, some _ =>
+      let some oa ← opened a | return none
+      let some ob ← opened b | return none
+      let some (c, pa, pb) ← reconcile oa.value ob.value (some (fuel - 1)) | return none
+      return some (c, joinEqualities a oa.value c oa.proof pa,
+        joinEqualities b ob.value c ob.proof pb)
+    | some _, none => return ← openLeft
+    | none, some _ => return ← openRight
+    | none, none => pure ()
     let (f, xs) := getAppFnArgs a
     let (g, ys) := getAppFnArgs b
     unless xs.length == ys.length do return none

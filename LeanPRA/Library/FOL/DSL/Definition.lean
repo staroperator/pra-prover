@@ -82,6 +82,39 @@ private def substitutedFormula (f L A : Term) : Term :=
 
 mutual
 
+/-- Transport the application `info.name fs` of a definition without a substitution theorem by
+opening it one step. When the substitution leaves the opened body unchanged, as for a closed
+sentence such as a fixed point built from a program code, the result is the application itself.
+Its equation with the opened body holds by unfolding, so the proof uses reflexivity there. Any
+other application is reported as unsupported. -/
+private partial def substOpened (k : Nat) (info : DefinitionInfo) (fs : List Term) :
+    SubstitutionM (Term × Proof) := do
+  let g ← read
+  let s ← lifted k
+  let source := info.apply fs
+  let (.definition name parameters, args) := getAppFnArgs source |
+    throwError "`{info.name}` has no substitution theorem"
+  let some (.function d) := (Surface.CoreEnvironment.getState (← getEnv)).lookup name |
+    throwError "`{info.name}` has no substitution theorem"
+  let opened := Core.betaReduceTerm (← Surface.getMaxDepth)
+    (args.foldl .app (d.body.instantiate parameters))
+  let operation := if info.isFormula then substitutedFormula else substitutedTerm
+  let (result, proof) ← if info.isFormula then substFormula k opened else substTerm k opened
+  unless result == opened do throwError "`{info.name}` has no substitution theorem"
+  let substituted := operation s g.language
+  -- The recursive formula proof starts at `substWithDepth`; the caller expects `subst`.
+  let proof := if info.isFormula then
+    let atDepth := applyDefinition `FOL.Formula.substWithDepth [g.language, opened, numeral k]
+      [applyDefinition `FOL.liftSubst [g.language] [g.f]]
+    let ordinary := substituted opened
+    let eq := applyTheorem `FOL.Formula.substWithDepth_liftSubst
+      [g.language, opened, numeral k] [g.f]
+    mkEqTrans ordinary atDepth opened (mkEqSymm atDepth ordinary eq) proof
+  else proof
+  return (source, mkEqTrans (substituted source) (substituted opened) source
+    (.forallElim .eqRefl (substituted source))
+    (mkEqTrans (substituted opened) opened source proof (.forallElim .eqRefl opened)))
+
 /-- Apply the substitution theorem of the definition `info` to its application `info.name fs`
 beneath `k` binders. The proof states `Term.subst s L t = result` for a term definition and
 `Formula.subst s L t = result` for a formula definition, where `s` is the lifted
@@ -89,9 +122,8 @@ substitution. -/
 private partial def substDefinition (k : Nat) (info : DefinitionInfo) (fs : List Term) :
     SubstitutionM (Term × Proof) := do
   let g ← read
-  let some theoremName := info.substitution |
-    throwError "`{info.name}` has no substitution theorem"
   let s ← lifted k
+  let some theoremName := info.substitution | substOpened k info fs
   let values := fs
   let mut steps := []
   for (value, i) in values.zipIdx do
@@ -241,7 +273,13 @@ private partial def substTerm (k : Nat) (t : Term) : SubstitutionM (Term × Proo
           [(applyDefinition `Tuple.map [arity.value, xs] [f], xs', proof)]))
     | _, _ => throwError "function arity did not reduce to a numeral"
   | .definition `FOL.Term.shift [], [_, count, x] =>
-    unless k > 0 && count == numeral k do throwError "unexpected shift in a definition body"
+    unless k > 0 && count == numeral k do
+      -- A shift of a bound variable past a binder is calculated to the moved variable first.
+      let moved ← (calculate t).run' {}
+      if moved.value == t then throwError "unexpected shift in a definition body"
+      let (result, proof) ← substTerm k moved.value
+      return (result, mkEqTrans source (substitutedTerm s L moved.value) result
+        (congruence (fun ts => substitutedTerm s L ts[0]!) [(t, moved.value, moved.proof)]) proof)
     let .parameter _ := x | throwError "a shifted term must be a parameter of the definition"
     modify (x :: ·)
     return (applyDefinition `FOL.Term.shift [L, count, substitutedTerm g.f L x],
