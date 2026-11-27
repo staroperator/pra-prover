@@ -5,9 +5,9 @@ compilation for the PRA language. Tactics are host Lean programs that fill conte
 metavariables inside `by ...` expressions. Every finished proof and generated helper declaration is
 checked by the PRA core checker before it enters the environment.
 
-Import `LeanPRA.Library.Tactic` for the general proof tactics, and import
-`LeanPRA.Library.Tactic.SigmaInduction` or `LeanPRA.Library.Tactic.Witnessing` when a module uses
-existential induction or witness compilation.
+Import `LeanPRA.Library.Tactic` for the general proof tactics. For existential induction, import
+`LeanPRA.Library.Tactic.SigmaInduction`. For witness extraction, import
+`LeanPRA.Library.Tactic.Witness.Extract` or `LeanPRA.Library.Tactic.Witness.Scoped`.
 
 ## Module organization
 
@@ -18,7 +18,9 @@ existential induction or witness compilation.
 | `Rewrite` | Numerical equality rewriting and definition unfolding in goals and hypotheses. |
 | `Induction` | Quantifier-free induction, excluded-middle case splits, local bindings, and target conversion. |
 | `SigmaInduction` | Induction for existential goals with quantifier-free bodies via witness compilation. |
-| `Witnessing` | Compilation of constructive existential proofs into primitive-recursive functions and specifications. |
+| `Witness.Compiler` | Shared compilation of constructive proofs into numerical programs and checked specifications. |
+| `Witness.Extract` | `extract_witness` for a program whose inputs come from the source statement. |
+| `Witness.Scoped` | `extract_scoped_witness` and `obtain_witness` for programs with fixed inputs chosen by the caller. |
 | `Construction` | Shared metaprogramming helpers for building terms, equality proofs, inequalities, and checked declarations. |
 | `Marker` | Name markers (`let h := t; h`) that attach local names to numerical terms inside goals. |
 
@@ -209,6 +211,31 @@ unfolds the theorem in place when its witness is a single variable or function c
 has at most 128 inference steps). To reuse a compiled witness across module imports without
 unfolding the theorem in downstream modules, place `extract_witness thm` at the end of the module
 that defines `thm`.
+
+### Fixing witnesses before an induction
+
+Suppose a branch proof uses a closed fact `h : ∃ p, Q p`. With scoped extraction you can open `h`
+before the induction and use the same `p` at every step. For `step : ∀ x, ∃ y, R x y`, the
+program `step.scopedWitness p x` takes the number, while `step.scopedWitness_correct p` proves
+`Q p → ∀ x, R x (step.scopedWitness p x)`. The ordinary and scoped pairs can coexist.
+
+```lean
+extract_scoped_witness left_step right_step
+```
+
+The default `(params := auto)` selects closed theorem instances with quantifier-free witness
+conditions and reuses already published ordinary witnesses. To select only eligible instances of
+particular theorems, write `(params := [h₁, h₂])`; `[]` selects none. Inside the calling proof:
+
+```lean
+  obtain_witness
+    leftFn, leftCorrect from left_step
+    rightFn, rightCorrect from right_step
+```
+
+The next goal contains the requested functions and correctness hypotheses. Each distinct selected
+fact is opened once in the proof that supplies those functions and hypotheses to the goal. See
+[Witness/Scoped.lean](Witness/Scoped.lean) for the selection rule and generated signatures.
 
 ## Metaprogramming support
 

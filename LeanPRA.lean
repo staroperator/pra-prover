@@ -64,7 +64,19 @@ public import LeanPRA.Library.FOL.DSL.Tactic.Rewrite
 public import LeanPRA.Library.FOL.DSL.Tactic.Substitution
 public import LeanPRA.Library.FOL.DSL.Theory
 public import LeanPRA.Library.FOL.PRA.Defs
+public import LeanPRA.Library.FOL.PRA.Derive.Command
+public import LeanPRA.Library.FOL.PRA.Derive.Congruence
+public import LeanPRA.Library.FOL.PRA.Derive.Evaluation
+public import LeanPRA.Library.FOL.PRA.Derive.FOL
+public import LeanPRA.Library.FOL.PRA.Derive.Nat
+public import LeanPRA.Library.FOL.PRA.Derive.Substitution
+public import LeanPRA.Library.FOL.PRA.Incompleteness
 public import LeanPRA.Library.FOL.PRA.Numeral
+public import LeanPRA.Library.FOL.PRA.Provability.Computability
+public import LeanPRA.Library.FOL.PRA.Provability.D1
+public import LeanPRA.Library.FOL.PRA.Provability.D2
+public import LeanPRA.Library.FOL.PRA.Provability.D3
+public import LeanPRA.Library.FOL.PRA.Provability.Defs
 public import LeanPRA.Library.Logic
 public import LeanPRA.Library.Nat.Beta
 public import LeanPRA.Library.Nat.Boolean
@@ -83,7 +95,9 @@ public import LeanPRA.Library.Tactic.Marker
 public import LeanPRA.Library.Tactic.Rewrite
 public import LeanPRA.Library.Tactic.SigmaInduction
 public import LeanPRA.Library.Tactic.Sorry
-public import LeanPRA.Library.Tactic.Witnessing
+public import LeanPRA.Library.Tactic.Witness.Compiler
+public import LeanPRA.Library.Tactic.Witness.Extract
+public import LeanPRA.Library.Tactic.Witness.Scoped
 public import LeanPRA.Metatheory.Core.Checker.Conversion
 public import LeanPRA.Metatheory.Core.Checker.Correctness
 public import LeanPRA.Metatheory.Core.Checker.DefEq
@@ -134,7 +148,6 @@ public import LeanPRA.Metatheory.Translation.Consistency
 public import LeanPRA.Metatheory.Translation.Correctness
 public import LeanPRA.Metatheory.Translation.Defs
 public import LeanPRA.Metatheory.Translation.Derivation
-public import LeanPRA.Surface.Primitive
 public import LeanPRA.Surface.Command
 public import LeanPRA.Surface.Delab
 public import LeanPRA.Surface.Display
@@ -151,6 +164,7 @@ public import LeanPRA.Surface.Metavariable.Syntax
 public import LeanPRA.Surface.NameResolution
 public import LeanPRA.Surface.Notation
 public import LeanPRA.Surface.Options
+public import LeanPRA.Surface.Primitive
 public import LeanPRA.Surface.Recovery
 public import LeanPRA.Surface.Syntax
 public import LeanPRA.Surface.Tactic

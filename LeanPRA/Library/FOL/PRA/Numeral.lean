@@ -18,6 +18,8 @@ namespace FOL.PRA
 fol_def num over PRA : Nat → term := fun n =>
   ${primrec (Term.const language 0) (fun _ t => Term.app language 0 t) n}
 
+derive_primrec num
+
 theorem num_zero : num 0 = fol_term[PRA | zero] := rfl
 
 theorem num_succ : ∀ n, num (S n) = fol_term[PRA | succ(${num n})] :=

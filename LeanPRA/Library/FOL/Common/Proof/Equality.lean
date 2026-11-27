@@ -121,7 +121,8 @@ theorem imp_congr_under (L : Nat) (T : Nat → Nat) (E A B C D : Nat) :
     Provable L T (imp (imp E (conj (imp A C) (imp C A)))
       (imp (imp E (conj (imp B D) (imp D B)))
         (imp E (conj (imp (imp A B) (imp C D)) (imp (imp C D) (imp A B)))))) := by
-  let premises := conj (imp E (conj (imp A C) (imp C A))) (imp E (conj (imp B D) (imp D B)))
+  let premises := conj
+    (imp E (conj (imp A C) (imp C A))) (imp E (conj (imp B D) (imp D B)))
   have hE := conj_right L T premises E
   have hac := mp_under L T
     (imp_trans_of_provable L T (conj_left L T premises E)

@@ -1,6 +1,6 @@
 module
 
-public import LeanPRA.Library.Computability.Code
+public import LeanPRA.Library.FOL.Common.Computability
 public import LeanPRA.Library.FOL.DSL.Tactic
 
 /-!
@@ -55,6 +55,28 @@ fol_theory PRA over PRA where
     P(zero) → (∀ x, P(x) → P(succ(x))) → ∀ x, P(x)
 
 namespace PRA
+
+derive_primrec language succ_ne_zero.formula succ_ne_zero.isAxiom succ_injective.formula
+
+derive_primrec succ_injective.isAxiom pair_zero_zero.formula pair_zero_zero.isAxiom
+
+derive_primrec pair_zero_succ.formula pair_zero_succ.isAxiom pair_succ.formula pair_succ.isAxiom
+
+derive_primrec pair_eval_left_right.formula pair_eval_left_right.isAxiom eval_zero.formula
+
+derive_primrec eval_zero.isAxiom eval_succ.formula eval_succ.isAxiom eval_left.formula
+
+derive_primrec eval_left.isAxiom eval_right.formula eval_right.isAxiom eval_pair.formula
+
+derive_primrec eval_pair.isInstance eval_pair.isAxiom eval_comp.formula eval_comp.isInstance
+
+derive_primrec eval_comp.isAxiom eval_rec_zero.formula eval_rec_zero.isInstance
+
+derive_primrec eval_rec_zero.isAxiom eval_rec_succ.formula eval_rec_succ.isInstance
+
+derive_primrec eval_rec_succ.isAxiom induction.formula induction.isInstance induction.isAxiom
+
+derive_primrec isAxiom
 
 fol_theorem pair_zero_succ' (y : Nat) : PRA ⊢
     pair(zero, succ(${y})) = succ(pair(${y}, zero)) := by

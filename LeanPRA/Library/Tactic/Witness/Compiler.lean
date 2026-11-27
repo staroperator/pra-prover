@@ -9,14 +9,13 @@ public meta import LeanPRA.Library.Tactic.Construction
 constructive proofs of existential statements. Recursive proof tactics such as `sigma_induction`
 use the extracted programs as primitive-recursion branches.
 
-- `extract_witness thm₁ thm₂ ⋯` compiles each named existential theorem inside a `pra` block.
 - `compileWitness` compiles a checked theorem `thm` into the numerical function `thm.witness` and
   the specification theorem `thm.witness_correct`.
 - `compileProof` compiles an explicit proof in a local context into `root.witness` and
   `root.witness_correct` under a caller-supplied name `root`, returning a call to the function,
   its property, and a reference to the theorem.
-- `elaborateExtractWitness` elaborates the `extract_witness` command by calling `compileWitness`
-  on each identifier.
+- `compileWithPremises` uses the same compiler with additional numerical declaration parameters
+  and proof premises supplied by scoped extraction.
 
 Universal numerical binders and the witnesses of existential premises become function arguments,
 and the bodies of existential premises become implication assumptions in the specification. For
@@ -48,7 +47,7 @@ with other premise shapes are also unfolded at each use.
 
 public meta section
 
-namespace LeanPRA.Library.Tactic.Witnessing
+namespace LeanPRA.Library.Tactic.Witness.Compiler
 
 open Lean Elab Command LeanPRA.Core
 open LeanPRA.Library.Tactic.Construction
@@ -96,6 +95,10 @@ private def programName (root : Name) : Name := root ++ `witness
 
 private def correctnessName (root : Name) : Name := root ++ `witness_correct
 
+/-- Whether ordinary extraction has already published the witness for this source theorem. -/
+def hasPublishedWitness (source : Name) : CommandElabM Bool :=
+  return ((witnesses.getState (← getEnv)).find? source).join.isSome
+
 private def eliminateExists (motive target : Core.Predicate) (value body : Core.Proof) :
     Core.Proof :=
   let premise := Core.Predicate.app motive.shift (.bvar 0)
@@ -104,7 +107,7 @@ private def eliminateExists (motive target : Core.Predicate) (value body : Core.
 
 /-- Prove a theorem of `type` from its compiled program `code` and checked specification `proof`.
 Each existence premise supplies its number to `code` and to `proof`. -/
-private partial def reconstruct (type : Core.Predicate) (code : Core.Term)
+partial def reconstruct (type : Core.Predicate) (code : Core.Term)
     (proof : Core.Proof) : CommandElabM Core.Proof := do
   match ← formulaHead type with
   | .all motive =>
@@ -307,7 +310,7 @@ private def shareWitness (name : Name) (value : Extracted) (motive target : Core
 
 /-- Whether a theorem of `type` can be compiled once: it concludes with an existence statement,
 and each premise is quantifier-free or an existence statement with a quantifier-free body. -/
-private partial def hasExistentialResult (context : Core.Context) (type : Core.Predicate) :
+partial def hasExistentialResult (context : Core.Context) (type : Core.Predicate) :
     CommandElabM Bool := do
   match ← formulaHead type with
   | .all motive =>
@@ -328,6 +331,18 @@ private partial def hasExistentialResult (context : Core.Context) (type : Core.P
 private def openExistentialBranch : Core.Proof → Core.Proof
   | .forallIntro _ _ (.impIntro _ _ body) => body
   | branch => .impElim (.forallElim (shiftProof branch 1 1) (.bvar 0)) (.hyp 0)
+
+/-- Publish a program and its specification. The extra premises are open hypotheses in the
+extracted proof; the first premise is the outermost implication in the published theorem. -/
+private def publishPair (program specification : Name) (parameters : List Core.Parameter)
+    (premises : List Core.Predicate) (arity : Nat) (result : Extracted) (stx : Syntax) :
+    CommandElabM Unit := do
+  let functions := parameters.filterMap fun
+    | .function n k => some (Core.FunctionParameter.mk k n)
+    | _ => none
+  publishChecked (.function ⟨program, functions, arity, result.witness⟩) stx
+  publishChecked (.theoremE ⟨specification, parameters, premises.foldr .imp result.property,
+    premises.foldr (Core.Proof.impIntro `checked) result.proof⟩) stx
 
 mutual
 
@@ -424,16 +439,16 @@ private partial def extract (context : Core.Context) (target : Core.Predicate)
   | _ => throwError "recursive proof branches must provide a constructive numerical witness"
 
 /-- Compile `proof` of `type` beneath its numerical binders and premises, returning the argument
-count along with the extracted witness, property, and proof. When `publish` is true, the innermost
-step publishes `root.witness` and `root.witness_correct` in the local context. When `publish` is
-false, `context` contains only declaration parameters, the caller publishes `root.witness`, and the
-returned specification refers to `root.witness` by name. -/
-private partial def extractArguments (root : Name) (publish : Bool) (context : Core.Context)
-    (type : Core.Predicate) (proof : Core.Proof) : CommandElabM (Nat × Extracted) := do
+count along with the extracted witness, property, and proof. With `localRoot`, the innermost
+step can publish a helper in the local context. Otherwise the caller publishes `program`, and the
+returned specification refers to that program by name. -/
+private partial def extractArguments (program : Name) (localRoot : Option Name)
+    (context : Core.Context) (type : Core.Predicate) (proof : Core.Proof) :
+    CommandElabM (Nat × Extracted) := do
   match ← formulaHead type with
   | .all motive =>
     let body := Core.Proof.forallElim (shiftProof proof 1 0) (.bvar 0)
-    let (arity, result) ← extractArguments root publish (context.pushLocal 0)
+    let (arity, result) ← extractArguments program localRoot (context.pushLocal 0)
       (.app motive.shift (.bvar 0)) body
     return (arity + 1, ⟨.lam `x result.witness, .all (.lam `x result.property),
       .forallIntro `x (.lam `x result.property) result.proof⟩)
@@ -443,19 +458,19 @@ private partial def extractArguments (root : Name) (publish : Bool) (context : C
       let premise := Core.Predicate.app motive.shift (.bvar 0)
       let body := Core.Proof.impElim (shiftProof proof 1 1)
         (.existsIntro motive.shift (.bvar 0) (.hyp 0))
-      let (arity, result) ← extractArguments root publish
+      let (arity, result) ← extractArguments program localRoot
         ((context.pushLocal 0).pushProof premise) b.shift body
       let property := Core.Predicate.lam `w (.imp premise result.property)
       return (arity + 1, ⟨.lam `w result.witness, .all property,
         .forallIntro `w property (.impIntro `h premise result.proof)⟩)
     let body := Core.Proof.impElim (shiftProof proof 0 1) (.hyp 0)
-    let (arity, result) ← extractArguments root publish (context.pushProof a) b body
+    let (arity, result) ← extractArguments program localRoot (context.pushProof a) b body
     return (arity, ⟨result.witness, .imp a result.property, .impIntro `h a result.proof⟩)
   | .ex motive =>
     let result ← extract context motive proof
-    if publish then return (0, ← publishLocal root context motive result)
+    if let some root := localRoot then return (0, ← publishLocal root context motive result)
     -- The local variables are the arguments of the program, the first one outermost.
-    let call := applyDefinition (programName root)
+    let call := applyDefinition program
       ((List.range context.locals.length).reverse.map Core.Term.bvar)
       ((List.range context.functions.length).map Core.Term.parameter)
     let property := Core.Predicate.app motive call
@@ -469,20 +484,27 @@ for unfolding at each use. -/
 private partial def compileWitnessCore (d : Core.TheoremDefinition) (root : Name) (always : Bool)
     (stx : Syntax) : CommandElabM Bool := do
   let context : Core.Context := { functions := d.functions, predicates := d.predicates }
-  let (arity, result) ← extractArguments root false context d.type d.body
+  let (arity, result) ← extractArguments (programName root) none context d.type d.body
   if !always && isCall result.witness && proofSteps result.proof ≤ directLimit then
     modifyEnv (witnesses.addEntry · (d.name, none))
     return false
-  let parameters := d.parameters.filterMap fun
-    | .function n k => some (Core.FunctionParameter.mk k n)
-    | _ => none
-  publishChecked (.function ⟨programName root, parameters, arity, result.witness⟩) stx
-  publishChecked
-    (.theoremE ⟨correctnessName root, d.parameters, result.property, result.proof⟩) stx
+  publishPair (programName root) (correctnessName root) d.parameters [] arity result stx
   modifyEnv (witnesses.addEntry · (d.name, some root))
   return true
 
 end
+
+/-- Compile a program under fixed numerical parameters and hypotheses. Its specification takes
+the same declaration parameters followed by the hypotheses in `premises`, in order. -/
+def compileWithPremises (program specification : Name) (parameters : List Core.Parameter)
+    (premises : List Core.Predicate) (type : Core.Predicate) (proof : Core.Proof) :
+    CommandElabM Unit := do
+  let context : Core.Context := {
+    functions := Core.Parameter.functions parameters
+    predicates := Core.Parameter.predicates parameters
+    proofs := premises.reverse }
+  let (arity, result) ← extractArguments program none context type proof
+  publishPair program specification parameters premises arity result (← getRef)
 
 /-- Compile an explicit proof in its local context into the function `root.witness` and the
 theorem `root.witness_correct`, returning a call to the function, its property, and a reference to
@@ -493,7 +515,7 @@ and proof already head-reference existing declarations or variables, they are re
 def compileProof (root : Name) (context : Core.Context) (type : Core.Predicate)
     (proof : Core.Proof) : CommandElabM (Core.Term × Core.Predicate × Core.Proof) := do
   let _ ← checked (Core.checkProof 1024 (← environment) context proof type)
-  let (_, result) ← extractArguments root true context type proof
+  let (_, result) ← extractArguments (programName root) (some root) context type proof
   return (result.witness, result.property, result.proof)
 
 /-- Compile a checked theorem `source` into the numerical function `source.witness` and the
@@ -509,14 +531,4 @@ def compileWitness (source : Name) (stx : Syntax) : CommandElabM Unit := do
   unless (witnesses.getState (← getEnv)).find? d.name == some (some d.name) do
     discard <| compileWitnessCore d d.name true stx
 
-/-- `extract_witness thm₁ thm₂` compiles each named theorem `thmᵢ` with `compileWitness`,
-publishing the function `thmᵢ.witness` and the theorem `thmᵢ.witness_correct`. -/
-syntax (name := extractWitness) "extract_witness" (ppSpace colGt ident)+ : praDecl
-
-@[command_elab LeanPRA.Surface.praEntry]
-def elaborateExtractWitness : CommandElab := fun stx => do
-  let `(praDecl| extract_witness $names:ident*) := stx[0] | throwUnsupportedSyntax
-  for name in names do
-    withRef name do compileWitness name.getId name
-
-end LeanPRA.Library.Tactic.Witnessing
+end LeanPRA.Library.Tactic.Witness.Compiler

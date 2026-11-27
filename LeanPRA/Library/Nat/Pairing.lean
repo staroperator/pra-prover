@@ -91,6 +91,16 @@ theorem diagonal_unique : ∀ z n,
 /-- Encode `(x, y)` as the natural number `triangular (x + y) + x`. -/
 def pair : Nat → Nat → Nat := fun x y => triangular (x + y) + x
 
+theorem pair_zero_succ_eq : ∀ a, pair 0 (S a) = S (pair a 0) := by
+  intro a
+  rw [pair, zero_add, triangular_succ]
+  rfl
+
+theorem pair_succ_eq : ∀ a b, pair (S a) b = S (pair a (S b)) := by
+  intro a b
+  rw [pair, succ_add]
+  rfl
+
 /-- Recover the first component `z - triangular (diagonal z)` of a code `z`. -/
 def unpairLeft : Nat → Nat := fun z => z - triangular (diagonal z)
 
@@ -199,5 +209,34 @@ theorem triangular_double : ∀ n, triangular n + triangular n = n * S n := by
 theorem pair_double : ∀ x y, pair x y + pair x y = (x + y) * S (x + y) + (x + x) := by
   intro x y
   rw [pair, add_add_add_comm, triangular_double]
+
+/-- A binary function satisfying the three pairing equations agrees with Cantor pairing. -/
+theorem eq_pair_of_equations (p : Nat → Nat → Nat) :
+    p 0 0 = 0 → (∀ n, p 0 (S n) = S (p n 0)) →
+    (∀ x y, p (S x) y = S (p x (S y))) → ∀ x y, p x y = pair x y := by
+  intro origin boundary step
+  have h : ∀ i, p (unpairLeft i) (unpairRight i) = i := by
+    intro i
+    induction i with i ih
+    · exact origin
+    · let a := unpairLeft i
+      let b := unpairRight i
+      have code : pair a b = i := pair_unpair i
+      rcases zero_or_succ_pred b with hb | hb
+      · rw [hb] at code
+        have previous : p a b = i := ih
+        rw [hb] at previous
+        have next : pair 0 (S a) = S i := by rw [pair_zero_succ_eq, code]
+        rw [← next, unpairLeft_pair, unpairRight_pair, boundary, previous, next]
+      · let c := pred b
+        have previous : p a b = i := ih
+        rw [hb] at previous
+        rw [hb] at code
+        have next : pair (S a) c = S i := by rw [pair_succ_eq, code]
+        rw [← next, unpairLeft_pair, unpairRight_pair, step, previous, next]
+  intro x y
+  have atPair := h (pair x y)
+  rw [unpairLeft_pair, unpairRight_pair] at atPair
+  exact atPair
 
 end

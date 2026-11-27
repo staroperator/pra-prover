@@ -285,6 +285,17 @@ theorem liftSubst_zero (f : Nat → Nat) : ∀ L i, liftSubst f L 0 i = f i := b
   intro L i
   rw [liftSubst_of_le f L 0 i (zero_le i), sub_zero, Term.shift_zero]
 
+theorem liftSubst_consSubst_shiftSubst_zero : ∀ L t k,
+    liftSubst (consSubst t (shiftSubst L k)) L 0 0 = t := by
+  intro L t k
+  rw [liftSubst_zero (consSubst t (shiftSubst L k)), consSubst_zero t (shiftSubst L k)]
+
+theorem liftSubst_consSubst_shiftSubst_succ : ∀ L t k i,
+    liftSubst (consSubst t (shiftSubst L k)) L 0 (S i) = Term.var L (i + k) := by
+  intro L t k i
+  rw [liftSubst_zero (consSubst t (shiftSubst L k)), consSubst_succ t (shiftSubst L k)]
+  rfl
+
 theorem liftSubst_one (f : Nat → Nat) : ∀ L i,
     liftSubst f L 1 i = consSubst (Term.var L 0) (fun j => Term.shift L 1 (f j)) i := by
   intro L i

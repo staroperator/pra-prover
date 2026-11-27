@@ -1,7 +1,7 @@
 module
 
 public import LeanPRA.Library.FOL.Common.Proof
-public meta import LeanPRA.Library.Tactic.Witnessing
+public meta import LeanPRA.Library.Tactic.Witness.Extract
 
 /-!
 # Derived propositional rules
@@ -178,6 +178,12 @@ theorem disj_elim (L : Nat) (T : Nat → Nat) (A B C : Nat) :
   have conclusion := disj_elim_under L T (conj_left L T (disj A B) branches) hleft hright
   have curried := mp L T _ _ (imp_curry L T (disj A B) branches C) conclusion
   exact imp_trans_of_provable L T curried (imp_curry L T (imp A C) (imp B C) C)
+
+/-- Combine proofs of two formulas into a proof of their conjunction. -/
+theorem conj' (L : Nat) (T : Nat → Nat) : ∀ A B,
+    Provable L T A → Provable L T B → Provable L T (conj A B) := by
+  intro A B h k
+  exact mp L T B _ (mp L T A _ (conj_intro L T A B) h) k
 
 extract_witness imp_refl imp_trans imp_imp_right imp_distrib imp_trans_under
   imp_trans_under_of_provable falsum_imp neg_neg_elim imp_contrapos imp_neg_swap conj_intro

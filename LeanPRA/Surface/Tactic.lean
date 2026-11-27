@@ -77,6 +77,9 @@ display lists the name once. A `replacement` changes a hypothesis at its existin
 A `removal` drops a hypothesis and shifts the following proof indices. A `renaming` changes
 local names while preserving their values and context indices. -/
 inductive Binding where
+  /-- An abstract local of the given arity. Supply its value in the hole's context arguments
+  when using the new goal's proof in the original scope. -/
+  | variable (name : Name) (arity : Nat) (ref : Syntax := .missing)
   | definition (name : Name) (value : Metavariable.Term) (ref : Syntax := .missing)
   | hypothesis (name : Name) (type : Metavariable.Predicate) (ref : Syntax := .missing)
   | redefinition (name : Name) (value : Metavariable.Term)

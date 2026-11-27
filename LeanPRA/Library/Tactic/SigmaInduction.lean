@@ -1,6 +1,6 @@
 module
 
-public meta import LeanPRA.Library.Tactic.Witnessing
+public meta import LeanPRA.Library.Tactic.Witness.Compiler
 public meta import LeanPRA.Library.Tactic.Induction
 
 /-!
@@ -129,7 +129,7 @@ def evalSigmaInduction : Tactic := fun stx => do
     Tactic.refine (← `(praExpr| let $n:ident := 0; ?_))
     Tactic.evalTacticSeq base
   let baseProof ← complete (Metavariable.Frontend.completeProof baseProof)
-  let (baseCode, _, baseChecked) ← Witnessing.compileProof
+  let (baseCode, _, baseChecked) ← Witness.Compiler.compileProof
     (root ++ `base) context baseType baseProof
   let previous := Core.betaReducePredicate goal.maxDepth (.app family.shift (.bvar 0))
   let next := Core.Predicate.app family.shift (.app .succ (.bvar 0))
@@ -142,7 +142,7 @@ def evalSigmaInduction : Tactic := fun stx => do
       Tactic.refine (← `(praExpr| let $n:ident := S $k:ident; ?_))
     Tactic.evalTacticSeq step
   let stepProof ← complete (Metavariable.Frontend.completeProof stepProof)
-  let (stepCode, _, stepChecked) ← Witnessing.compileProof
+  let (stepCode, _, stepChecked) ← Witness.Compiler.compileProof
     (root ++ `step) context stepType stepProof
   let code := Core.Term.app (.primrec baseCode stepCode) index
   let previousCode := Core.Term.app (.primrec baseCode.shift stepCode.shift) (.bvar 0)

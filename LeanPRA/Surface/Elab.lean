@@ -1064,6 +1064,8 @@ private def openTacticGoal (type : Predicate) :
     let .mvar goal _ _ := hole | throwError "expected a proof metavariable"
     modify fun s => { s with tacticGoals := s.tacticGoals.push (goal, scope) }
     return (goal, hole)
+  | .variable name arity ref :: rest =>
+    withLocal ref name arity (openTacticGoal type.shift rest)
   | .definition name value ref :: rest => do
     let s ← currentScope
     checked (← getRef) (Bridge.checkTerm (← projection) (← getMaxDepth) s.environment

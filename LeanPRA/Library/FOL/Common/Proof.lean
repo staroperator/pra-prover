@@ -1,7 +1,7 @@
 module
 
 public import LeanPRA.Library.FOL.Common.LogicalAxiom
-meta import LeanPRA.Library.Tactic.Witnessing
+meta import LeanPRA.Library.Tactic.Witness.Extract
 
 /-!
 # Numerical Hilbert proofs and provability
