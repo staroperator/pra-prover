@@ -6,9 +6,8 @@ Build the documentation for `PRAProver.lean` and its imports:
 lake build PRAProver:docs
 ```
 
-Open `.lake/build/doc/index.html`. To publish on GitHub Pages, upload the contents of
-`.lake/build/doc` as a Pages artifact, with `index.html` at its root. The generated site uses
-relative links, includes `.nojekyll`, and runs name search in the browser.
+Open `.lake/build/doc/index.html`. The generated site uses relative links and runs name search in
+the browser.
 
 To extract documentation data for one module:
 
