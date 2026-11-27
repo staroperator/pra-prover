@@ -10,20 +10,20 @@ open Lake DSL
 - The library facet `pra` collects exports in dependency order and writes `modules.txt`.
 - The optional `docs` facet documents PRA declarations in the library's root modules and imports.
 
-The default `LeanPRA` build runs its `pra` facet and builds all Library source modules.
+The default `PRAProver` build runs its `pra` facet and builds all Library source modules.
 -/
 
-package «lean-pra» where
+package «pra-prover» where
   version := v!"0.1.0"
 
 @[default_target]
-lean_lib LeanPRA where
-  globs := #[.one `LeanPRA]
+lean_lib PRAProver where
+  globs := #[.one `PRAProver]
   precompileModules := true
   defaultFacets := #[LeanLib.leanArtsFacet, LeanLib.facetKind ++ `pra]
 
 lean_lib PRAExport where
-  roots := #[`LeanPRA.Export.Specification, `LeanPRA.Export.Writer]
+  roots := #[`PRAProver.Export.Specification, `PRAProver.Export.Writer]
   precompileModules := true
 
 private def exportMarker (pkg : Package) (owner : Lean.Name) : System.FilePath :=
@@ -36,9 +36,9 @@ private def removePair (dir : System.FilePath) (owner : Lean.Name) : IO Unit := 
 
 private def exportAfter (pkg : Package) (owner : Lean.Name) (deps : Job Unit) :
     FetchM (Job System.FilePath) := do
-  let some writer ← findModule? `LeanPRA.Export.Writer | error "exporter module missing"
+  let some writer ← findModule? `PRAProver.Export.Writer | error "exporter module missing"
   let native ← writer.dynlib.fetch
-  let driver := writer.pkg.dir / "LeanPRA/Export/Main.lean"
+  let driver := writer.pkg.dir / "PRAProver/Export/Main.lean"
   let source ← inputTextFile driver
   let config ← inputTextFile (writer.pkg.dir / "lakefile.lean")
   let deps := ((deps.mix source).mix config).zipWith (fun _ p => p) native
@@ -64,8 +64,8 @@ module_facet pra (mod) : Option System.FilePath := do
   let imports ← (← mod.transImports.fetch).await
   let arts ← mod.leanArts.fetch
   -- Modules without the PRA environment extension have no PRA declarations.
-  if mod.name != `LeanPRA.Surface.Environment &&
-      !imports.any (·.name == `LeanPRA.Surface.Environment) then
+  if mod.name != `PRAProver.Surface.Environment &&
+      !imports.any (·.name == `PRAProver.Surface.Environment) then
     return ← arts.mapM fun _ => do
       removePair (pkg.buildDir / "pra") mod.name
       let marker := exportMarker pkg mod.name
@@ -77,9 +77,9 @@ module_facet pra (mod) : Option System.FilePath := do
 
 private def exportModules (lib : LeanLib) : FetchM (Array Module) := do
   let mut roots ← lib.getModuleArray
-  if lib.name == `LeanPRA then
+  if lib.name == `PRAProver then
     let (_, names) ← StateT.run (s := #[]) do
-      (Glob.submodules `LeanPRA.Library).forEachModuleIn lib.pkg.dir fun name =>
+      (Glob.submodules `PRAProver.Library).forEachModuleIn lib.pkg.dir fun name =>
         modify (·.push name)
     for name in names.qsort (fun a b => a.toString < b.toString) do
       let some mod := lib.pkg.findModule? name | error s!"unknown module {name}"
@@ -102,7 +102,7 @@ library_facet pra (lib) : System.FilePath := do
   let modules ← exportModules lib
   let jobs ← modules.mapM fun mod => fetch <| mod.facet `pra
   let markers := (Job.collectArray jobs).map (·.filterMap id)
-  let some writer ← findModule? `LeanPRA.Export.Writer | error "exporter module missing"
+  let some writer ← findModule? `PRAProver.Export.Writer | error "exporter module missing"
   let config ← inputTextFile (writer.pkg.dir / "lakefile.lean")
   let markers := markers.zipWith (fun files _ => files) config
   let out := pkg.buildDir / "pra"
@@ -123,11 +123,11 @@ library_facet pra (lib) : System.FilePath := do
     return marker
 
 lean_lib PRADocGen where
-  roots := #[`LeanPRA.DocGen.Pretty, `LeanPRA.DocGen.Writer,
-    `LeanPRA.DocGen.Site, `LeanPRA.DocGen.Driver]
+  roots := #[`PRAProver.DocGen.Pretty, `PRAProver.DocGen.Writer,
+    `PRAProver.DocGen.Site, `PRAProver.DocGen.Driver]
 
 lean_exe praDocGen where
-  root := `LeanPRA.DocGen.Main
+  root := `PRAProver.DocGen.Main
   supportInterpreter := true
 
 private def docgenExecutable : FetchM (Job System.FilePath) := do
@@ -165,9 +165,9 @@ library_facet docs (lib) : System.FilePath := do
   let jobs ← modules.mapM fun mod => fetch <| mod.facet `docs
   let mut deps := (Job.mixArray jobs)
   for file in ["style.css", "search.js"] do
-    deps := deps.mix (← inputTextFile (pkg.dir / "LeanPRA/DocGen" / file))
+    deps := deps.mix (← inputTextFile (pkg.dir / "PRAProver/DocGen" / file))
   let directory := pkg.buildDir / "doc"
   -- Site assembly checks its cache and removes pages outside the current import graph.
   let job ← docgen (#["site", (pkg.buildDir / "doc-data").toString, directory.toString,
-    (pkg.dir / "LeanPRA/DocGen").toString] ++ names.map (·.toString)) deps
+    (pkg.dir / "PRAProver/DocGen").toString] ++ names.map (·.toString)) deps
   return job.map fun _ => directory / "index.html"

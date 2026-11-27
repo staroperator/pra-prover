@@ -3,8 +3,8 @@
 ## File names and build outputs
 
 Specifications use `.pra` and object files use `.prao`, where `o` stands for an object file. Paths
-follow Lean's module hierarchy: for example, `LeanPRA.Library.Nat.Defs` produces
-`LeanPRA/Library/Nat/Defs.pra` and `LeanPRA/Library/Nat/Defs.prao` under the output directory.
+follow Lean's module hierarchy: for example, `PRAProver.Library.Nat.Defs` produces
+`PRAProver/Library/Nat/Defs.pra` and `PRAProver/Library/Nat/Defs.prao` under the output directory.
 Primitive operations appear directly in expressions.
 
 Other proof systems use similar pairs: [Metamath Zero](https://github.com/digama0/mm0) pairs `.mm0`
@@ -122,8 +122,8 @@ with `shape` before type-checking. A `.pra` declaration produces the same tree a
 counterpart except that a `.pra` theorem has the three fields `NAME`, `PARAMETERS`, and `STATEMENT`.
 
 All remaining term, predicate, and proof constructors match
-[`LeanPRA/Core/Syntax.lean`](../LeanPRA/Core/Syntax.lean). Their wire tags are listed in `TAGS` in
-[`src/syntax.rs`](src/syntax.rs) and checked in [`src/kernel.rs`](src/kernel.rs).
+[`PRAProver/Core/Syntax.lean`](../PRAProver/Core/Syntax.lean). Their wire tags are listed in `TAGS`
+in [`src/syntax.rs`](src/syntax.rs) and checked in [`src/kernel.rs`](src/kernel.rs).
 
 `modules.txt` lists each module once in dependency order. Each dot-separated component of a module
 name must be non-empty and free of path separators (`/`, `\`, `:`). For each module in

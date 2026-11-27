@@ -18,8 +18,8 @@ dependencies change or an output file is missing. Each module has a `pra` build 
 that module's declarations, and the library `pra` facet collects the module list into
 `modules.txt`.
 
-To build the library exports explicitly, run `lake build LeanPRA:pra`. To update one module and its
-imported modules, run `lake build +LeanPRA.Library.Nat.Defs:pra`. Run the library facet before
+To build the library exports explicitly, run `lake build PRAProver:pra`. To update one module and
+its imports, run `lake build +PRAProver.Library.Nat.Defs:pra`. Run the library facet before
 checking the directory so `modules.txt` lists the current module set.
 
 Then run the checker on the export directory, allowing input records up to 4 GiB:
@@ -41,16 +41,16 @@ the same weight, the checker opens both in the same step.
 
 `lake build` exports every module containing PRA declarations in the root and Library import
 closures. Modules without PRA declarations produce no files. For an exported module such as
-`LeanPRA.Library.Nat.Defs`, the output directory contains:
+`PRAProver.Library.Nat.Defs`, the output directory contains:
 
-- `LeanPRA/Library/Nat/Defs.pra`: a readable specification with definition bodies and theorem
+- `PRAProver/Library/Nat/Defs.pra`: a readable specification with definition bodies and theorem
   statements.
-- `LeanPRA/Library/Nat/Defs.prao`: an object file with those declarations and complete theorem
+- `PRAProver/Library/Nat/Defs.prao`: an object file with those declarations and complete theorem
   proofs.
 - `modules.txt`: the module names in the order the checker reads them.
 
 File paths follow the module hierarchy, matching Lean's build directories. `modules.txt` lists
-dotted module names such as `LeanPRA.Library.Nat.Defs`.
+dotted module names such as `PRAProver.Library.Nat.Defs`.
 
 ## What the checker verifies
 
@@ -73,8 +73,8 @@ prints an error and exits with status 1.
 
 This checker is an independent executable implementation of the core typing and conversion rules;
 the formal soundness and completeness proofs in
-[`LeanPRA/Metatheory/Core`](../LeanPRA/Metatheory/Core) apply to the Lean core checker. Input limits
-default to 256 MiB per declaration record, configurable with `--max-record-mib`. Syntax depth
+[`PRAProver/Metatheory/Core`](../PRAProver/Metatheory/Core) apply to the Lean core checker. Input
+limits default to 256 MiB per declaration record, configurable with `--max-record-mib`. Syntax depth
 is limited to 2048, and variable indices and arities to 1,000,000. Inputs that exceed a limit
 are rejected.
 

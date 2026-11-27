@@ -1,28 +1,88 @@
-# Lean-PRA: A language for writing finitistic proofs
+# PRA-Prover: A proof assistant of Primitive Recursive Arithmetic (PRA)
 
-This project aims to develop a language for writing proofs in *Primitive Recursive Arithmetic*
-(PRA), a first-order theory of arithmetic that allows us to formalize a wide range of syntactic
-proofs in logic (e.g. Gödel's incompleteness theorems), while being widely accepted as a *finitistic
-proof system*.
+Primitive Recursive Arithmetic (PRA) is a first-order theory of arithmetic that is widely accepted
+for *finitism* reasoning. **PRA-Prover** is a proof assistant of PRA, based on a type-theoretic
+formalization of PRA, written as a DSL embedded in Lean.
 
-The PRA language is a DSL embedded in Lean. Its core is a MLTT-style lambda calculus with only
-first-order functions and first-order predicates over natural numbers. It has a surface syntax in
-Lean with an elaborator reducing it to the core language, and every definition must be fully checked
-by the core. *Note: you don't need to assume Lean's axioms are consistent. The role of Lean here is
-for metaprogramming and an executable checker. Furthermore, it is possible to export PRA definitions
-and re-check them in an independent checker.*
-
-We further formalize the metatheory of the core language, the correctness of the core checker, and
-translation from this core language into first-order PRA. *These metatheory formalizations, however,
-assumes Lean's axioms which are much stronger than PRA.*
+Although PRA-Prover is embedded in Lean, *you don't need to assume the consistency of Lean's axioms* or ZFC + $<\omega$ inaccessible cardinals. Lean is merely for metaprogramming and IDE support,
+and all proofs that are checked in PRA-Prover are exported and re-checked by a smaller core checker
+written in Rust.
 
 > [!WARNING]
-> This repository is largely maintained by LLM. I will try my best to review the specifications and
-> documents.
+> This repository is largely maintained by LLM. Some features are quite unstable. I will try my best
+> to review the specifications and documents.
 
-## Demo
+## Main results
 
-One can use `pra` block to declare definitions and theorems in PRA language.
+### Proof theory
+
+Gödel's second incompleteness theorem for PRA:
+
+```lean
+theorem PRA.con_unprovable : Consistent PRA.language PRA.isAxiom →
+    ¬ (PRA ⊢ con PRA.language PRA.isAxiom.code)
+```
+
+## Language features
+
+The language of PRA-Prover is a type-theoretic formalization of PRA (we will call it the PRA
+language in the rest).
+
+### Syntax
+
+**Types.** To make it faithful to the first-order formalization of PRA, the only base types in PRA
+languages are `Nat` (natural numbers), `Prop` (propositions) and `QFProp` (a subtype of `Prop` for
+quantifier-free propositions), and all types are first-order (i.e. `Nat → Nat → ⋯ → BaseType`).
+There is no inductive types, higher-order function types or dependent types. Inductive concepts like
+syntax trees have to be explicitly encoded into `Nat`.
+
+**Definitions and theorems.** A definition's type can be either a *function* (`Nat → Nat → ⋯ → Nat`)
+or a *predicate* (`Nat → Nat → ⋯ → QFProp/Prop`). They can be *parameterized* with first-order
+parameters:
+``` lean
+def iter (f : Nat → Nat) : Nat → Nat → Nat
+```
+Every variable written in the left of `:` is a parameter. Such definitions and theorems should be
+understood as schemas, not higher-order functions. Each parameter is a hole to be replaced by a
+concrete term, and are required to be instantiated at each use.
+
+**Functions.** The primitive consturctions for functions are:
+
+- Zero `0 : Nat`,
+- Successor `S : Nat → Nat`,
+- Lambda abstraction `fun x => t` and application `t₁ t₂`,
+- Primitive recursion `primrec base step : Nat → Nat` where `base : Nat` and
+  `step : Nat → Nat → Nat`.
+
+The motive of `primrec` is limited to `Nat` as primitive recursion.
+
+**Predicates.** The primitive constructions for predicates are:
+
+- First-order logic connectives, `True`, `False`, `∧`, `∨`, `→`,
+- Equality `=`,
+- First-order quantifiers `∀, ∃`.
+
+Negation is `¬ p` derived as `p → False`, and bi-implication `p ↔ q` is derived as
+`(p → q) ∧ (q → p)`. The type of a predicate is automatically *inferred* by its term. For example,
+`p ∧ q : QFProp` if both `p : QFProp` and `q : QFProp`. Though, each definition has to choose either
+`QFProp` or `Prop` explicitly.
+
+**Proofs.** The primitive constructions for predicates are:
+
+- Lambda abstruction `fun h => t` and application (modus ponens) `t₁ t₂`,
+- Introduction and elimination of each logical connective, e.g. `and_intro : p → q → p ∧ q`,
+- Equality axioms, `eq_refl : ∀ x, x = x` and `eq_subst P : ∀ x y, x = y → P x → P y` for
+  `P : Prop`,
+- *Law of excluded middle* `lem p : p ∨ ¬ p` for `p : Prop`,
+- induction principle `induction P : motive 0 → (∀ x, motive x → motive (S x)) → ∀ x, motive x` for
+  `P : Nat → QFProp`.
+
+The law of excluded middle applies to both quantifier-free and quantified predicates. The induction
+principle is limited to **quantifier-free predicates**.
+
+### Demo
+
+PRA-Prover is embedded in Lean. Use `pra` block to declare definitions and theorems in PRA language:
 
 ```lean4
 pra
@@ -36,29 +96,8 @@ theorem zero_add : ∀ x, add 0 x = x :=
 end
 ```
 
-Here, `primrec base step n` is a replacement of `Nat.rec` to define recursive functions. Its motive
-is restricted to be `Nat` so that it is limited to primitive recursion. `induction base step x`
-gives a proof of `P x` from `base : P 0` and `step : ∀ x, P x → P (S x)`, given that
-`P : Nat → QFProp` is a quantifier-free predicate. The base case uses `rfl`, which gives a proof of
-definitional equality `add 0 0 = 0`. The step case uses lemma
-`eq_congr (f : Nat → Nat) : ∀ {x y}, x = y → f x = f y`.
-
-A definition or theorem can take functions and predicates as parameters. However, the PRA language
-does not allow any higher-order construction, including quantification over functions or predicates.
-Such definitions and theorems should be understood as schemas and are required to be instantiated at
-each use.
-
-```lean4
-pra
-
-def iter (f : Nat → Nat) : Nat → Nat → Nat :=
-  fun n x => primrec x (fun _ y => f y) n
-
-end
-```
-
 This language further supports tactics as programs written in Lean. The library provides a large set
-of tactics to use; see [`LeanPRA/Library/Tactic/README.md`](LeanPRA/Library/Tactic/README.md).
+of tactics to use; see [`PRAProver/Library/Tactic/README.md`](PRAProver/Library/Tactic/README.md).
 
 ```lean4
 pra
@@ -73,7 +112,7 @@ end
 Metaprogramming allows us to create DSL for defining and proving in first-order logic. For example,
 you can define a first-order theory of arithmetic, writing a proof in first-order logic, and they
 are translated into natural number operations and proofs in PRA. See
-[`LeanPRA/Library/FOL/DSL/README.md`](LeanPRA/Library/FOL/DSL/README.md) for more details.
+[`PRAProver/Library/FOL/DSL/README.md`](PRAProver/Library/FOL/DSL/README.md) for more details.
 
 ```lean4
 pra
@@ -105,16 +144,16 @@ end
 
 ## Structure
 
-- [`LeanPRA/Core`](LeanPRA/Core/) contains the syntax and executable checker for the core language.
-- [`LeanPRA/Surface`](LeanPRA/Surface/) contains the surface language, including parsing,
+- [`PRAProver/Core`](PRAProver/Core/) contains the core language syntax and its executable checker.
+- [`PRAProver/Surface`](PRAProver/Surface/) contains the surface language, including parsing,
   elaboration, printing, and editor support.
-- [`LeanPRA/Library`](LeanPRA/Library/) is the library for the PRA language.
-  - [`Nat`](LeanPRA/Library/Nat/) gives basic operations and theorems in PRA.
-  - [`Tactic`](LeanPRA/Library/Tactic/) provides tactics in PRA.
-  - [`FOL`](LeanPRA/Library/FOL/) formalizes first-order logic in PRA.
-- [`LeanPRA/Metatheory`](LeanPRA/Metatheory/) contains the metatheory of the PRA language and
-  first-order PRA; see [`LeanPRA/Metatheory/README.md`](LeanPRA/Metatheory/README.md) for the
+- [`PRAProver/Library`](PRAProver/Library/) is the library for the PRA language.
+  - [`Nat`](PRAProver/Library/Nat/) gives basic operations and theorems in PRA.
+  - [`Tactic`](PRAProver/Library/Tactic/) provides tactics in PRA.
+  - [`FOL`](PRAProver/Library/FOL/) formalizes first-order logic in PRA.
+- [`PRAProver/Metatheory`](PRAProver/Metatheory/) contains the metatheory of the PRA language and
+  first-order PRA; see [`PRAProver/Metatheory/README.md`](PRAProver/Metatheory/README.md) for the
   summary of results.
-- [`LeanPRA/Export`](LeanPRA/Export/) is for exporting the specifications and proof scripts, and
+- [`PRAProver/Export`](PRAProver/Export/) is for exporting the specifications and proof scripts, and
   [`checker`](checker/) is an independent PRA checker written in Rust; see
   [`checker/README.md`](checker/README.md) for how to run it.
