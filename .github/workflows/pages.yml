@@ -30,7 +30,7 @@ jobs:
         with:
           auto-config: 'false'
           build: 'true'
-          build-args: PRAProver
+          build-args: -R -KserializeExports=true PRAProver
           use-github-cache: 'false'
           use-mathlib-cache: 'false'
 

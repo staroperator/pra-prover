@@ -18,113 +18,116 @@ meta section
 
 namespace PRAProver.Export
 
-private inductive S where
-  | atom : String → S
-  | string : String → S
-  | num : Nat → S
-  | list : List S → S
-
-private def node (tag : String) (xs : List S := []) : S := .list (.atom tag :: xs)
-
-private def nameParts : Name → List S
-  | .anonymous => []
-  | .str n s => nameParts n ++ [.string s]
-  | .num n i => nameParts n ++ [.num i]
-
-private def name (n : Name) : S := node "name" (nameParts n)
-
-private def binder (b : Core.BinderInfo) : S :=
-  node "binder" [name b.name, .num (if b.isImplicit then 1 else 0)]
-
-private def sig (s : PredicateSignature) : S :=
-  node "sig" [.num s.arity, .atom (if s.sort == .qf then "qf" else "prop")]
-
-private def params (ps : List Parameter) : S := .list (ps.map fun
-  | .function b k => node "funparam" [binder b, .num k]
-  | .predicate b s => node "predparam" [binder b, sig s])
-
-private def term : Core.Term → S
-  | .bvar i => node "tvar" [.num i]
-  | .parameter i => node "tparam" [.num i]
-  | .zero => node "zero"
-  | .succ => node "succ"
-  | .lam n b => node "tlam" [name n, term b]
-  | .app f a => node "tapp" [term f, term a]
-  | .letE n v b => node "tlet" [name n, term v, term b]
-  | .primrec b s => node "rec" [term b, term s]
-  | .definition n fs => node "tdef" [name n, .list (fs.map term)]
-
-private def pred : Predicate → S
-  | .false => node "false"
-  | .true => node "true"
-  | .equal a b => node "eq" [term a, term b]
-  | .imp a b => node "imp" [pred a, pred b]
-  | .and a b => node "and" [pred a, pred b]
-  | .or a b => node "or" [pred a, pred b]
-  | .all p => node "all" [pred p]
-  | .ex p => node "ex" [pred p]
-  | .parameter i => node "pparam" [.num i]
-  | .lam b p => node "plam" [binder b, pred p]
-  | .app p a => node "papp" [pred p, term a]
-  | .letTerm n v b => node "pletTerm" [name n, term v, pred b]
-  | .letPredicate n v b => node "pletPred" [name n, pred v, pred b]
-  | .definition n fs ps => node "pdef" [name n, .list (fs.map term), .list (ps.map pred)]
-
-private def proof : Proof → S
-  | .hyp i => node "hyp" [.num i]
-  | .trueIntro => node "trueIntro"
-  | .theoremE n fs ps => node "thm" [name n, .list (fs.map term), .list (ps.map pred)]
-  | .impIntro n a b => node "impIntro" [name n, pred a, proof b]
-  | .impElim f a => node "impElim" [proof f, proof a]
-  | .andIntro a b => node "andIntro" [proof a, proof b]
-  | .andLeft a b => node "andLeft" [pred a, pred b]
-  | .andRight a b => node "andRight" [pred a, pred b]
-  | .orLeft a b => node "orLeft" [pred a, pred b]
-  | .orRight a b => node "orRight" [pred a, pred b]
-  | .orElim a b c => node "orElim" [pred a, pred b, pred c]
-  | .falseElim a => node "falseElim" [pred a]
-  | .forallIntro n m b => node "forallIntro" [name n, pred m, proof b]
-  | .forallElim p t => node "forallElim" [proof p, term t]
-  | .existsIntro m w p => node "existsIntro" [pred m, term w, proof p]
-  | .existsElim a b => node "existsElim" [pred a, pred b]
-  | .letE n t v b => node "hlet" [name n, pred t, proof v, proof b]
-  | .letTerm n v b => node "hletTerm" [name n, term v, proof b]
-  | .letPredicate n v b => node "hletPred" [name n, pred v, proof b]
-  | .ascribe t p => node "ascribe" [pred t, proof p]
-  | .eqRefl => node "refl" []
-  | .eqSubst a => node "subst" [pred a]
-  | .succNeZero => node "succNeZero" []
-  | .succInj => node "succInj" []
-  | .lem p => node "lem" [pred p]
-  | .induction a => node "ind" [pred a]
-
-/-- Encode a declaration, including a theorem's proof, as an object record. -/
-private def encodeDeclaration : Core.Declaration → S
-  | .function d =>
-    node "function" [name d.name, params d.parameterSignature, .num d.arity, term d.body]
-  | .predicate d =>
-    node "predicate" [name d.name, params d.parameters, sig d.signature, pred d.body]
-  | .theoremE d => node "theorem"
-      [name d.name, params d.parameters, pred d.type, proof d.body]
-
-private def tags := #["name", "binder", "sig", "qf", "prop", "funparam", "predparam",
-  "tvar", "tparam", "zero", "succ", "tlam", "tapp", "tlet", "rec", "tdef", "false", "true",
-  "eq", "imp", "and", "or", "all", "ex", "pparam", "plam", "papp", "pletTerm", "pletPred",
-  "pdef", "hyp", "trueIntro", "thm", "impIntro", "impElim", "andIntro", "andLeft", "andRight",
-  "orLeft", "orRight", "orElim", "falseElim", "forallIntro", "forallElim", "existsIntro",
-  "existsElim", "hlet", "hletTerm", "hletPred", "ascribe", "refl", "subst", "succNeZero",
-  "succInj", "lem", "ind", "function", "predicate", "theorem"]
-
 private partial def varint (n : Nat) (out : ByteArray) : ByteArray :=
   if n < 128 then out.push n.toUInt8
   else varint (n / 128) (out.push ((n % 128 + 128).toUInt8))
 
-private partial def encodeObject (s : S) (out : ByteArray := {}) : ByteArray :=
-  match s with
-  | .atom a => out.push ((tags.toList.idxOf a + 16).toUInt8)
-  | .string a => (varint a.utf8ByteSize (out.push 1)) ++ a.toUTF8
-  | .num n => varint n (out.push 2)
-  | .list xs => xs.foldl (fun b x => encodeObject x b) (varint xs.length (out.push 0))
+-- The object format assigns consecutive bytes starting at 16 in this order.
+private inductive Atom where
+  | name | binder | sig | qf | prop | funparam | predparam
+  | tvar | tparam | zero | succ | tlam | tapp | tlet | recursor | tdef
+  | falseE | trueE | eq | imp | and | or | all | ex | pparam | plam | papp | pletTerm
+  | pletPred | pdef | hyp | trueIntro | thm | impIntro | impElim | andIntro | andLeft | andRight
+  | orLeft | orRight | orElim | falseElim | forallIntro | forallElim | existsIntro | existsElim
+  | hlet | hletTerm | hletPred | ascribe
+  | refl | subst | succNeZero | succInj | lem | ind | function | predicate | theoremE
+
+private def Atom.byte (atom : Atom) : UInt8 := (16 + atom.ctorIdx).toUInt8
+
+private abbrev Put := ByteArray → ByteArray
+
+private def listHead (n : Nat) (buf : ByteArray) : ByteArray := varint n (buf.push 0)
+
+private def node (tag : Atom) (n : Nat) (buf : ByteArray) : ByteArray :=
+  (listHead (n + 1) buf).push tag.byte
+
+private def num (n : Nat) (buf : ByteArray) : ByteArray := varint n (buf.push 2)
+
+-- Count the components on the way to the root so the list length precedes their bytes.
+private def nameParts : Name → Nat → ByteArray → ByteArray
+  | .anonymous, count, buf => node .name count buf
+  | .str n s, count, buf =>
+    (varint s.utf8ByteSize ((nameParts n (count + 1) buf).push 1)) ++ s.toUTF8
+  | .num n i, count, buf => num i (nameParts n (count + 1) buf)
+
+private def name (n : Name) (buf : ByteArray) : ByteArray := nameParts n 0 buf
+
+private def binder (b : Core.BinderInfo) (buf : ByteArray) : ByteArray :=
+  node .binder 2 buf |> name b.name |> num (if b.isImplicit then 1 else 0)
+
+private def sig (s : PredicateSignature) (buf : ByteArray) : ByteArray :=
+  (node .sig 2 buf |> num s.arity).push (if s.sort == .qf then Atom.qf.byte else Atom.prop.byte)
+
+private def list (put : α → Put) (xs : List α) (buf : ByteArray) : ByteArray :=
+  xs.foldl (fun acc x => put x acc) (listHead xs.length buf)
+
+private def params (ps : List Parameter) : Put := list (fun
+  | .function b k, buf => node .funparam 2 buf |> binder b |> num k
+  | .predicate b s, buf => node .predparam 2 buf |> binder b |> sig s) ps
+
+private partial def term : Core.Term → Put
+  | .bvar i, buf => node .tvar 1 buf |> num i
+  | .parameter i, buf => node .tparam 1 buf |> num i
+  | .zero, buf => node .zero 0 buf
+  | .succ, buf => node .succ 0 buf
+  | .lam n b, buf => node .tlam 2 buf |> name n |> term b
+  | .app f a, buf => node .tapp 2 buf |> term f |> term a
+  | .letE n v b, buf => node .tlet 3 buf |> name n |> term v |> term b
+  | .primrec b s, buf => node .recursor 2 buf |> term b |> term s
+  | .definition n fs, buf => node .tdef 2 buf |> name n |> list term fs
+
+private partial def pred : Predicate → Put
+  | .false, buf => node .falseE 0 buf
+  | .true, buf => node .trueE 0 buf
+  | .equal a b, buf => node .eq 2 buf |> term a |> term b
+  | .imp a b, buf => node .imp 2 buf |> pred a |> pred b
+  | .and a b, buf => node .and 2 buf |> pred a |> pred b
+  | .or a b, buf => node .or 2 buf |> pred a |> pred b
+  | .all p, buf => node .all 1 buf |> pred p
+  | .ex p, buf => node .ex 1 buf |> pred p
+  | .parameter i, buf => node .pparam 1 buf |> num i
+  | .lam b p, buf => node .plam 2 buf |> binder b |> pred p
+  | .app p a, buf => node .papp 2 buf |> pred p |> term a
+  | .letTerm n v b, buf => node .pletTerm 3 buf |> name n |> term v |> pred b
+  | .letPredicate n v b, buf => node .pletPred 3 buf |> name n |> pred v |> pred b
+  | .definition n fs ps, buf => node .pdef 3 buf |> name n |> list term fs |> list pred ps
+
+private partial def proof : Proof → Put
+  | .hyp i, buf => node .hyp 1 buf |> num i
+  | .trueIntro, buf => node .trueIntro 0 buf
+  | .theoremE n fs ps, buf => node .thm 3 buf |> name n |> list term fs |> list pred ps
+  | .impIntro n a b, buf => node .impIntro 3 buf |> name n |> pred a |> proof b
+  | .impElim f a, buf => node .impElim 2 buf |> proof f |> proof a
+  | .andIntro a b, buf => node .andIntro 2 buf |> proof a |> proof b
+  | .andLeft a b, buf => node .andLeft 2 buf |> pred a |> pred b
+  | .andRight a b, buf => node .andRight 2 buf |> pred a |> pred b
+  | .orLeft a b, buf => node .orLeft 2 buf |> pred a |> pred b
+  | .orRight a b, buf => node .orRight 2 buf |> pred a |> pred b
+  | .orElim a b c, buf => node .orElim 3 buf |> pred a |> pred b |> pred c
+  | .falseElim a, buf => node .falseElim 1 buf |> pred a
+  | .forallIntro n m b, buf => node .forallIntro 3 buf |> name n |> pred m |> proof b
+  | .forallElim p t, buf => node .forallElim 2 buf |> proof p |> term t
+  | .existsIntro m w p, buf => node .existsIntro 3 buf |> pred m |> term w |> proof p
+  | .existsElim a b, buf => node .existsElim 2 buf |> pred a |> pred b
+  | .letE n t v b, buf => node .hlet 4 buf |> name n |> pred t |> proof v |> proof b
+  | .letTerm n v b, buf => node .hletTerm 3 buf |> name n |> term v |> proof b
+  | .letPredicate n v b, buf => node .hletPred 3 buf |> name n |> pred v |> proof b
+  | .ascribe t p, buf => node .ascribe 2 buf |> pred t |> proof p
+  | .eqRefl, buf => node .refl 0 buf
+  | .eqSubst a, buf => node .subst 1 buf |> pred a
+  | .succNeZero, buf => node .succNeZero 0 buf
+  | .succInj, buf => node .succInj 0 buf
+  | .lem p, buf => node .lem 1 buf |> pred p
+  | .induction a, buf => node .ind 1 buf |> pred a
+
+/-- Encode a declaration, including a theorem's proof, as an object record. -/
+private def encodeDeclaration : Core.Declaration → Put
+  | .function d, buf =>
+    node .function 4 buf |> name d.name |> params d.parameterSignature |> num d.arity |> term d.body
+  | .predicate d, buf =>
+    node .predicate 4 buf |> name d.name |> params d.parameters |> sig d.signature |> pred d.body
+  | .theoremE d, buf =>
+    node .theoremE 4 buf |> name d.name |> params d.parameters |> pred d.type |> proof d.body
 
 private def writeModule (dir : System.FilePath) (owner : Name)
     (decls : Array Core.Declaration) : IO Unit := do
@@ -144,7 +147,7 @@ private def writeModule (dir : System.FilePath) (owner : Name)
       for d in decls do
         spec.putStrLn ((Specification.declaration d).pretty 100)
         spec.putStrLn ""
-        let bytes := encodeObject (encodeDeclaration d)
+        let bytes := encodeDeclaration d {}
         object.write (varint bytes.size {})
         object.write bytes
     IO.FS.rename specTemporary specPath

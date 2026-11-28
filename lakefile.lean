@@ -11,6 +11,7 @@ open Lake DSL
 - The optional `docs` facet documents PRA declarations in the library's root modules and imports.
 
 The default `PRAProver` build runs its `pra` facet and builds all Library source modules.
+Set the Lake option `serializeExports=true` to run one exporter at a time and reduce peak memory.
 -/
 
 package «pra-prover» where
@@ -54,9 +55,18 @@ private def exportAfter (pkg : Package) (owner : Lean.Name) (deps : Job Unit) :
       let plugins := (path.deps ++ path.runtimeOnlyDeps ++ #[path]).map fun lib =>
         s!"--{if lib.plugin then "plugin" else "load-dynlib"}={lib.path}"
       let args := #["module", out.toString, marker.toString, owner.toString]
-      proc { cmd := (← getLean).toString
-             env := ← getAugmentedEnv
-             args := plugins ++ #[s!"--root={writer.pkg.dir}", "--run", driver.toString] ++ args }
+      let runExporter := proc {
+        cmd := (← getLean).toString
+        env := ← getAugmentedEnv
+        args := plugins ++ #[s!"--root={writer.pkg.dir}", "--run", driver.toString] ++ args }
+      unless (get_config? serializeExports) == some "true" do
+        return ← runExporter
+      let lock ← IO.FS.Handle.mk (pkg.buildDir / "pra-export.lock") .append
+      lock.lock
+      try
+        runExporter
+      finally
+        lock.unlock
     return marker
 
 module_facet pra (mod) : Option System.FilePath := do
